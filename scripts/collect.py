@@ -22,6 +22,13 @@ from typing import Any
 SCHEMA_VERSION = 3
 LEGACY_SCHEMA_VERSIONS = (1, 2)
 
+# Snapshot retention. The daily series is what the trend charts read, so it is
+# kept at full resolution for a year; older snapshots are downsampled to one
+# point per ISO week, which keeps multi-year trends meaningful while stopping
+# the history file from growing without bound.
+DAILY_RETENTION_DAYS = 400
+WEEKLY_RETENTION_COUNT = 104  # roughly two years of weekly points
+
 # Canonical landing page for a public model / dataset repository.
 HF_MODEL_URL = "https://huggingface.co/{repo_id}"
 HF_DATASET_URL = "https://huggingface.co/datasets/{repo_id}"
@@ -194,6 +201,81 @@ def migrate_history(obj: dict, author: str) -> dict:
     }
 
 
+def _aggregate(snapshots: list[dict]) -> list[dict]:
+    """Average the metrics of snapshots that fall in the same week.
+
+    Grouping is by elapsed time rather than ISO week number: a retention
+    boundary usually cuts a week in half, and an ISO key would then split the
+    remainder into a one-day bucket next to a seven-day one.
+    """
+    ordered = sorted((snap for snap in snapshots if snap.get("date")),
+                     key=lambda snap: snap["date"])
+    groups: list[list[dict]] = []
+    for snap in ordered:
+        # Start a new bucket once the group would span more than a week, so a
+        # long run of daily snapshots still produces week-sized buckets.
+        if groups and (dt.date.fromisoformat(snap["date"])
+                       - dt.date.fromisoformat(groups[-1][0]["date"])).days < 7:
+            groups[-1].append(snap)
+        else:
+            groups.append([snap])
+    merged = []
+    for group in groups:
+        days = [snap["date"] for snap in group]
+        merged.append({
+            "date": max(days),
+            "captured_at": max(snap.get("captured_at") or "" for snap in group),
+            "granularity": "weekly",
+            "days": len(group),
+            # A weekly point is a mean, so the front-end must not read it as a
+            # single-day delta; `days` lets it scale the comparison.
+            "models": _mean_counts(group, "models"),
+            "datasets": _mean_counts(group, "datasets"),
+        })
+    return merged
+
+
+def _mean_counts(group: list[dict], key: str) -> dict:
+    totals: dict[str, dict[int, list[float]]] = {}
+    for snap in group:
+        for entity_id, values in (snap.get(key) or {}).items():
+            if not isinstance(values, (list, tuple)):
+                continue
+            for index, value in enumerate(values):
+                if not isinstance(value, (int, float)) or isinstance(value, bool):
+                    continue
+                totals.setdefault(entity_id, {}).setdefault(index, []).append(float(value))
+    averaged: dict[str, list[float]] = {}
+    for entity_id, per_index in totals.items():
+        averaged[entity_id] = [None, None]
+        for index, samples in per_index.items():
+            averaged[entity_id][index] = round(sum(samples) / len(samples))
+    return averaged
+
+
+def apply_retention(snapshots: list[dict], today: dt.date, *,
+                   daily_days: int = DAILY_RETENTION_DAYS,
+                   weekly_count: int = WEEKLY_RETENTION_COUNT) -> list[dict]:
+    """Keep recent snapshots daily and downsample everything older to weekly.
+
+    A weekly bucket is stamped with the *last* day it covers so it always sits
+    at or before the first daily snapshot, keeping the series monotonic.
+    """
+    ordered = sorted((snap for snap in snapshots if isinstance(snap, dict) and snap.get("date")),
+                     key=lambda snap: snap["date"])
+    cutoff = (today - dt.timedelta(days=daily_days)).isoformat()
+    recent = [snap for snap in ordered if snap["date"] >= cutoff]
+    older = [snap for snap in ordered if snap["date"] < cutoff]
+    weekly = _aggregate(older)[-weekly_count:] if weekly_count else []
+    if weekly and recent:
+        # A bucket is stamped with the last day it covers, so the bucket that
+        # straddles the cutoff can reach into the daily segment. Drop it rather
+        # than emit an out-of-order point.
+        boundary = recent[0]["date"]
+        weekly = [snap for snap in weekly if snap["date"] < boundary]
+    return sorted(weekly + recent, key=lambda snap: snap["date"])
+
+
 def load_history(path: Path, author: str) -> dict:
     if not path.exists():
         return {"schema_version": SCHEMA_VERSION, "author": author, "updated_at": None, "snapshots": []}
@@ -234,6 +316,10 @@ def update_history(history: dict, models: list[dict], at: dt.datetime, datasets:
     snapshots = [snap for snap in snapshots if snap["date"] != day]
     snapshots.append(new_snapshot)
     snapshots.sort(key=lambda snap: snap["date"])
+    snapshots = apply_retention(snapshots, at.astimezone(dt.timezone.utc).date())
+    dropped = len(snapshots) and sum(1 for snap in snapshots if snap.get("granularity") == "weekly")
+    suffix = f" ({dropped} weekly buckets kept for older dates)" if dropped else ""
+    print(f"History now holds {len(snapshots)} snapshots{suffix}", file=sys.stderr)
     return {"schema_version": SCHEMA_VERSION, "author": history["author"], "updated_at": capture, "snapshots": snapshots}
 
 

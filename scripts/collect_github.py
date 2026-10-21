@@ -41,6 +41,11 @@ USER_AGENT = "Model-Observatory/1.0 (+https://islinxu.github.io/model-observator
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_LOGIN = "isLinXu"
 
+# Each follower snapshot is a handful of integers, so the series stays small
+# for years. A cap still applies: it bounds the file and the payload the page
+# downloads, while comfortably covering the trend range the charts expose.
+HISTORY_RETENTION_DAYS = 1100
+
 # Anonymous REST calls are limited to 60 per hour per IP. A token raises this
 # to 5000, so authenticated runs can walk many more repositories.
 REQUESTS_PER_PAGE = 100
@@ -269,6 +274,8 @@ def update_history(history: dict, account: dict, at: dt.datetime) -> dict:
         "public_repos": account.get("public_repos"),
     })
     snapshots.sort(key=lambda snapshot: snapshot.get("date") or "")
+    cutoff = (at.astimezone(dt.timezone.utc).date() - dt.timedelta(days=HISTORY_RETENTION_DAYS)).isoformat()
+    snapshots = [s for s in snapshots if (s.get("date") or "") >= cutoff]
     return {
         "schema_version": SCHEMA_VERSION,
         "updated_at": capture,

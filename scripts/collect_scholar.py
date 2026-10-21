@@ -31,6 +31,8 @@ except ImportError:  # imported as a module (from scripts.collect_scholar import
 
 SCHEMA_VERSION = 1
 SCHOLAR_BASE = "https://scholar.google.com"
+# Keeps the citation series at daily resolution for roughly three years.
+HISTORY_RETENTION_DAYS = 1100
 USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
@@ -250,8 +252,11 @@ def save(data_dir: Path, profile: dict, at: dt.datetime) -> None:
     snapshots = [s for s in history["snapshots"] if s.get("date") != day]
     snapshots.append(snapshot)
     snapshots.sort(key=lambda s: s["date"])
+    # Bound the file: each snapshot is four integers, so a multi-year cap is
+    # generous while keeping the payload the page downloads predictable.
+    cutoff = (at.astimezone(dt.timezone.utc).date() - dt.timedelta(days=HISTORY_RETENTION_DAYS)).isoformat()
+    history["snapshots"] = [s for s in snapshots if (s.get("date") or "") >= cutoff]
     history["updated_at"] = capture
-    history["snapshots"] = snapshots
     atomic_json_write(data_dir / "scholar_history.json", history)
     print(f"Saved Google Scholar profile '{profile.get('name') or user_id}' with {len(profile.get('papers') or [])} papers as of {capture}")
 

@@ -233,6 +233,19 @@
       data.state.githubPage = 1;
       render.renderGitHubTable();
     });
+    // Fork scope: "仅自有" matches the repository count GitHub shows on the
+    // profile page; "含 Fork" lists every public repository.
+    document.querySelectorAll('[data-github-forks]').forEach(button => {
+      button.addEventListener('click', () => {
+        const scope = button.dataset.githubForks;
+        if (data.state.githubForks === scope) return;
+        data.state.githubForks = scope;
+        data.state.githubPage = 1;
+        document.querySelectorAll('[data-github-forks]').forEach(item =>
+          item.classList.toggle('active', item === button));
+        render.renderGitHub();
+      });
+    });
     $('githubPrevPage').addEventListener('click', () => {
       data.state.githubPage = Math.max(1, data.state.githubPage - 1);
       render.renderGitHubTable();

@@ -6,6 +6,17 @@
   <meta name="theme-color" content="#090f1b">
   <meta name="description" content="@gatilin Hugging Face 模型与数据集下载量、近期活跃度、每日增量、学术引用、社交平台粉丝数、GitHub 粉丝与仓库看板及历史数据可视化">
   <title>Model Observatory · gatilin</title>
+  <link rel="canonical" href="https://islinxu.github.io/model-observatory/">
+  <meta name="author" content="gatilin">
+  <meta property="og:type" content="website">
+  <meta property="og:site_name" content="Model Observatory">
+  <meta property="og:title" content="Model Observatory · gatilin">
+  <meta property="og:description" content="Hugging Face 模型与数据集下载量、每日增量、学术引用、社交平台粉丝数与 GitHub 仓库看板的每日快照看板">
+  <meta property="og:url" content="https://islinxu.github.io/model-observatory/">
+  <meta property="og:locale" content="zh_CN">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="Model Observatory · gatilin">
+  <meta name="twitter:description" content="Hugging Face 下载量、学术引用与 GitHub 仓库的每日快照看板">
   <link rel="icon" type="image/svg+xml" href="./favicon.svg">
   <link rel="stylesheet" href="./style.css">
   <script src="./format.js" defer></script>
@@ -154,7 +165,7 @@
           <div class="panel panel-chart github-lang-panel"><div class="panel-head"><div><div class="panel-overline">REPOSITORY OVERVIEW</div><h2>仓库语言分布</h2><p>公开仓库的主语言构成</p></div><span class="mini-icon">◫</span></div><div id="githubLangChart" class="chart-area rank-area" role="img" aria-label="仓库语言分布图"></div><div class="chart-footer"><span class="muted micro">语言取自 GitHub 仓库元数据，未标注语言的仓库不计入。</span><span id="githubLangTotal" class="micro muted">—</span></div></div>
           <div class="panel panel-chart"><div class="panel-head"><div><div class="panel-overline">MOST STARRED</div><h2>高星仓库 <small>TOP 8</small></h2><p>按照 Star 数排序</p></div><span class="mini-icon">★</span></div><div id="githubTopRepos" class="top-models"><div class="chart-empty">等待 GitHub 数据</div></div><div class="top-footer">RANKED BY STARS <span>● LIVE SNAPSHOT</span></div></div>
         </div>
-        <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="githubSearch" placeholder="搜索仓库名称、描述或话题" autocomplete="off" aria-label="搜索 GitHub 仓库"></label><select id="sortGithub" aria-label="GitHub 仓库排序方式"><option value="updated">按最近更新排序</option><option value="stars">按 Star 数排序</option><option value="forks">按 Fork 数排序</option><option value="name">按名称排序</option></select><select id="filterGithubLanguage" aria-label="按语言筛选"><option value="all">全部语言</option></select><span class="toolbar-spacer"></span><span id="githubTableCount" class="micro muted">—</span></div>
+        <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="githubSearch" placeholder="搜索仓库名称、描述或话题" autocomplete="off" aria-label="搜索 GitHub 仓库"></label><select id="sortGithub" aria-label="GitHub 仓库排序方式"><option value="updated">按最近更新排序</option><option value="stars">按 Star 数排序</option><option value="forks">按 Fork 数排序</option><option value="name">按名称排序</option></select><select id="filterGithubLanguage" aria-label="按语言筛选"><option value="all">全部语言</option></select><div class="segmented" role="group" aria-label="是否包含 Fork 仓库"><button class="active" data-github-forks="own">仅自有</button><button data-github-forks="all">含 Fork</button></div><span class="toolbar-spacer"></span><span id="githubTableCount" class="micro muted">—</span></div>
         <div class="table-scroll"><table class="models-table github-table"><thead><tr><th class="no-sort">仓库名称</th><th class="align-right">Star</th><th class="align-right">Fork</th><th>语言</th><th>最近更新</th><th>状态</th></tr></thead><tbody id="githubRows"><tr><td colspan="6" class="no-rows">尚未有 GitHub 数据</td></tr></tbody></table></div>
         <div class="pagination" id="githubPagination" hidden><button class="button secondary" id="githubPrevPage">← 上一页</button><span id="githubPageInfo" class="micro muted">—</span><button class="button secondary" id="githubNextPage">下一页 →</button></div>
         <div id="githubProjects" class="github-projects hidden"><div class="section-eyebrow" style="margin-bottom:10px">GITHUB PROJECTS</div><div id="githubProjectList" class="project-grid"></div></div>

@@ -33,6 +33,10 @@ MO.data = (() => {
     githubSearch: '',
     githubPage: 1,
     githubPageSize: 12,
+    // 'own' counts only repositories you created; 'all' also includes forks.
+    // GitHub's own profile page lists owned repositories, so 'own' is the
+    // default and keeps the headline number comparable with github.com.
+    githubForks: 'own',
     status: 'loading'
   };
 
@@ -316,10 +320,22 @@ MO.data = (() => {
     return { delta, rate, from: previous.date, to: latest.date };
   }
 
+  /**
+   * Repository list honouring the fork scope switch.
+   * `own` keeps only repositories you created (what GitHub shows on your
+   * profile); `all` also includes forks. Every derived figure - totals,
+   * language chart, top list, table and CSV - goes through this helper so
+   * the numbers on the page always describe the same set.
+   */
+  function githubScope() {
+    const repos = state.github?.repositories || [];
+    return state.githubForks === 'all' ? repos : repos.filter(repo => !repo.is_fork);
+  }
+
   /** Distinct languages present in the repository list, most used first. */
   function githubLanguages() {
     const counts = new Map();
-    for (const repo of state.github?.repositories || []) {
+    for (const repo of githubScope()) {
       const language = repo.language || '';
       if (!language) continue;
       counts.set(language, (counts.get(language) || 0) + 1);
@@ -336,7 +352,7 @@ MO.data = (() => {
   function githubRepositories() {
     const search = state.githubSearch.trim().toLowerCase();
     const language = state.githubLanguage;
-    let rows = (state.github?.repositories || []).filter(repo => {
+    let rows = githubScope().filter(repo => {
       if (language !== 'all' && (repo.language || '') !== language) return false;
       if (!search) return true;
       const haystack = [
@@ -353,14 +369,20 @@ MO.data = (() => {
     return rows;
   }
 
-  /** Total star / fork counts across every public repository. */
+  /**
+   * Totals for the current fork scope. `forks` counts forks received by the
+   * scoped repositories; `excludedForks` reports how many fork repositories
+   * the current scope hides, so the UI can explain the difference.
+   */
   function githubTotals() {
-    const repos = state.github?.repositories || [];
+    const all = state.github?.repositories || [];
+    const repos = githubScope();
     return {
       repositories: repos.length,
       stars: repos.reduce((sum, repo) => sum + (repo.stars || 0), 0),
       forks: repos.reduce((sum, repo) => sum + (repo.forks || 0), 0),
-      forksOnly: repos.filter(repo => repo.is_fork).length,
+      excludedForks: all.length - repos.length,
+      totalForks: all.filter(repo => repo.is_fork).length,
       languages: new Set(repos.map(repo => repo.language).filter(Boolean)).size
     };
   }
@@ -386,6 +408,7 @@ MO.data = (() => {
     reloadGitHub,
     githubSeries,
     githubGrowth,
+    githubScope,
     githubLanguages,
     githubRepositories,
     githubTotals

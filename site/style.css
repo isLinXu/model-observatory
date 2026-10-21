@@ -433,6 +433,9 @@ select { height: 38px; background: var(--input-bg); border: 1px solid var(--inpu
 .models-table td.align-right, .models-table th.align-right { text-align: right; }
 .models-table .model-link { display: flex; align-items: center; gap: 11px; background: none; border: 0; padding: 0; min-width: 0; color: var(--txt-strong); font-weight: 650; text-align: left; max-width: 375px; }
 .models-table .model-link:hover { color: var(--chart-1); }
+/* A repository or project without a url keeps the same layout but stops
+   behaving like a link. */
+.models-table .model-link-plain:hover { color: var(--txt-strong); }
 .model-square { display: inline-grid; place-items: center; height: 29px; min-width: 29px; border-radius: 7px; background: var(--surface-3); color: var(--chart-1); font-weight: 780; font-size: 10px; }
 .model-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .models-table td.no-rows { padding: 30px; text-align: center; color: var(--muted-2); }
@@ -698,6 +701,8 @@ select { height: 38px; background: var(--input-bg); border: 1px solid var(--inpu
   transition: border-color .18s ease, transform .18s ease;
 }
 .project-card:hover { border-color: var(--blue); transform: translateY(-2px); }
+.project-card-plain { cursor: default; }
+.project-card-plain:hover { border-color: var(--line); transform: none; }
 .project-title { font-weight: 650; color: var(--txt-strong); font-size: 13px; line-height: 1.5; }
 .project-desc { color: var(--faint); font-size: 10.5px; margin-top: 6px; line-height: 1.55; }
 .project-meta {

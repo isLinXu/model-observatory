@@ -10,6 +10,7 @@ from scripts.collect import (
     HF_MODEL_URL,
     api_to_datasets,
     api_to_models,
+    apply_retention,
     entity_url,
     load_history,
     migrate_history,
@@ -224,6 +225,74 @@ class EntityUrlTests(unittest.TestCase):
         snapshot = history["snapshots"][-1]
         self.assertEqual(snapshot["models"]["gatilin/A"], [100, 20])
         self.assertNotIn("url", snapshot)
+
+
+class SnapshotRetentionTests(unittest.TestCase):
+    """Old snapshots are downsampled so history.json cannot grow forever."""
+
+    def build(self, days, today=dt.date(2026, 10, 21)):
+        snapshots = []
+        for offset in range(days):
+            day = today - dt.timedelta(days=offset)
+            snapshots.append({
+                "date": day.isoformat(),
+                "captured_at": f"{day.isoformat()}T02:23:00Z",
+                "models": {"gatilin/A": [offset, offset * 2]},
+                "datasets": {},
+            })
+        return snapshots
+
+    def test_recent_history_is_left_alone(self):
+        snapshots = self.build(30)
+        kept = apply_retention(snapshots, dt.date(2026, 10, 21))
+        self.assertEqual(len(kept), 30)
+        self.assertFalse(any(s.get("granularity") for s in kept))
+
+    def test_old_snapshots_collapse_into_weekly_buckets(self):
+        snapshots = self.build(800)
+        kept = apply_retention(snapshots, dt.date(2026, 10, 21))
+        weekly = [s for s in kept if s.get("granularity") == "weekly"]
+        daily = [s for s in kept if not s.get("granularity")]
+        self.assertLess(len(kept), len(snapshots))
+        self.assertTrue(weekly)
+        # Daily resolution survives for at least the configured window.
+        self.assertGreaterEqual(len(daily), 400)
+        for bucket in weekly:
+            self.assertEqual(bucket["days"], 7)
+            self.assertIn("gatilin/A", bucket["models"])
+
+    def test_series_stays_sorted_and_free_of_overlaps(self):
+        kept = apply_retention(self.build(800), dt.date(2026, 10, 21))
+        dates = [s["date"] for s in kept]
+        self.assertEqual(dates, sorted(dates))
+        self.assertEqual(len(dates), len(set(dates)))
+        weekly = [s for s in kept if s.get("granularity") == "weekly"]
+        daily = [s for s in kept if not s.get("granularity")]
+        if weekly and daily:
+            self.assertLess(weekly[-1]["date"], daily[0]["date"])
+
+    def test_averaging_ignores_missing_values(self):
+        """Null metrics must not drag the weekly mean down or fake a value."""
+        today = dt.date(2026, 10, 21)
+        snapshots = self.build(800)
+        # Blank out every all_time reading across the whole oldest week so the
+        # bucket has no sample at all for that metric.
+        for snapshot in snapshots[-7:]:
+            snapshot["models"]["gatilin/A"][0] = None
+        weekly = [s for s in apply_retention(snapshots, today) if s.get("granularity") == "weekly"]
+        self.assertEqual(weekly[0]["models"]["gatilin/A"][0], None)
+        # The rolling-30-day metric still has samples and must be averaged.
+        self.assertIsNotNone(weekly[0]["models"]["gatilin/A"][1])
+
+    def test_entities_missing_from_a_bucket_are_still_merged(self):
+        today = dt.date(2026, 10, 21)
+        snapshots = self.build(800)
+        for snapshot in snapshots[:3]:
+            snapshot["models"].pop("gatilin/A", None)
+        kept = apply_retention(snapshots, today)
+        weekly = [s for s in kept if s.get("granularity") == "weekly"]
+        self.assertTrue(weekly)
+        self.assertIn("gatilin/A", weekly[-1]["models"])
 
 
 if __name__ == "__main__":

@@ -518,7 +518,11 @@ MO.render = (() => {
       : `基于 ${fmt(growth.delta)} 人的净增`;
 
     $('statGithubRepos').textContent = fmt(totals.repositories);
-    $('statGithubReposSub').textContent = `Star ${fmt(totals.stars)} · Fork ${fmt(totals.forks)} · ${fmt(totals.languages)} 种语言`;
+    const scopeNote = data.state.githubForks === 'own' && totals.excludedForks
+      ? ` · 已排除 ${fmt(totals.excludedForks)} 个 fork`
+      : '';
+    $('statGithubReposSub').textContent =
+      `Star ${fmt(totals.stars)} · Fork ${fmt(totals.forks)} · ${fmt(totals.languages)} 种语言${scopeNote}`;
 
     $('githubRepoBadge').textContent = fmt(totals.repositories);
     $('githubCapturedAt').textContent = github.captured_at
@@ -558,7 +562,7 @@ MO.render = (() => {
   }
 
   function renderGitHubTopRepos() {
-    const repos = [...(data.state.github?.repositories || [])]
+    const repos = [...data.githubScope()]
       .filter(repo => (repo.stars || 0) > 0)
       .sort((a, b) => (b.stars || 0) - (a.stars || 0))
       .slice(0, 8);
@@ -567,12 +571,17 @@ MO.render = (() => {
       return;
     }
     const max = repos[0].stars || 1;
-    $('githubTopRepos').innerHTML = repos.map((repo, index) =>
-      `<div class="top-item"><span class="rank-index">${String(index + 1).padStart(2, '0')}</span>` +
-      `<div><div class="rank-model"><a class="rank-name" href="${esc(repo.url || '#')}" target="_blank" rel="noopener noreferrer" title="${esc(repo.full_name)}">${esc(repo.name)}</a></div>` +
-      `<div class="rank-progress"><span style="width:${(repo.stars / max * 100).toFixed(1)}%"></span></div></div>` +
-      `<span class="rank-number" title="${esc(fmt(repo.stars))} 个 Star">${esc(compact(repo.stars))}</span></div>`
-    ).join('');
+    // A repository without a url renders as plain text rather than a dead
+    // link pointing at the current page.
+    $('githubTopRepos').innerHTML = repos.map((repo, index) => {
+      const name = repo.url
+        ? `<a class="rank-name" href="${esc(repo.url)}" target="_blank" rel="noopener noreferrer" title="${esc(repo.full_name)}">${esc(repo.name)}</a>`
+        : `<span class="rank-name" title="${esc(repo.full_name)}">${esc(repo.name)}</span>`;
+      return `<div class="top-item"><span class="rank-index">${String(index + 1).padStart(2, '0')}</span>` +
+        `<div><div class="rank-model">${name}</div>` +
+        `<div class="rank-progress"><span style="width:${(repo.stars / max * 100).toFixed(1)}%"></span></div></div>` +
+        `<span class="rank-number" title="${esc(fmt(repo.stars))} 个 Star">${esc(compact(repo.stars))}</span></div>`;
+    }).join('');
   }
 
   function renderGitHubTable() {
@@ -606,9 +615,13 @@ MO.render = (() => {
       if (repo.archived) flags.push('已归档');
       const stateName = repo.archived ? '已归档' : repo.is_fork ? 'Fork 仓库' : '正常';
       const stateClass = repo.archived ? 'missing' : repo.is_fork ? 'new' : '';
-      return `<tr><td><a class="model-link" href="${esc(repo.url || '#')}" target="_blank" rel="noopener noreferrer" title="${esc(repo.full_name)}">` +
-        `<span class="model-square">${esc((repo.name || '?').slice(0, 1).toUpperCase())}</span>` +
-        `<span class="model-title">${esc(repo.name)}</span></a>` +
+      const square = `<span class="model-square">${esc((repo.name || '?').slice(0, 1).toUpperCase())}</span>`;
+      // Repositories without a url fall back to plain text so the page never
+      // links back to itself.
+      const label = repo.url
+        ? `<a class="model-link" href="${esc(repo.url)}" target="_blank" rel="noopener noreferrer" title="${esc(repo.full_name)}">${square}<span class="model-title">${esc(repo.name)}</span></a>`
+        : `<span class="model-link model-link-plain" title="${esc(repo.full_name)}">${square}<span class="model-title">${esc(repo.name)}</span></span>`;
+      return `<tr><td>${label}` +
         `${repo.description ? `<span class="repo-desc" title="${esc(repo.description)}">${esc(repo.description)}</span>` : ''}</td>` +
         `<td class="align-right">${esc(fmt(repo.stars))}</td>` +
         `<td class="align-right">${esc(fmt(repo.forks))}</td>` +
@@ -633,14 +646,16 @@ MO.render = (() => {
       return;
     }
     wrap.classList.remove('hidden');
-    $('githubProjectList').innerHTML = items.map(project =>
-      `<a class="project-card" href="${esc(project.url || '#')}" target="_blank" rel="noopener noreferrer">` +
-      `<div class="project-title">${esc(project.title || '未命名项目')}</div>` +
-      `${project.description ? `<div class="project-desc">${esc(project.description)}</div>` : ''}` +
-      `<div class="project-meta"><span>#${esc(project.number ?? '—')}</span>` +
-      `<span>${esc(project.state || '')}</span>` +
-      `<span>${esc(timestamp(project.updated_at))}</span></div></a>`
-    ).join('');
+    $('githubProjectList').innerHTML = items.map(project => {
+      const meta = `<div class="project-meta"><span>#${esc(project.number ?? '—')}</span>` +
+        `<span>${esc(project.state || '')}</span>` +
+        `<span>${esc(timestamp(project.updated_at))}</span></div>`;
+      const title = `<div class="project-title">${esc(project.title || '未命名项目')}</div>` +
+        (project.description ? `<div class="project-desc">${esc(project.description)}</div>` : '');
+      return project.url
+        ? `<a class="project-card" href="${esc(project.url)}" target="_blank" rel="noopener noreferrer">${title}${meta}</a>`
+        : `<div class="project-card project-card-plain">${title}${meta}</div>`;
+    }).join('');
   }
 
   function renderGitHub() {
