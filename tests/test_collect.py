@@ -6,8 +6,11 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from scripts.collect import (
+    HF_DATASET_URL,
+    HF_MODEL_URL,
     api_to_datasets,
     api_to_models,
+    entity_url,
     load_history,
     migrate_history,
     save,
@@ -51,7 +54,7 @@ class DatasetCollectorTests(unittest.TestCase):
         self.assertEqual(items[0]["languages"], ["en", "zh"])
 
     def test_snapshot_keeps_datasets_next_to_models(self):
-        base = {"schema_version": 2, "author": "gatilin", "updated_at": None, "snapshots": []}
+        base = {"schema_version": 3, "author": "gatilin", "updated_at": None, "snapshots": []}
         history = update_history(base, [example("gatilin/A")], at("2026-10-20"), [dataset("gatilin/D")])
         snapshot = history["snapshots"][-1]
         self.assertEqual(snapshot["models"]["gatilin/A"], [100, 20])
@@ -66,7 +69,7 @@ class DatasetCollectorTests(unittest.TestCase):
                            "models": {"gatilin/A": [100, 20]}}],
         }
         migrated = migrate_history(legacy, "gatilin")
-        self.assertEqual(migrated["schema_version"], 2)
+        self.assertEqual(migrated["schema_version"], 3)
         self.assertEqual(migrated["snapshots"][0]["datasets"], {})
 
     def test_load_history_migrates_legacy_file(self):
@@ -78,7 +81,7 @@ class DatasetCollectorTests(unittest.TestCase):
                                "models": {"gatilin/A": [100, 20]}}],
             }), encoding="utf-8")
             history = load_history(path, "gatilin")
-            self.assertEqual(history["schema_version"], 2)
+            self.assertEqual(history["schema_version"], 3)
             self.assertEqual(history["snapshots"][0]["datasets"], {})
 
     def test_save_writes_datasets_into_latest(self):
@@ -86,12 +89,12 @@ class DatasetCollectorTests(unittest.TestCase):
             data_dir = Path(tmp)
             save(data_dir, "gatilin", [example("gatilin/A")], at("2026-10-20"), [dataset("gatilin/D")])
             latest = json.loads((data_dir / "latest.json").read_text(encoding="utf-8"))
-            self.assertEqual(latest["schema_version"], 2)
+            self.assertEqual(latest["schema_version"], 3)
             self.assertEqual(len(latest["datasets"]), 1)
             self.assertEqual(latest["datasets"][0]["id"], "gatilin/D")
 
     def test_dataset_drop_is_protected(self):
-        base = {"schema_version": 2, "author": "gatilin", "updated_at": None, "snapshots": []}
+        base = {"schema_version": 3, "author": "gatilin", "updated_at": None, "snapshots": []}
         many = [dataset(f"gatilin/D{i}") for i in range(6)]
         history = update_history(base, [example("gatilin/A")], at("2026-10-20"), many)
         with self.assertRaises(ValueError):
@@ -184,6 +187,43 @@ class ModelRegressionTests(unittest.TestCase):
         models = api_to_models(infos, "gatilin")
         self.assertEqual(len(models), 1)
         self.assertEqual(models[0]["pipeline"], "text-generation")
+
+
+class EntityUrlTests(unittest.TestCase):
+    """Every entity type exposes a `url` so the site can link straight out."""
+
+    def test_model_url_points_at_hugging_face(self):
+        infos = [SimpleNamespace(id="gatilin/A", downloads_all_time=1, downloads=1, likes=0,
+                                 pipeline_tag="other", private=False, created_at=None)]
+        model = api_to_models(infos, "gatilin")[0]
+        self.assertEqual(model["url"], "https://huggingface.co/gatilin/A")
+
+    def test_dataset_url_points_at_hugging_face_datasets(self):
+        infos = [SimpleNamespace(id="gatilin/D", downloads_all_time=1, downloads=1, likes=0,
+                                 private=False, created_at=None, tags=[])]
+        item = api_to_datasets(infos, "gatilin")[0]
+        self.assertEqual(item["url"], "https://huggingface.co/datasets/gatilin/D")
+
+    def test_url_is_none_for_empty_id(self):
+        self.assertIsNone(entity_url(HF_MODEL_URL, ""))
+
+    def test_url_encodes_unsafe_characters(self):
+        self.assertEqual(entity_url(HF_MODEL_URL, "gatilin/a b"),
+                         "https://huggingface.co/gatilin/a%20b")
+
+    def test_papers_carry_a_url(self):
+        page = FIXTURE.read_text(encoding="utf-8")
+        profile = parse_profile(page, "oTYM_I8AAAAJ")
+        for paper in profile["papers"]:
+            self.assertTrue(paper["url"].startswith("https://"))
+
+    def test_history_snapshots_keep_the_compact_shape(self):
+        """Historical snapshots stay {id: [all, rolling]} for existing readers."""
+        base = {"schema_version": 3, "author": "gatilin", "updated_at": None, "snapshots": []}
+        history = update_history(base, [example("gatilin/A")], at("2026-10-20"), [dataset("gatilin/D")])
+        snapshot = history["snapshots"][-1]
+        self.assertEqual(snapshot["models"]["gatilin/A"], [100, 20])
+        self.assertNotIn("url", snapshot)
 
 
 if __name__ == "__main__":

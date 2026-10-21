@@ -1,8 +1,10 @@
 # Model Observatory · @gatilin
 
-一个**直接托管到 GitHub Pages** 的 Hugging Face 模型与数据集下载统计看板，并附带类 Google Scholar 的公开学术档案板块与社交平台粉丝数板块。静态前端，无后端服务器和前端密钥；GitHub Actions 每日自动抓取你的 **全部公开模型与数据集**、**公开 Google Scholar 档案**、**各平台公开粉丝数**并提交历史 JSON，同时重新部署网站。
+一个**直接托管到 GitHub Pages** 的 Hugging Face 模型与数据集下载统计看板，并附带类 Google Scholar 的公开学术档案板块、社交平台粉丝数板块与 GitHub 账号/仓库看板。静态前端，无后端服务器和前端密钥；GitHub Actions 每日自动抓取你的 **全部公开模型与数据集**、**公开 Google Scholar 档案**、**各平台公开粉丝数**、**GitHub 账号与公开仓库**并提交历史 JSON，同时重新部署网站。
 
-支持：模型排行、单模型详情、总体趋势、最近 30 天活跃下载、历史累计、相邻快照净变化、7/30 日净变化、统计下调异常标记、3 模型对比、搜索和 CSV / JSON 导出；数据集板块与模型完全同口径；学术主页展示引用总数、h-index、i10-index、逐年引用分布、每日引用快照与论文列表；社交媒体板块展示各平台粉丝数、平台筛选、时间范围筛选与卡片/表格双视图。界面支持**明暗双主题**，默认跟随系统偏好。首次采集仅有当天数据，不伪造历史走势。
+支持：模型排行、单模型详情、总体趋势、最近 30 天活跃下载、历史累计、相邻快照净变化、7/30 日净变化、统计下调异常标记、3 模型对比、搜索和 CSV / JSON 导出；数据集板块与模型完全同口径；学术主页展示引用总数、h-index、i10-index、逐年引用分布、每日引用快照与论文列表；社交媒体板块展示各平台粉丝数、平台筛选、时间范围筛选与卡片/表格双视图；GitHub 看板展示粉丝历史趋势、增长量与增长率，以及全部公开仓库的名称 / Star / Fork / 语言 / 最近更新时间，支持搜索、排序、语言筛选、分页与一键跳转，并可导出 CSV。界面支持**明暗双主题**，默认跟随系统偏好。首次采集仅有当天数据，不伪造历史走势。
+
+**所有实体都带 `url` 字段**：模型、数据集、论文、仓库与项目在列表中点击名称即可在新标签页打开原始页面；链接缺失时优雅降级为纯文本，不产生死链。
 
 ## GitHub CLI 一键发布（无需手动上传文件）
 
@@ -42,10 +44,13 @@ Hugging Face API 读取 @gatilin 全部公开模型与数据集
 抓取公开 Google Scholar 档案（失败不影响其余流程）
                 +
 抓取各平台公开粉丝数（失败不影响其余流程）
+                +
+抓取 GitHub 账号指标与全部分页公开仓库（失败不影响其余流程）
                 ↓
 更新 data/latest.json、data/history.json、
 data/scholar.json、data/scholar_history.json、
-data/social.json、data/social_history.json
+data/social.json、data/social_history.json、
+data/github.json、data/github_history.json
                 ↓
 自动提交历史快照到 main
                 ↓
@@ -149,6 +154,69 @@ GitHub Actions 使用 `GITHUB_TOKEN` 写入快照，不需要额外配置 GitHub
 - 「上次采集以来净变化」是相邻两次 UTC 快照之差，负值表示平台统计被回调。
 - 采集频率为每日一次 UTC，与下载统计同步。
 
+## GitHub 看板：数据来源与同步策略
+
+GitHub 板块由 `scripts/collect_github.py` 独立采集，输出 `data/github.json`（当前快照）与 `data/github_history.json`（逐日粉丝快照）。
+
+### 数据来源
+
+| 内容 | 接口 | 是否需要凭据 |
+| --- | --- | --- |
+| 粉丝 / 关注 / 公开仓库数 | `api.github.com/users/<login>` | 否 |
+| 全部公开仓库（分页） | `api.github.com/users/<login>/repos?per_page=100&page=N` | 否 |
+| GitHub Projects 列表 | `api.github.com/graphql`（`projectsV2`） | **是**，需 `read:project` 权限的 token |
+
+- 账号名写在 `.github/workflows/pages.yml` 的 `GITHUB_LOGIN`，默认 `isLinXu`。
+- 仓库采集会自动翻页直到取完（上限 20 页 = 2000 个仓库），因此 400+ 仓库的账号也能完整收录。
+- 匿名 REST 调用有 60 次/小时 的 IP 限速；配置 `GITHUB_TOKEN`（仓库 Secret）可提升到 5000 次/小时，同时解锁 Projects 列表。**没有 token 时仓库看板依然完整可用**，只是 Projects 区域不显示。
+- Projects 通过 GraphQL 读取，需要带 `read:project` scope 的 Personal Access Token；未配置时该区域整体隐藏，不影响其它内容。
+
+### 两种更新方式
+
+1. **定时自动同步**：每天 UTC **02:23** 由 GitHub Actions 自动采集并重新部署（`schedule` 触发）。
+2. **手动触发采集**：在仓库 **Actions → Sync Hugging Face & deploy Pages → Run workflow** 手动运行一次即可立刻重新采集并部署。
+3. **页面内手动刷新**：GitHub 板块右上角的「↻ 手动刷新」按钮会**绕过浏览器缓存**重新拉取已发布的 `data/github.json`。由于站点是纯静态的，这个按钮刷新的是「当前线上快照」；要真正重新抓取上游数据，仍需走上面第 2 条的工作流手动触发。刷新成功后会提示快照时间，失败则保留原数据并提示原因。
+
+### 采集失败时的降级行为
+
+- 抓取异常（限流、封禁、网络中断）**不会中断整条工作流**，`continue-on-error: true` 保证其它板块照常采集与部署。
+- 失败时**保留上一次成功的快照**，`status` 标记为 `stale` 并记录具体原因；页面在板块顶部显示提示条（信息级），数据区继续展示上次的仓库列表与粉丝数。
+- 只有当 GitHub 完全返回零个公开仓库时，采集器才拒绝覆盖已有快照，避免异常响应把看板清空。
+- `data/github_history.json` 只在采集成功时写入当天快照，粉丝趋势曲线因此不会因一次失败而断裂。
+
+### 看板功能
+
+- **粉丝趋势**：KPI 显示当前粉丝数、较上次快照的增长量（`+12`）与增长率（`+3.59%`），并绘制逐日历史折线。
+- **仓库浏览**：表格列出全部公开仓库的名称、Star、Fork、语言与最近更新时间，可按「最近更新 / Star / Fork / 名称」四种方式排序，按语言下拉筛选，按名称、描述、话题或语言关键词搜索，每页 12 条分页浏览。
+- **高星仓库 TOP 8** 与 **仓库语言分布** 两个概览面板。
+- **一键跳转**：每个仓库名称都是指向 GitHub 原始页面的链接，在新标签页打开。
+- **CSV 导出**：导出当前筛选结果，含 `url` 列。
+
+## 元数据的 url 字段约定
+
+四类实体统一使用 `url` 作为「可一键直达的外部链接」字段，存储位置与可选性如下：
+
+| 实体 | 存储位置 | 字段名 | 取值 | 可选性 |
+| --- | --- | --- | --- | --- |
+| 模型 | `data/latest.json` → `models[]` | `url` | `https://huggingface.co/<owner>/<repo>` | 可选，缺失为 `null` |
+| 数据集 | `data/latest.json` → `datasets[]` | `url` | `https://huggingface.co/datasets/<owner>/<repo>` | 可选，缺失为 `null` |
+| 论文 | `data/scholar.json` → `papers[]` | `url` | Scholar 引用页链接（`cited_by_url` 为被引检索链接） | 可选，缺失为 `null` |
+| 仓库 | `data/github.json` → `repositories[]` | `url` | `https://github.com/<owner>/<repo>` | 可选，缺失为 `null` |
+| 项目 | `data/github.json` → `projects.items[]` | `url` | GitHub Projects 页面地址 | 可选，缺失为 `null` |
+
+约定细节：
+
+- 字段名统一为 `url`（不使用 `homepage` / `link` 等别名），前端只认这一个名字。
+- **URL 始终是可选的**：数据源无法提供链接时写入 `null`，前端渲染为不可点击的纯文本（`<span class="model-link-plain">`），不会生成指向 `#` 的死链。
+- 模型与数据集的 `url` 由采集器根据仓库 ID **自动生成**（`scripts/collect.py` 的 `entity_url()`），因此只要仓库 ID 正确，链接必然有效。
+- 前端表现：模型表的名称按钮打开站内详情弹窗，旁边附带一个 `↗` 外链图标直达 Hugging Face；数据集与仓库的名称本身就是外链；论文标题为外链。全部使用 `target="_blank" rel="noopener noreferrer"`。
+
+### 向后兼容
+
+- `data/latest.json` 与 `data/history.json` 的 `schema_version` 从 2 升到 **3**，新增 `url` 字段。**读取端同时接受 1 / 2 / 3**（`site/data.js` 的 `supported` 数组），旧数据文件无需迁移即可正常展示。
+- 历史快照 `data/history.json` 内部仍保持紧凑的 `{id: [累计, 滚动30天]}` 结构，**不在历史里写 url**——url 只属于 `latest.json` 中的实体记录，这样既保持了旧读取端的兼容性，也让历史文件体积不变。
+- 采集器遇到 v1 / v2 的历史文件会自动迁移到当前 schema（`migrate_history()`），迁移只补齐 `datasets` 键，不改变既有数值。
+
 ## 明暗主题
 
 所有颜色都以 CSS 变量定义在 `site/style.css` 顶部：`:root` 为深色，`[data-theme="light"]` 为浅色，两套主题使用**同一组变量名**，因此新增组件只要引用变量就自动适配两种主题。
@@ -162,10 +230,11 @@ GitHub Actions 使用 `GITHUB_TOKEN` 写入快照，不需要额外配置 GitHub
 ```bash
 python -m pip install -r requirements.txt
 
-# 采集三类数据（都会实际访问网络）
+# 采集四类数据（都会实际访问网络）
 python scripts/collect.py --author gatilin
 python scripts/collect_scholar.py --user oTYM_I8AAAAJ
 python scripts/collect_social.py --config config/social_sources.json
+python scripts/collect_github.py --login isLinXu
 
 # 构建静态站点并启动本地预览
 python scripts/build.py
@@ -190,7 +259,7 @@ python scripts/collect_social.py --only github bilibili
 PYTHONPATH=. python -m unittest discover -s tests
 ```
 
-覆盖数据集转换、历史迁移、Scholar 解析、社交配置校验、各平台降级路径与小红书状态解析，全部离线运行，不访问网络。
+覆盖数据集转换、历史迁移、url 字段生成、Scholar 解析、社交配置校验、各平台降级路径与小红书状态解析、GitHub 仓库转换与降级逻辑，全部离线运行，不访问网络。
 
 `data/latest.json` 保存最新模型与数据集清单及对应数值，`data/history.json` 保存逐日快照。历史格式：
 
@@ -208,7 +277,7 @@ PYTHONPATH=. python -m unittest discover -s tests
 }
 ```
 
-数组 `[1200,420]` 依次为 `[downloads_all_time, downloads_rolling_30d]`。`null` 表示 API 未提供数据，而不是 0。`schema_version` 1 表示只含模型，采集器会自动迁移为 2。以上仅是示例数据，不包含在正式仓库的首日页面中。
+数组 `[1200,420]` 依次为 `[downloads_all_time, downloads_rolling_30d]`。`null` 表示 API 未提供数据，而不是 0。`schema_version` 1 表示只含模型，2 增加数据集，3 为实体记录增加 `url` 字段；采集器会自动迁移旧版本。以上仅是示例数据，不包含在正式仓库的首日页面中。
 
 `data/scholar.json` 保存最新的学术档案，`data/scholar_history.json` 保存逐日的引用、h-index、i10-index 与论文数快照：
 
@@ -242,6 +311,33 @@ PYTHONPATH=. python -m unittest discover -s tests
 
 `status` 取值：`ok`（采集成功）、`unavailable`（本次失败，`error` 说明原因）、`disabled`（配置中未启用）。失败但此前成功过的平台会额外带 `stale: true` 并保留上次的数值。
 
+`data/github.json` 保存最新的 GitHub 账号指标与仓库清单，`data/github_history.json` 保存逐日的粉丝数快照：
+
+```json
+{
+  "schema_version": 1,
+  "captured_at": "2026-10-21T09:51:04Z",
+  "status": "ok",
+  "error": null,
+  "account": {
+    "login": "isLinXu", "name": "Hertz",
+    "followers": 344, "following": 992, "public_repos": 431,
+    "url": "https://github.com/isLinXu"
+  },
+  "repositories": [{
+    "id": "isLinXu/model-observatory", "name": "model-observatory",
+    "full_name": "isLinXu/model-observatory",
+    "url": "https://github.com/isLinXu/model-observatory",
+    "language": "JavaScript", "stars": 0, "forks": 0,
+    "is_fork": false, "archived": false,
+    "updated_at": "2026-10-21T09:11:38Z"
+  }],
+  "projects": {"status": "unavailable", "reason": "未配置 GITHUB_TOKEN，无法读取 GitHub Projects", "items": []}
+}
+```
+
+`status` 取值：`ok`（采集成功）、`stale`（本次失败，展示的是上一次快照，原因见 `error`）。`projects.status` 取值：`ok`、`unavailable`（缺少 token 或 GraphQL 报错）、`skipped`（本次运行跳过了 Projects 查询）。
+
 ## 修改为其他 HF 账号
 
 修改 `.github/workflows/pages.yml` 中的 `HF_AUTHOR: gatilin`，并同步把 `data/latest.json` / `data/history.json` 的 `author` 改成新用户名、清空 `snapshots`，更新 `site/index.html` 中账户固定文案。或者直接重建空白 JSON。采集器会校验作者，避免不同账户数据混在一起。学术档案同理：修改 `SCHOLAR_USER_ID`，并清空 `data/scholar.json` / `data/scholar_history.json`（`profile_id` 变化时旧文件会被采集器拒绝覆盖，需要手动删除）。
@@ -256,6 +352,7 @@ config/social_sources.json    # 社交平台数据源声明式配置
 scripts/collect.py            # Hugging Face 模型 + 数据集 API、异常保护、快照持久化
 scripts/collect_scholar.py    # 公开 Google Scholar 档案抓取与解析
 scripts/collect_social.py     # 社交平台粉丝数采集（可插拔 fetcher 注册表）
+scripts/collect_github.py      # GitHub 账号指标、公开仓库分页与 Projects 采集
 scripts/build.py              # 组装纯静态站点
 scripts/serve.py              # 本地预览用多线程静态服务器
 site/index.html               # 看板 DOM
@@ -274,8 +371,11 @@ data/scholar.json             # 最新学术档案
 data/scholar_history.json     # 逐日引用快照
 data/social.json              # 最新社交平台指标
 data/social_history.json      # 逐日粉丝数快照
-tests/test_collect.py         # 离线测试（数据集 + 档案解析）
+data/github.json              # 最新 GitHub 账号指标 + 公开仓库 + Projects
+data/github_history.json      # 逐日 GitHub 粉丝快照
+tests/test_collect.py         # 离线测试（数据集 + url 字段 + 档案解析）
 tests/test_social.py          # 离线测试（社交配置、降级、小红书解析）
+tests/test_github.py          # 离线测试（仓库转换、历史、降级）
 tests/fixtures/               # 离线测试用的真实页面片段
 ```
 
@@ -293,5 +393,6 @@ tests/fixtures/               # 离线测试用的真实页面片段
 - 学术档案依赖 Google Scholar 的公开页面：若被验证码拦截，采集会跳过并保留上一次成功的快照，网站仍可正常展示下载统计。不要提高抓取频率，工作流每日一次即可。
 - 知乎与小红书需要登录态，请把 Cookie 存在**仓库 Secret**（`ZHIHU_COOKIE` / `XIAOHONGSHU_COOKIE`）而不是提交进代码库。Cookie 会过期，属于正常现象：过期后该平台显示为「暂不可用」并保留上次数据，其它平台不受影响。
 - 社交平台的粉丝数会随平台自身的风控与统计口径变化，与下载统计一样，负向跳变会被保留并标记为待核查，而不是被静默抹平。
+- GitHub 匿名 REST 有 60 次/小时的 IP 限速。仓库数量多时（>1000）建议配置 `GITHUB_TOKEN`；触发限速时采集器会自动退避重试，仍失败则保留上次快照并在页面提示。
 
 **官方文档**：[HF Hub HfApi.list_models](https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api) · [GitHub Pages 自定义 Actions](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)

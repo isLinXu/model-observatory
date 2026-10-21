@@ -15,11 +15,29 @@ import os
 import sys
 import tempfile
 import time
+import urllib.parse
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 2
-LEGACY_SCHEMA_VERSIONS = (1,)
+SCHEMA_VERSION = 3
+LEGACY_SCHEMA_VERSIONS = (1, 2)
+
+# Canonical landing page for a public model / dataset repository.
+HF_MODEL_URL = "https://huggingface.co/{repo_id}"
+HF_DATASET_URL = "https://huggingface.co/datasets/{repo_id}"
+
+
+def entity_url(template: str, repo_id: str) -> str:
+    """Build the canonical public URL of a repository.
+
+    Every entity carries a `url` field so the dashboard can offer a one-click
+    link. The field is optional in the schema: when a source cannot supply a
+    link the value is None and the site renders plain text instead of a
+    broken anchor.
+    """
+    if not repo_id:
+        return None
+    return template.format(repo_id=urllib.parse.quote(repo_id, safe="/"))
 
 
 def number_or_none(value: Any) -> int | None:
@@ -66,6 +84,7 @@ def api_to_models(infos: Any, author: str) -> list[dict]:
             created = None
         items.append({
             "id": model_id,
+            "url": entity_url(HF_MODEL_URL, model_id),
             "all_time": number_or_none(getattr(info, "downloads_all_time", None)),
             "last_30d": number_or_none(getattr(info, "downloads", None)),
             "likes": number_or_none(getattr(info, "likes", None)),
@@ -95,6 +114,7 @@ def api_to_datasets(infos: Any, author: str) -> list[dict]:
             created = None
         items.append({
             "id": dataset_id,
+            "url": entity_url(HF_DATASET_URL, dataset_id),
             "all_time": number_or_none(getattr(info, "downloads_all_time", None)),
             "last_30d": number_or_none(getattr(info, "downloads", None)),
             "likes": number_or_none(getattr(info, "likes", None)),
@@ -152,7 +172,13 @@ def fetch_datasets(author: str, retries: int = 3) -> list[dict]:
 
 
 def migrate_history(obj: dict, author: str) -> dict:
-    """Bring a v1 history (models only) forward to the current schema."""
+    """Bring an older history (models only, no urls) forward to the current schema.
+
+    Snapshot payloads keep the compact ``{id: [all_time, rolling_30d]}`` shape
+    for backwards compatibility with existing readers, so no url is injected
+    into historical snapshots; the url lives on the entity records of
+    ``latest.json``.
+    """
     snapshots = []
     for snapshot in obj.get("snapshots", []):
         if not isinstance(snapshot, dict):

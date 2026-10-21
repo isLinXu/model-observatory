@@ -133,7 +133,8 @@ MO.render = (() => {
       const checked = state.compare.includes(model.id) ? 'checked' : '';
       return `<tr><td><button class="model-link" data-detail="${esc(model.id)}" title="查看 ${esc(model.id)} 的历史">` +
         `<span class="model-square">${esc(model.id.split('/').at(-1).slice(0, 1).toUpperCase())}</span>` +
-        `<span class="model-title">${esc(model.id.split('/').slice(1).join('/'))}</span></button></td>` +
+        `<span class="model-title">${esc(model.id.split('/').slice(1).join('/'))}</span></button>` +
+        `${model.url ? `<a class="ext-link" href="${esc(model.url)}" target="_blank" rel="noopener noreferrer" title="在 Hugging Face 打开 ${esc(model.id)}" aria-label="打开 ${esc(model.id)} 的 Hugging Face 页面">↗</a>` : ''}</td>` +
         `<td class="align-right">${esc(fmt(model.all_time))}</td>` +
         `<td class="align-right">${esc(fmt(model.last_30d))}</td>` +
         `<td class="align-right ${tone(model.d1)}">${esc(signed(model.d1))}</td>` +
@@ -228,9 +229,12 @@ MO.render = (() => {
       const stateName = item.all_time === null ? '累计缺失' : item.d1 < 0 ? '统计修正?' : item.d1 === null ? '待积累' : '正常';
       const stateClass = item.all_time === null ? 'missing' : item.d1 < 0 ? 'alert' : item.d1 === null ? 'new' : '';
       const tags = [...(item.modality || []), ...(item.languages || []).slice(0, 2)].slice(0, 3);
-      return `<tr><td><a class="model-link" href="https://huggingface.co/datasets/${encodeURI(item.id)}" target="_blank" rel="noopener noreferrer">` +
+      return `<tr><td>${item.url
+        ? `<a class="model-link" href="${esc(item.url)}" target="_blank" rel="noopener noreferrer" title="在 Hugging Face 打开 ${esc(item.id)}">`
+        : `<span class="model-link model-link-plain" title="该数据集没有可用的外部链接">`}` +
         `<span class="model-square">${esc(item.id.split('/').at(-1).slice(0, 1).toUpperCase())}</span>` +
-        `<span class="model-title">${esc(item.id.split('/').slice(1).join('/'))}</span></a></td>` +
+        `<span class="model-title">${esc(item.id.split('/').slice(1).join('/'))}</span>` +
+        `${item.url ? '</a>' : '</span>'}</td>` +
         `<td class="align-right">${esc(fmt(item.all_time))}</td>` +
         `<td class="align-right">${esc(fmt(item.last_30d))}</td>` +
         `<td class="align-right ${tone(item.d1)}">${esc(signed(item.d1))}</td>` +
@@ -290,7 +294,9 @@ MO.render = (() => {
     const rows = papers.filter(paper => !search || `${paper.title} ${paper.authors || ''} ${paper.venue || ''}`.toLowerCase().includes(search));
     $('paperCount').textContent = `${fmt(rows.length)} / ${fmt(papers.length)} PAPERS`;
     $('paperRows').innerHTML = rows.length ? rows.map(paper =>
-      `<tr><td><a class="paper-title" href="${esc(paper.url || '#')}" target="_blank" rel="noopener noreferrer">${esc(paper.title)}</a></td>` +
+      `<tr><td>${paper.url
+        ? `<a class="paper-title" href="${esc(paper.url)}" target="_blank" rel="noopener noreferrer">${esc(paper.title)}</a>`
+        : `<span class="paper-title paper-title-plain" title="该论文没有可用的外部链接">${esc(paper.title)}</span>`}</td>` +
       `<td class="paper-authors">${esc(paper.authors || '—')}</td>` +
       `<td class="paper-venue">${esc(paper.venue || '—')}</td>` +
       `<td class="align-right">${esc(paper.year ?? '—')}</td>` +
@@ -459,6 +465,195 @@ MO.render = (() => {
       button.classList.toggle('active', button.dataset.socialView === view));
   }
 
+  // --- GitHub board ---------------------------------------------------------
+
+  /** Banner inside the GitHub section for errors and stale data. */
+  function renderGitHubBanner() {
+    const github = data.state.github;
+    const banner = $('githubBanner');
+    if (!github) {
+      banner.classList.add('hidden');
+      return;
+    }
+    if (github.status === 'unavailable') {
+      banner.textContent = `GitHub 数据暂不可用：${github.error || '未知原因'}。看板将保留空白，其他板块不受影响。`;
+      banner.classList.remove('hidden');
+      banner.classList.remove('info');
+      return;
+    }
+    if (github.status === 'stale' && github.error) {
+      banner.textContent = `本次抓取失败，展示的是上一次成功快照：${github.error}`;
+      banner.classList.remove('hidden');
+      banner.classList.add('info');
+      return;
+    }
+    banner.classList.add('hidden');
+  }
+
+  function renderGitHubSummary() {
+    const github = data.state.github || {};
+    const account = github.account || {};
+    const totals = data.githubTotals();
+    const growth = data.githubGrowth();
+    const followers = Number.isFinite(account.followers) ? account.followers : null;
+
+    $('statGithubFollowers').textContent = followers === null ? '—' : countCN(followers);
+    $('statGithubFollowers').title = followers === null ? '无数据' : fmt(followers);
+    $('statGithubFollowersSub').textContent = followers === null
+      ? '暂未采集到粉丝数'
+      : `精确值 ${fmt(followers)} · ${esc(account.login || '—')}`;
+
+    $('statGithubGrowth').textContent = growth.delta === null ? '—' : signedCN(growth.delta);
+    $('statGithubGrowth').classList.toggle('neg', Boolean(growth.delta < 0));
+    $('statGithubGrowthSub').textContent = growth.delta === null
+      ? '需至少两日快照'
+      : `自 ${growth.from} 至 ${growth.to}`;
+
+    $('statGithubRate').textContent = growth.rate === null
+      ? '—'
+      : `${growth.rate > 0 ? '+' : ''}${(growth.rate * 100).toFixed(2)}%`;
+    $('statGithubRate').classList.toggle('neg', Boolean(growth.rate < 0));
+    $('statGithubRateSub').textContent = growth.rate === null
+      ? '需至少两日快照'
+      : `基于 ${fmt(growth.delta)} 人的净增`;
+
+    $('statGithubRepos').textContent = fmt(totals.repositories);
+    $('statGithubReposSub').textContent = `Star ${fmt(totals.stars)} · Fork ${fmt(totals.forks)} · ${fmt(totals.languages)} 种语言`;
+
+    $('githubRepoBadge').textContent = fmt(totals.repositories);
+    $('githubCapturedAt').textContent = github.captured_at
+      ? `采集于 ${timestamp(github.captured_at)} UTC`
+      : '尚无 GitHub 数据';
+
+    const profileUrl = account.url || 'https://github.com/isLinXu';
+    $('githubProfileLink').href = profileUrl;
+  }
+
+  function renderGitHubChart() {
+    const points = data.githubSeries();
+    charts.line($('githubChart'), [{ name: '关注者', points, color: 'var(--chart-4)' }], {
+      area: true,
+      label: 'GitHub 粉丝数趋势',
+      emptyText: '需要至少两天的 GitHub 快照才能绘制粉丝变化曲线。'
+    });
+    $('githubChartNote').textContent = points.length
+      ? `${fmt(points.length)} 个快照 · 最新 ${fmt(points.at(-1).value)}`
+      : '—';
+  }
+
+  function renderGitHubLanguageChart() {
+    const languages = data.githubLanguages().slice(0, 8);
+    const total = data.githubLanguages().reduce((sum, item) => sum + item.count, 0);
+    if (!languages.length) {
+      charts.yearBars($('githubLangChart'), [], { emptyText: '暂无语言数据。' });
+      $('githubLangTotal').textContent = '—';
+      return;
+    }
+    charts.ranking($('githubLangChart'), languages.map(item => ({
+      label: item.language,
+      value: item.count,
+      note: `${fmt(item.count)} 个仓库`,
+      color: 'var(--chart-2)'
+    })), { emptyText: '暂无语言数据。' });
+    $('githubLangTotal').textContent = `共 ${fmt(total)} 个带语言标注的仓库`;
+  }
+
+  function renderGitHubTopRepos() {
+    const repos = [...(data.state.github?.repositories || [])]
+      .filter(repo => (repo.stars || 0) > 0)
+      .sort((a, b) => (b.stars || 0) - (a.stars || 0))
+      .slice(0, 8);
+    if (!repos.length) {
+      $('githubTopRepos').innerHTML = '<div class="chart-empty">暂无带 Star 的公开仓库</div>';
+      return;
+    }
+    const max = repos[0].stars || 1;
+    $('githubTopRepos').innerHTML = repos.map((repo, index) =>
+      `<div class="top-item"><span class="rank-index">${String(index + 1).padStart(2, '0')}</span>` +
+      `<div><div class="rank-model"><a class="rank-name" href="${esc(repo.url || '#')}" target="_blank" rel="noopener noreferrer" title="${esc(repo.full_name)}">${esc(repo.name)}</a></div>` +
+      `<div class="rank-progress"><span style="width:${(repo.stars / max * 100).toFixed(1)}%"></span></div></div>` +
+      `<span class="rank-number" title="${esc(fmt(repo.stars))} 个 Star">${esc(compact(repo.stars))}</span></div>`
+    ).join('');
+  }
+
+  function renderGitHubTable() {
+    const all = data.state.github?.repositories || [];
+
+    // Keep the language dropdown in sync with whatever the snapshot contains.
+    const select = $('filterGithubLanguage');
+    const languages = data.githubLanguages().map(item => item.language);
+    const wanted = ['all', ...languages].join('|');
+    if (select.dataset.signature !== wanted) {
+      select.dataset.signature = wanted;
+      const current = data.state.githubLanguage;
+      select.innerHTML = ['<option value="all">全部语言</option>']
+        .concat(languages.map(language => `<option value="${esc(language)}">${esc(language)}</option>`))
+        .join('');
+      select.value = languages.includes(current) ? current : 'all';
+      data.state.githubLanguage = select.value;
+    }
+
+    const rows = data.githubRepositories();
+    const size = data.state.githubPageSize;
+    const pages = Math.max(1, Math.ceil(rows.length / size));
+    const page = Math.min(Math.max(1, data.state.githubPage), pages);
+    data.state.githubPage = page;
+    const slice = rows.slice((page - 1) * size, page * size);
+
+    $('githubTableCount').textContent = `${fmt(rows.length)} / ${fmt(all.length)} REPOSITORIES`;
+    $('githubRows').innerHTML = slice.length ? slice.map(repo => {
+      const flags = [];
+      if (repo.is_fork) flags.push('Fork');
+      if (repo.archived) flags.push('已归档');
+      const stateName = repo.archived ? '已归档' : repo.is_fork ? 'Fork 仓库' : '正常';
+      const stateClass = repo.archived ? 'missing' : repo.is_fork ? 'new' : '';
+      return `<tr><td><a class="model-link" href="${esc(repo.url || '#')}" target="_blank" rel="noopener noreferrer" title="${esc(repo.full_name)}">` +
+        `<span class="model-square">${esc((repo.name || '?').slice(0, 1).toUpperCase())}</span>` +
+        `<span class="model-title">${esc(repo.name)}</span></a>` +
+        `${repo.description ? `<span class="repo-desc" title="${esc(repo.description)}">${esc(repo.description)}</span>` : ''}</td>` +
+        `<td class="align-right">${esc(fmt(repo.stars))}</td>` +
+        `<td class="align-right">${esc(fmt(repo.forks))}</td>` +
+        `<td>${repo.language ? `<span class="chip tiny">${esc(repo.language)}</span>` : '—'}</td>` +
+        `<td class="repo-updated">${esc(timestamp(repo.updated_at))}</td>` +
+        `<td><span class="state ${stateClass}">${esc(stateName)}</span>${flags.length ? `<span class="repo-flags">${flags.map(flag => `<span class="chip tiny muted-chip">${esc(flag)}</span>`).join('')}</span>` : ''}</td></tr>`;
+    }).join('') : '<tr><td colspan="6" class="no-rows">没有符合条件的仓库</td></tr>';
+
+    const pagination = $('githubPagination');
+    pagination.hidden = rows.length <= size;
+    $('githubPageInfo').textContent = `第 ${fmt(page)} / ${fmt(pages)} 页 · 每页 ${fmt(size)} 条`;
+    $('githubPrevPage').disabled = page <= 1;
+    $('githubNextPage').disabled = page >= pages;
+  }
+
+  function renderGitHubProjects() {
+    const projects = data.state.github?.projects || {};
+    const items = projects.items || [];
+    const wrap = $('githubProjects');
+    if (!items.length) {
+      wrap.classList.add('hidden');
+      return;
+    }
+    wrap.classList.remove('hidden');
+    $('githubProjectList').innerHTML = items.map(project =>
+      `<a class="project-card" href="${esc(project.url || '#')}" target="_blank" rel="noopener noreferrer">` +
+      `<div class="project-title">${esc(project.title || '未命名项目')}</div>` +
+      `${project.description ? `<div class="project-desc">${esc(project.description)}</div>` : ''}` +
+      `<div class="project-meta"><span>#${esc(project.number ?? '—')}</span>` +
+      `<span>${esc(project.state || '')}</span>` +
+      `<span>${esc(timestamp(project.updated_at))}</span></div></a>`
+    ).join('');
+  }
+
+  function renderGitHub() {
+    renderGitHubBanner();
+    renderGitHubSummary();
+    renderGitHubChart();
+    renderGitHubLanguageChart();
+    renderGitHubTopRepos();
+    renderGitHubTable();
+    renderGitHubProjects();
+  }
+
   // --- Model detail overlay -------------------------------------------------
 
   function renderDetail() {
@@ -485,7 +680,9 @@ MO.render = (() => {
       `<div class="detail-note">30日净变：<b class="${tone(d30)}">${esc(signed(d30))}</b> · 点开曲线可查各采集日期的具体数字</div>` +
       `<table class="history-table"><thead><tr><th>UTC 日期</th><th class="align-right">累计</th>` +
       `<th class="align-right">滚动30天</th><th class="align-right">相邻净变化</th></tr></thead><tbody id="detailTable"></tbody></table></div>` +
-      `<a class="detail-action" href="https://huggingface.co/${encodeURI(id)}" target="_blank" rel="noopener noreferrer">前往 Hugging Face 模型主页 ↗</a>`;
+      (model.url
+        ? `<a class="detail-action" href="${esc(model.url)}" target="_blank" rel="noopener noreferrer">前往 Hugging Face 模型主页 ↗</a>`
+        : '<p class="detail-note">该模型没有可用的外部链接。</p>');
 
     charts.line($('detailChartAll'), [{ name: id, points: data.modelSeries(id, 'all_time'), color: 'var(--chart-1)' }],
       { area: true, label: '该模型累计下载趋势' });
@@ -523,6 +720,14 @@ MO.render = (() => {
     renderSocialCards,
     renderSocialTable,
     renderSocialChart,
+    renderGitHub,
+    renderGitHubBanner,
+    renderGitHubSummary,
+    renderGitHubChart,
+    renderGitHubLanguageChart,
+    renderGitHubTopRepos,
+    renderGitHubTable,
+    renderGitHubProjects,
     renderDetail
   };
 })();

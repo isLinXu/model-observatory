@@ -635,3 +635,80 @@ select { height: 38px; background: var(--input-bg); border: 1px solid var(--inpu
   .platform-chips { width: 100%; }
   .social-followers { font-size: 26px; }
 }
+
+/* --- GitHub board --------------------------------------------------------- */
+.github-chart-panel { margin-bottom: var(--gap); }
+.github-table td:first-child { white-space: normal; }
+.repo-desc {
+  display: block;
+  margin: 5px 0 0 34px;
+  color: var(--faint);
+  font-size: 10.5px;
+  line-height: 1.55;
+  max-width: 420px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+.repo-updated { color: var(--muted); font-size: 11px; white-space: nowrap; }
+.repo-flags { display: inline-flex; gap: 4px; margin-left: 6px; }
+.pagination {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  margin: 16px 0 4px;
+}
+.pagination .button:disabled { opacity: .4; cursor: not-allowed; }
+.github-projects { margin: 20px 0 6px; }
+.project-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+  gap: 12px;
+}
+.project-card {
+  display: block;
+  padding: 14px 15px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-2);
+  color: inherit;
+  text-decoration: none;
+  transition: border-color .18s ease, transform .18s ease;
+}
+.project-card:hover { border-color: var(--blue); transform: translateY(-2px); }
+.project-title { font-weight: 650; color: var(--txt-strong); font-size: 13px; line-height: 1.5; }
+.project-desc { color: var(--faint); font-size: 10.5px; margin-top: 6px; line-height: 1.55; }
+.project-meta {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 10px;
+  color: var(--muted);
+  font-size: 9.5px;
+  letter-spacing: .4px;
+}
+@media (max-width: 700px) {
+  .repo-desc { max-width: none; margin-left: 0; }
+  .pagination { gap: 9px; flex-wrap: wrap; }
+}
+
+/* --- External link affordance for entity rows ----------------------------- */
+.ext-link {
+  display: inline-block;
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 5px;
+  border: 1px solid var(--line-2);
+  color: var(--blue);
+  font-size: 10px;
+  line-height: 1.6;
+  text-decoration: none;
+  vertical-align: middle;
+  transition: border-color .16s ease, background .16s ease;
+}
+.ext-link:hover { border-color: var(--blue); background: var(--surface-3); }
+.model-link-plain { cursor: default; color: var(--txt-soft); }
+.paper-title-plain { color: var(--txt-soft); }

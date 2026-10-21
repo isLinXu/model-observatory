@@ -25,6 +25,14 @@ MO.data = (() => {
     socialView: 'cards',
     socialPlatforms: 'all',
     socialRange: '30',
+    github: null,
+    githubSnapshots: [],
+    githubView: 'repositories',
+    githubSort: 'updated',
+    githubLanguage: 'all',
+    githubSearch: '',
+    githubPage: 1,
+    githubPageSize: 12,
     status: 'loading'
   };
 
@@ -67,7 +75,8 @@ MO.data = (() => {
       getJSON('./data/latest.json', '下载数据'),
       getJSON('./data/history.json', '历史快照')
     ]);
-    const supported = [1, 2];
+    // v1: models only. v2: models + datasets. v3: adds the `url` field.
+    const supported = [1, 2, 3];
     if (!supported.includes(latest.schema_version) || !supported.includes(history.schema_version)) {
       throw new Error('下载数据格式不兼容');
     }
@@ -114,10 +123,51 @@ MO.data = (() => {
     }
   }
 
+  /**
+   * GitHub account metrics. The panel is optional: a failure keeps the rest of
+   * the site alive and the board reports the reason inside the section.
+   */
+  async function loadGitHub() {
+    try {
+      const [latest, history] = await Promise.all([
+        getJSON('./data/github.json', 'GitHub 数据'),
+        getJSON('./data/github_history.json', 'GitHub 历史')
+      ]);
+      state.github = latest;
+      state.githubSnapshots = Array.isArray(history.snapshots)
+        ? [...history.snapshots].sort((a, b) => a.date.localeCompare(b.date))
+        : [];
+    } catch (error) {
+      console.warn('GitHub 数据读取失败：', error);
+      state.github = { status: 'unavailable', error: error.message, account: {}, repositories: [], projects: { items: [] } };
+      state.githubSnapshots = [];
+    }
+  }
+
+  /**
+   * Re-read the published GitHub snapshot, bypassing the browser cache.
+   * The site is static, so this refreshes the view from the latest deployed
+   * data; a full re-collection is triggered by the GitHub Actions workflow
+   * (workflow_dispatch) and lands on the next deployment.
+   */
+  async function reloadGitHub() {
+    const stamp = Date.now();
+    const [latest, history] = await Promise.all([
+      getJSON(`./data/github.json?t=${stamp}`, 'GitHub 数据'),
+      getJSON(`./data/github_history.json?t=${stamp}`, 'GitHub 历史')
+    ]);
+    state.github = latest;
+    state.githubSnapshots = Array.isArray(history.snapshots)
+      ? [...history.snapshots].sort((a, b) => a.date.localeCompare(b.date))
+      : [];
+    notify();
+    return latest;
+  }
+
   /** Load every dataset. Only a download failure is fatal for the page. */
   async function loadAll() {
     await loadDownloads();
-    await Promise.all([loadScholar(), loadSocial()]);
+    await Promise.all([loadScholar(), loadSocial(), loadGitHub()]);
     state.status = 'ready';
   }
 
@@ -243,6 +293,78 @@ MO.data = (() => {
     return current - previous;
   }
 
+  // --- GitHub helpers -------------------------------------------------------
+
+  /** Follower count per daily snapshot, for the trend chart. */
+  function githubSeries() {
+    return state.githubSnapshots
+      .filter(snapshot => Number.isFinite(snapshot.followers))
+      .map(snapshot => ({ date: snapshot.date, value: snapshot.followers }));
+  }
+
+  /**
+   * Follower growth since the previous snapshot.
+   * Returns { delta, rate } where rate is a fraction (0.05 = +5%).
+   */
+  function githubGrowth() {
+    const snapshots = state.githubSnapshots
+      .filter(snapshot => Number.isFinite(snapshot.followers));
+    if (snapshots.length < 2) return { delta: null, rate: null, from: null, to: null };
+    const previous = snapshots.at(-2), latest = snapshots.at(-1);
+    const delta = latest.followers - previous.followers;
+    const rate = previous.followers ? delta / previous.followers : null;
+    return { delta, rate, from: previous.date, to: latest.date };
+  }
+
+  /** Distinct languages present in the repository list, most used first. */
+  function githubLanguages() {
+    const counts = new Map();
+    for (const repo of state.github?.repositories || []) {
+      const language = repo.language || '';
+      if (!language) continue;
+      counts.set(language, (counts.get(language) || 0) + 1);
+    }
+    return [...counts.entries()]
+      .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([language, count]) => ({ language, count }));
+  }
+
+  /**
+   * Repositories filtered by the current search box and language dropdown,
+   * then sorted. Sorting is always descending for the numeric columns.
+   */
+  function githubRepositories() {
+    const search = state.githubSearch.trim().toLowerCase();
+    const language = state.githubLanguage;
+    let rows = (state.github?.repositories || []).filter(repo => {
+      if (language !== 'all' && (repo.language || '') !== language) return false;
+      if (!search) return true;
+      const haystack = [
+        repo.name || '', repo.full_name || '', repo.description || '',
+        repo.language || '', (repo.topics || []).join(' ')
+      ].join(' ').toLowerCase();
+      return haystack.includes(search);
+    });
+    const sort = state.githubSort;
+    if (sort === 'name') rows.sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+    else if (sort === 'stars') rows.sort((a, b) => (b.stars || 0) - (a.stars || 0) || (a.name || '').localeCompare(b.name || ''));
+    else if (sort === 'forks') rows.sort((a, b) => (b.forks || 0) - (a.forks || 0) || (a.name || '').localeCompare(b.name || ''));
+    else rows.sort((a, b) => String(b.updated_at || '').localeCompare(String(a.updated_at || '')));
+    return rows;
+  }
+
+  /** Total star / fork counts across every public repository. */
+  function githubTotals() {
+    const repos = state.github?.repositories || [];
+    return {
+      repositories: repos.length,
+      stars: repos.reduce((sum, repo) => sum + (repo.stars || 0), 0),
+      forks: repos.reduce((sum, repo) => sum + (repo.forks || 0), 0),
+      forksOnly: repos.filter(repo => repo.is_fork).length,
+      languages: new Set(repos.map(repo => repo.language).filter(Boolean)).size
+    };
+  }
+
   return {
     state,
     subscribe,
@@ -260,6 +382,12 @@ MO.data = (() => {
     socialSources,
     socialSeries,
     socialDelta,
-    selectedSocialIds
+    selectedSocialIds,
+    reloadGitHub,
+    githubSeries,
+    githubGrowth,
+    githubLanguages,
+    githubRepositories,
+    githubTotals
   };
 })();

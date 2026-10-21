@@ -130,6 +130,10 @@ def parse_papers(page: str) -> list[dict]:
         url = html_lib.unescape(title_match.group(1))
         if url.startswith("/"):
             url = SCHOLAR_BASE + url
+        # Some rows have no usable link; the field stays None and the site
+        # renders the title as plain text instead of a dead anchor.
+        if not url.startswith("http"):
+            url = None
         grays = re.findall(r'<div class="gs_gray">(.*?)</div>', row, re.S)
         authors = strip_tags(grays[0]) if grays else ""
         venue = strip_tags(grays[1]) if len(grays) > 1 else ""

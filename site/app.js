@@ -6,7 +6,7 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
-  const { fmt, signed, tone } = MO.format;
+  const { fmt, signed, tone, timestamp } = MO.format;
   const data = MO.data;
   const render = MO.render;
 
@@ -58,6 +58,43 @@
       data.socialDelta(source.id), source.status, source.updated_at, source.url
     ]);
     download(`gatilin-social-${data.state.social?.captured_at?.slice(0, 10) || 'latest'}.csv`,
+      '\uFEFF' + [header, ...rows].map(row => row.map(csvEscape).join(',')).join('\r\n'),
+      'text/csv;charset=utf-8');
+  }
+
+  /**
+   * Manual refresh of the GitHub board. The site is static, so this re-reads
+   * the deployed snapshot with the cache bypassed. To collect fresh upstream
+   * data, run the "Sync Hugging Face & deploy Pages" workflow manually.
+   */
+  async function refreshGitHub() {
+    const button = $('githubRefresh');
+    const original = button.textContent;
+    button.disabled = true;
+    button.textContent = '↻ 刷新中…';
+    try {
+      const latest = await data.reloadGitHub();
+      render.renderGitHub();
+      const captured = latest?.captured_at;
+      render.showToast(captured
+        ? `已刷新至最新发布的快照（${timestamp(captured)} UTC）。若需重新采集上游数据，请在 Actions 中手动运行同步工作流。`
+        : '已刷新 GitHub 快照。');
+    } catch (error) {
+      render.showToast('刷新失败：' + error.message + '。当前仍显示上一次成功的数据。');
+    } finally {
+      button.disabled = false;
+      button.textContent = original;
+    }
+  }
+
+  function exportGitHubCsv() {
+    const header = ['full_name', 'name', 'url', 'stars', 'forks', 'language', 'updated_at',
+      'pushed_at', 'is_fork', 'archived', 'description'];
+    const rows = data.githubRepositories().map(repo => [
+      repo.full_name, repo.name, repo.url, repo.stars, repo.forks, repo.language,
+      repo.updated_at, repo.pushed_at, repo.is_fork, repo.archived, repo.description
+    ]);
+    download(`gatilin-github-repos-${data.state.github?.captured_at?.slice(0, 10) || 'latest'}.csv`,
       '\uFEFF' + [header, ...rows].map(row => row.map(csvEscape).join(',')).join('\r\n'),
       'text/csv;charset=utf-8');
   }
@@ -159,6 +196,7 @@
         snapshots: data.state.snapshots.map(snapshot => ({ date: snapshot.date, datasets: snapshot.datasets || {} }))
       }, null, 2), 'application/json;charset=utf-8');
     $('exportSocialCSV').onclick = exportSocialCsv;
+    $('exportGitHubCSV').onclick = exportGitHubCsv;
 
     $('datasetSearch').addEventListener('input', render.renderDatasetTable);
     $('sortDataset').addEventListener('change', render.renderDatasetTable);
@@ -178,6 +216,32 @@
       data.state.socialView = button.dataset.socialView;
       render.renderSocial();
     }));
+
+    // GitHub board: search, sort, language filter, paging and manual refresh.
+    $('githubSearch').addEventListener('input', event => {
+      data.state.githubSearch = event.target.value;
+      data.state.githubPage = 1;
+      render.renderGitHubTable();
+    });
+    $('sortGithub').addEventListener('change', event => {
+      data.state.githubSort = event.target.value;
+      data.state.githubPage = 1;
+      render.renderGitHubTable();
+    });
+    $('filterGithubLanguage').addEventListener('change', event => {
+      data.state.githubLanguage = event.target.value;
+      data.state.githubPage = 1;
+      render.renderGitHubTable();
+    });
+    $('githubPrevPage').addEventListener('click', () => {
+      data.state.githubPage = Math.max(1, data.state.githubPage - 1);
+      render.renderGitHubTable();
+    });
+    $('githubNextPage').addEventListener('click', () => {
+      data.state.githubPage += 1;
+      render.renderGitHubTable();
+    });
+    $('githubRefresh').addEventListener('click', refreshGitHub);
 
     $('closeDetail').onclick = closeDetail;
     $('closeOverlayBg').onclick = closeDetail;
@@ -202,6 +266,7 @@
     render.renderScholar();
     render.renderPapers();
     render.renderSocial();
+    render.renderGitHub();
   }
 
   async function boot() {
@@ -217,6 +282,7 @@
         '。请检查 GitHub Actions 是否成功完成采集与部署。');
       // Secondary panels still render so a partial failure is visible, not blank.
       try { render.renderSocial(); } catch (secondaryError) { console.error(secondaryError); }
+      try { render.renderGitHub(); } catch (secondaryError) { console.error(secondaryError); }
     }
   }
 

@@ -21,8 +21,10 @@ def build():
         if not src.is_file():
             raise FileNotFoundError(f"{src} missing: run python scripts/collect.py first")
         shutil.copy2(src, data_dir / filename)
-    # Academic profile and social files are optional: the site degrades gracefully when absent.
-    for filename in ["scholar.json", "scholar_history.json", "social.json", "social_history.json"]:
+    # Academic profile, social and GitHub files are optional: the site
+    # degrades gracefully when any of them is absent.
+    for filename in ["scholar.json", "scholar_history.json", "social.json", "social_history.json",
+                     "github.json", "github_history.json"]:
         src = ROOT / "data" / filename
         if src.is_file():
             shutil.copy2(src, data_dir / filename)

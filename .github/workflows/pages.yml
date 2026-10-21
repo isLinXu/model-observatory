@@ -58,12 +58,21 @@ jobs:
           XIAOHONGSHU_COOKIE: ${{ secrets.XIAOHONGSHU_COOKIE }}
         run: python scripts/collect_social.py --config config/social_sources.json
 
+      - name: Capture GitHub account and repositories
+        continue-on-error: true
+        env:
+          GITHUB_LOGIN: isLinXu
+          # Optional: unlocks GitHub Projects (read:project) and raises the
+          # anonymous REST rate limit. Without it the board still works.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/collect_github.py --login "$GITHUB_LOGIN"
+
       - name: Commit historical snapshots
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/latest.json data/history.json data/scholar.json data/scholar_history.json data/social.json data/social_history.json
+          git add data/latest.json data/history.json data/scholar.json data/scholar_history.json data/social.json data/social_history.json data/github.json data/github_history.json
           if ! git diff --cached --quiet; then
             git commit -m "data: update Hugging Face downloads [skip ci]"
             git push origin HEAD:main

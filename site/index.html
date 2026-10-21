@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#090f1b">
-  <meta name="description" content="@gatilin Hugging Face 模型与数据集下载量、近期活跃度、每日增量、学术引用、社交平台粉丝数与历史数据可视化">
+  <meta name="description" content="@gatilin Hugging Face 模型与数据集下载量、近期活跃度、每日增量、学术引用、社交平台粉丝数、GitHub 粉丝与仓库看板及历史数据可视化">
   <title>Model Observatory · gatilin</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg">
   <link rel="stylesheet" href="./style.css">
@@ -31,6 +31,7 @@
         <a href="#datasets"><span class="navglyph">▤</span> 数据集</a>
         <a href="#scholar"><span class="navglyph">✦</span> 学术主页</a>
         <a href="#social"><span class="navglyph">◎</span> 社交媒体</a>
+        <a href="#github"><span class="navglyph">◐</span> GitHub 看板</a>
       </nav>
       <div class="sidebar-bottom">
         <div class="sidebar-card"><div class="sidebar-card-head"><span class="live-led"></span> DAILY SNAPSHOTS</div><p>GitHub Actions 每日采集<br>无需始终打开浏览器</p><div class="sidebar-card-foot"><span id="snapshotCount">0</span> 个历史快照</div></div>
@@ -139,7 +140,28 @@
         <div class="table-bottom" id="socialTableBottom" style="border-radius:12px;border-top:1px solid var(--table-row-line)"><span>说明：粉丝数来自各平台公开接口，口径以平台自身统计为准；知乎与小红书需要登录态，采集失败时保留上次成功值并标注为过期。</span><span class="social-table-foot"><span id="socialTableCount" class="micro muted">—</span><span id="socialSnapshotDate" class="micro muted">—</span></span></div>
       </section>
 
-      <footer class="footer"><div><span class="footer-mark">◈</span> MODEL OBSERVATORY <span class="faded">/ GATILIN</span></div><p>数据：Hugging Face Hub API · Google Scholar 公开档案 · 社交平台公开接口 · UTC 每日快照 · 仅公开内容 · 不代表独立用户数</p><a href="https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api" target="_blank" rel="noopener noreferrer">数据口径 ↗</a></footer>
+      <section id="github" class="model-section">
+        <div class="section-heading"><div><div class="section-eyebrow">GITHUB / ACCOUNT & REPOSITORIES</div><h2>GitHub 看板 <span id="githubRepoBadge">0</span></h2><p>粉丝历史变化、公开仓库与项目清单，支持搜索、排序、筛选与分页</p></div><div class="section-actions"><button class="button secondary" id="exportGitHubCSV">↓ 导出 CSV</button><button class="button" id="githubRefresh">↻ 手动刷新</button><a class="button secondary" id="githubProfileLink" href="https://github.com/isLinXu" target="_blank" rel="noopener noreferrer">GitHub 主页 ↗</a></div></div>
+        <div id="githubBanner" class="notice hidden" role="status"></div>
+        <div class="kpis" style="margin-bottom:16px">
+          <div class="kpi"><div class="kpi-label">粉丝总数 <span class="kpi-symbol">◐</span></div><div id="statGithubFollowers" class="kpi-value">—</div><div id="statGithubFollowersSub" class="kpi-caption">当前关注者数量</div></div>
+          <div class="kpi"><div class="kpi-label">粉丝增长 <span class="kpi-symbol teal">⌁</span></div><div id="statGithubGrowth" class="kpi-value">—</div><div id="statGithubGrowthSub" class="kpi-caption">较上一次快照</div></div>
+          <div class="kpi"><div class="kpi-label">增长率 <span class="kpi-symbol blue">◷</span></div><div id="statGithubRate" class="kpi-value">—</div><div id="statGithubRateSub" class="kpi-caption">较上一次快照</div></div>
+          <div class="kpi accent-kpi"><div class="kpi-label">公开仓库 <span class="kpi-symbol teal">▦</span></div><div id="statGithubRepos" class="kpi-value">—</div><div id="statGithubReposSub" class="kpi-caption">含 Star / Fork 汇总</div></div>
+        </div>
+        <div class="panel github-chart-panel"><div class="panel-head"><div><div class="panel-overline">FOLLOWERS OVER TIME</div><h2>粉丝历史趋势</h2><p>本站每日采集的 GitHub 关注者数量走势</p></div><span class="mini-icon">◐</span></div><div id="githubChart" class="chart-area" role="img" aria-label="GitHub 粉丝数趋势图"></div><div class="chart-footer"><span class="muted micro">需要至少两天的 GitHub 快照才能绘制变化曲线。</span><span id="githubChartNote" class="micro muted">—</span></div></div>
+        <div class="dashboard-grid" style="margin-bottom:20px">
+          <div class="panel panel-chart"><div class="panel-head"><div><div class="panel-overline">REPOSITORY OVERVIEW</div><h2>仓库语言分布</h2><p>公开仓库的主语言构成</p></div><span class="mini-icon">◫</span></div><div id="githubLangChart" class="chart-area" role="img" aria-label="仓库语言分布图"></div><div class="chart-footer"><span class="muted micro">语言取自 GitHub 仓库元数据，未标注语言的仓库不计入。</span><span id="githubLangTotal" class="micro muted">—</span></div></div>
+          <div class="panel panel-chart"><div class="panel-head"><div><div class="panel-overline">MOST STARRED</div><h2>高星仓库 <small>TOP 8</small></h2><p>按照 Star 数排序</p></div><span class="mini-icon">★</span></div><div id="githubTopRepos" class="top-models"><div class="chart-empty">等待 GitHub 数据</div></div><div class="top-footer">RANKED BY STARS <span>● LIVE SNAPSHOT</span></div></div>
+        </div>
+        <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="githubSearch" placeholder="搜索仓库名称、描述或话题" autocomplete="off" aria-label="搜索 GitHub 仓库"></label><select id="sortGithub" aria-label="GitHub 仓库排序方式"><option value="updated">按最近更新排序</option><option value="stars">按 Star 数排序</option><option value="forks">按 Fork 数排序</option><option value="name">按名称排序</option></select><select id="filterGithubLanguage" aria-label="按语言筛选"><option value="all">全部语言</option></select><span class="toolbar-spacer"></span><span id="githubTableCount" class="micro muted">—</span></div>
+        <div class="table-scroll"><table class="models-table github-table"><thead><tr><th class="no-sort">仓库名称</th><th class="align-right">Star</th><th class="align-right">Fork</th><th>语言</th><th>最近更新</th><th>状态</th></tr></thead><tbody id="githubRows"><tr><td colspan="6" class="no-rows">尚未有 GitHub 数据</td></tr></tbody></table></div>
+        <div class="pagination" id="githubPagination" hidden><button class="button secondary" id="githubPrevPage">← 上一页</button><span id="githubPageInfo" class="micro muted">—</span><button class="button secondary" id="githubNextPage">下一页 →</button></div>
+        <div id="githubProjects" class="github-projects hidden"><div class="section-eyebrow" style="margin-bottom:10px">GITHUB PROJECTS</div><div id="githubProjectList" class="project-grid"></div></div>
+        <div class="table-bottom"><span>说明：数据来自 GitHub 公开 REST API；Projects 列表需要配置 GITHUB_TOKEN（read:project 权限）才会显示。抓取失败时保留上一次快照并标注为过期。</span><span id="githubCapturedAt">—</span></div>
+      </section>
+
+      <footer class="footer"><div><span class="footer-mark">◈</span> MODEL OBSERVATORY <span class="faded">/ GATILIN</span></div><p>数据：Hugging Face Hub API · Google Scholar 公开档案 · 社交平台公开接口 · GitHub 公开 API · UTC 每日快照 · 仅公开内容 · 不代表独立用户数</p><a href="https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api" target="_blank" rel="noopener noreferrer">数据口径 ↗</a></footer>
     </main>
   </div>
 
