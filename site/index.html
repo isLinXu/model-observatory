@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0b1120">
-  <meta name="description" content="@gatilin Hugging Face 模型下载量、近期活跃度、每日增量与历史数据可视化">
+  <meta name="description" content="@gatilin Hugging Face 模型与数据集下载量、近期活跃度、每日增量、学术引用与历史数据可视化">
   <title>Model Observatory · gatilin</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg">
   <link rel="stylesheet" href="./style.css">
@@ -23,6 +23,8 @@
         <a href="#analytics"><span class="navglyph">◫</span> 下载趋势</a>
         <a href="#models"><span class="navglyph">▦</span> 模型清单</a>
         <a href="#compare"><span class="navglyph">⌁</span> 模型对比</a>
+        <a href="#datasets"><span class="navglyph">▤</span> 数据集</a>
+        <a href="#scholar"><span class="navglyph">✦</span> 学术主页</a>
       </nav>
       <div class="sidebar-bottom">
         <div class="sidebar-card"><div class="sidebar-card-head"><span class="live-led"></span> DAILY SNAPSHOTS</div><p>GitHub Actions 每日采集<br>无需始终打开浏览器</p><div class="sidebar-card-foot"><span id="snapshotCount">0</span> 个历史快照</div></div>
@@ -40,7 +42,7 @@
         <div class="hero-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
         <div class="hero-kicker"><span class="inline-mark"></span> GATILIN / MODEL INTELLIGENCE</div>
         <h1>模型表现，<br><em>尽在掌握。</em></h1>
-        <p>持续记录 Hugging Face 模型的下载变化，区分真实增长与滚动窗口波动。</p>
+        <p>持续记录 Hugging Face 模型与数据集的下载变化，并同步公开学术档案的引用指标。</p>
         <div class="hero-meta"><span>账户 <b>@gatilin</b></span><i></i><span>上次采集 <b id="lastSync">—</b></span><i></i><span>时区 <b>UTC</b></span></div>
       </section>
 
@@ -73,7 +75,45 @@
 
       <section id="compare" class="panel compare-panel"><div class="panel-head"><div><div class="panel-overline">SIDE-BY-SIDE</div><h2>模型对比 <span class="light-info">最多 3 个</span></h2><p>在上方模型表的「对比」一列勾选模型</p></div><button class="button text-button" id="clearCompare">清空选择 ✕</button></div><div id="compareSelected" class="compare-selected"></div><div id="compareChart" class="chart-area compare-chart"></div></section>
 
-      <footer class="footer"><div><span class="footer-mark">◈</span> MODEL OBSERVATORY <span class="faded">/ GATILIN</span></div><p>数据：Hugging Face Hub API · UTC 每日快照 · 仅公开模型 · 不代表独立用户数</p><a href="https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api" target="_blank" rel="noopener noreferrer">数据口径 ↗</a></footer>
+      <section id="datasets" class="model-section">
+        <div class="section-heading"><div><div class="section-eyebrow">INVENTORY / ALL DATASETS</div><h2>全部数据集 <span id="datasetCountBadge">0</span></h2><p>与模型完全同口径：历史累计、滚动 30 天与每日净变化</p></div><div class="section-actions"><button class="button" id="exportDatasetCSV">↓ 导出 CSV</button><button class="button secondary" id="exportDatasetJSON">↓ 导出历史 JSON</button></div></div>
+        <div class="kpis">
+          <div class="kpi"><div class="kpi-label">数据集总数 <span class="kpi-symbol">▤</span></div><div id="statDatasets" class="kpi-value">—</div><div class="kpi-caption">当前公开数据集仓库</div></div>
+          <div class="kpi"><div class="kpi-label">历史累计下载 <span class="kpi-symbol">↗</span></div><div id="statDatasetLifetime" class="kpi-value">—</div><div id="statDatasetLifetimeSub" class="kpi-caption">所有数据集累计指标之和</div></div>
+          <div class="kpi"><div class="kpi-label">最近 30 天下载 <span class="kpi-symbol blue">◷</span></div><div id="statDatasetRolling" class="kpi-value">—</div><div class="kpi-caption">Hugging Face 滚动 30 天</div></div>
+          <div class="kpi accent-kpi"><div class="kpi-label">上次采集以来净变化 <span class="kpi-symbol teal">⌁</span></div><div id="statDatasetDelta" class="kpi-value">—</div><div id="statDatasetDeltaSub" class="kpi-caption">需至少两日快照</div></div>
+        </div>
+        <div class="dashboard-grid" style="margin:16px 0 20px">
+          <div class="panel panel-chart"><div class="panel-head"><div><div class="panel-overline">DATASET PERFORMANCE OVER TIME</div><h2>数据集趋势</h2><p>历史累计与滚动 30 天下载量</p></div><div class="segmented" role="group" aria-label="数据集曲线指标"><button class="active" data-dataset-metric="all_time">历史累计</button><button data-dataset-metric="last_30d">滚动 30 天</button></div></div>
+            <div id="datasetChart" class="chart-area" role="img" aria-label="数据集下载量趋势图"></div>
+            <div class="chart-footer"><div class="legend"><span class="legend-mark"></span><span id="datasetLegend">全部数据集累计下载</span></div><div class="range-controls" role="group" aria-label="数据集历史范围"><button data-dataset-range="30" class="active">30天</button><button data-dataset-range="90">90天</button><button data-dataset-range="all">全部</button></div></div>
+          </div>
+          <div class="panel top-panel"><div class="panel-head"><div><div class="panel-overline">MOST ACTIVE</div><h2>热门数据集 <small>TOP 6</small></h2><p>按照官方最近 30 天下载量</p></div><span class="mini-icon">↗</span></div><div id="topDatasets" class="top-models"><div class="chart-empty">等待数据集数据</div></div><div class="top-footer">RANKED BY 30-DAY DOWNLOADS <span>● LIVE SNAPSHOT</span></div></div>
+        </div>
+        <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="datasetSearch" placeholder="搜索数据集名称或仓库 ID" autocomplete="off" aria-label="搜索数据集"></label><select id="sortDataset" aria-label="数据集排序方式"><option value="last_30d">按近30天下载排序</option><option value="all_time">按累计下载排序</option><option value="d1">按上次变化排序</option><option value="d7">按7天变化排序</option><option value="d30">按30天变化排序</option><option value="name">按名称排序</option></select><span class="toolbar-spacer"></span><span id="datasetTableCount" class="micro muted">—</span></div>
+        <div class="table-scroll"><table class="models-table"><thead><tr><th class="no-sort">数据集名称</th><th class="align-right">历史累计</th><th class="align-right">滚动30天</th><th class="align-right">上次变化</th><th class="align-right">7日净变</th><th class="align-right">30日净变</th><th>状态</th><th>类型</th></tr></thead><tbody id="datasetRows"><tr><td colspan="8" class="no-rows">尚未有采集数据</td></tr></tbody></table></div>
+        <div class="table-bottom"><span>说明：数据集与模型使用同一套 HF 公开 API 口径；— 表示该对比日期缺少有效快照。</span><span id="datasetSnapshotDate">—</span></div>
+      </section>
+
+      <section id="scholar" class="model-section">
+        <div class="section-heading"><div><div class="section-eyebrow">ACADEMIC PROFILE / GOOGLE SCHOLAR</div><h2>学术主页</h2><p>引用总量、h-index 与论文列表，随每日采集同步更新</p></div><div class="section-actions"><a class="button secondary" id="scholarProfileLink" href="https://scholar.google.com/citations?user=oTYM_I8AAAAJ" target="_blank" rel="noopener noreferrer">Google Scholar 档案 ↗</a></div></div>
+        <div id="scholarCard" class="scholar-card"><div class="chart-empty">等待学术档案数据</div></div>
+        <div class="kpis" style="margin:16px 0 20px">
+          <div class="kpi"><div class="kpi-label">引用总数 <span class="kpi-symbol">✦</span></div><div id="statCitations" class="kpi-value">—</div><div id="statCitationsSub" class="kpi-caption">Google Scholar 累计引用</div></div>
+          <div class="kpi"><div class="kpi-label">h-index <span class="kpi-symbol blue">h</span></div><div id="statHIndex" class="kpi-value">—</div><div class="kpi-caption">单篇最高被引次数</div></div>
+          <div class="kpi"><div class="kpi-label">i10-index <span class="kpi-symbol blue">i</span></div><div id="statI10" class="kpi-value">—</div><div class="kpi-caption">被引 ≥10 次的论文数</div></div>
+          <div class="kpi accent-kpi"><div class="kpi-label">收录论文 <span class="kpi-symbol teal">▤</span></div><div id="statPapers" class="kpi-value">—</div><div id="statPapersSub" class="kpi-caption">Google Scholar 收录数</div></div>
+        </div>
+        <div class="dashboard-grid" style="margin-bottom:20px">
+          <div class="panel panel-chart"><div class="panel-head"><div><div class="panel-overline">CITATIONS BY YEAR</div><h2>逐年引用分布</h2><p>Scholar 官方按发表年份统计的引用量</p></div><span class="mini-icon">✦</span></div><div id="scholarYearChart" class="chart-area" role="img" aria-label="逐年引用量柱状图"></div><div class="chart-footer"><span class="muted micro">逐年引用来自 Scholar 档案页的官方直方图。</span><span id="scholarYearTotal" class="micro muted">—</span></div></div>
+          <div class="panel panel-chart"><div class="panel-head"><div><div class="panel-overline">DAILY CITATION TREND</div><h2>引用增长快照</h2><p>本站每日采集的引用总量走势</p></div><span class="mini-icon">◷</span></div><div id="scholarTrendChart" class="chart-area" role="img" aria-label="引用总量每日快照趋势图"></div><div class="chart-footer"><span class="muted micro">需要至少两天的学术快照才能绘制变化曲线。</span><span id="scholarSnapshotCount" class="micro muted">—</span></div></div>
+        </div>
+        <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="paperSearch" placeholder="搜索论文标题、作者或会议" autocomplete="off" aria-label="搜索论文"></label><span class="toolbar-spacer"></span><span id="paperCount" class="micro muted">—</span></div>
+        <div class="table-scroll"><table class="models-table papers-table"><thead><tr><th class="no-sort">论文标题</th><th>作者</th><th>会议 / 期刊</th><th class="align-right">年份</th><th class="align-right">被引次数</th></tr></thead><tbody id="paperRows"><tr><td colspan="5" class="no-rows">尚未有学术档案数据</td></tr></tbody></table></div>
+        <div class="table-bottom"><span>说明：引用数据来自公开的 Google Scholar 档案页，指标口径与 Scholar 一致；仅采集档案首页可见的论文列表。</span><span id="scholarCapturedAt">—</span></div>
+      </section>
+
+      <footer class="footer"><div><span class="footer-mark">◈</span> MODEL OBSERVATORY <span class="faded">/ GATILIN</span></div><p>数据：Hugging Face Hub API · Google Scholar 公开档案 · UTC 每日快照 · 仅公开内容 · 不代表独立用户数</p><a href="https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api" target="_blank" rel="noopener noreferrer">数据口径 ↗</a></footer>
     </main>
   </div>
 

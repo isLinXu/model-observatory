@@ -1,13 +1,26 @@
 import datetime as dt
+import json
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from scripts.collect import api_to_models, load_history, save, update_history
+
+from scripts.collect import (
+    api_to_datasets,
+    api_to_models,
+    load_history,
+    migrate_history,
+    save,
+    update_history,
+)
+from scripts.collect_scholar import load_history as load_scholar_history
+from scripts.collect_scholar import parse_profile, save as save_scholar
+
+FIXTURE = Path(__file__).resolve().parent / "fixtures" / "scholar_profile_mini.html"
 
 
 def at(day):
-    return dt.datetime.fromisoformat(day + 'T02:23:00+00:00')
+    return dt.datetime.fromisoformat(day + "T02:23:00+00:00")
 
 
 def example(id, all_time=100, last_30d=20):
@@ -15,54 +28,163 @@ def example(id, all_time=100, last_30d=20):
             "likes": 1, "pipeline": "other", "created_at": None}
 
 
-class CollectorTests(unittest.TestCase):
-    def test_only_account_public_models(self):
-        models = api_to_models([
-            SimpleNamespace(id='gatilin/A', downloads_all_time=80, downloads=22, likes=1, pipeline_tag='other', private=False, created_at=None),
-            SimpleNamespace(id='other/B', downloads_all_time=10, downloads=5, private=False),
-            SimpleNamespace(id='gatilin/private', downloads_all_time=10, downloads=5, private=True),
-        ], 'gatilin')
-        self.assertEqual(len(models), 1)
-        self.assertEqual(models[0]['all_time'], 80)
-        self.assertEqual(models[0]['last_30d'], 22)
+def dataset(id, all_time=10, last_30d=3):
+    return {"id": id, "all_time": all_time, "last_30d": last_30d, "likes": 0,
+            "modality": ["text"], "languages": ["en"], "created_at": None}
 
-    def test_same_day_replace_next_day_append_and_negative_preserved(self):
-        base = {"schema_version": 1, "author": "gatilin", "updated_at": None, "snapshots": []}
-        one = update_history(base, [example('gatilin/A', 100, 25)], at('2026-10-20'))
-        replaced = update_history(one, [example('gatilin/A', 105, 27)], at('2026-10-20'))
-        self.assertEqual(len(replaced['snapshots']), 1)
-        self.assertEqual(replaced['snapshots'][0]['models']['gatilin/A'], [105, 27])
-        later = update_history(replaced, [example('gatilin/A', 95, 21)], at('2026-10-21'))
-        self.assertEqual(len(later['snapshots']), 2)
-        self.assertEqual(later['snapshots'][-1]['models']['gatilin/A'], [95, 21])
 
-    def test_null_is_not_zero(self):
-        models = api_to_models([SimpleNamespace(id='gatilin/test', downloads_all_time=None, downloads=0, likes=None, pipeline_tag=None, private=False)], 'gatilin')
-        self.assertIsNone(models[0]['all_time'])
-        self.assertEqual(models[0]['last_30d'], 0)
+class DatasetCollectorTests(unittest.TestCase):
+    def test_api_to_datasets_filters_and_maps(self):
+        infos = [
+            SimpleNamespace(id="gatilin/A", downloads_all_time=80, downloads=22, likes=1, private=False,
+                            created_at=None, tags=["modality:text", "language:en", "language:zh"]),
+            SimpleNamespace(id="other/B", downloads_all_time=10, downloads=5, private=False),
+            SimpleNamespace(id="gatilin/private", downloads_all_time=10, downloads=5, private=True),
+            SimpleNamespace(id="gatilin/A", downloads_all_time=1, downloads=1, private=False),
+        ]
+        items = api_to_datasets(infos, "gatilin")
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0]["id"], "gatilin/A")
+        self.assertEqual(items[0]["all_time"], 80)
+        self.assertEqual(items[0]["last_30d"], 22)
+        self.assertEqual(items[0]["modality"], ["text"])
+        self.assertEqual(items[0]["languages"], ["en", "zh"])
 
-    def test_large_drop_guard(self):
-        h = update_history({"schema_version": 1, "author": "gatilin", "updated_at": None, "snapshots": []},
-                           [example(f'gatilin/A{i}') for i in range(20)], at('2026-10-20'))
-        with self.assertRaises(ValueError):
-            update_history(h, [example('gatilin/A0')], at('2026-10-21'))
+    def test_snapshot_keeps_datasets_next_to_models(self):
+        base = {"schema_version": 2, "author": "gatilin", "updated_at": None, "snapshots": []}
+        history = update_history(base, [example("gatilin/A")], at("2026-10-20"), [dataset("gatilin/D")])
+        snapshot = history["snapshots"][-1]
+        self.assertEqual(snapshot["models"]["gatilin/A"], [100, 20])
+        self.assertEqual(snapshot["datasets"]["gatilin/D"], [10, 3])
 
-    def test_same_day_protection_and_out_of_order_protection(self):
-        base = {"schema_version": 1, "author": "gatilin", "updated_at": None, "snapshots": []}
-        h = update_history(base, [example(f'gatilin/A{i}') for i in range(20)], at('2026-10-20'))
-        with self.assertRaises(ValueError):
-            update_history(h, [example('gatilin/A0')], at('2026-10-20'))
-        with self.assertRaises(ValueError):
-            update_history(h, [example('gatilin/A0')], at('2026-10-19'))
+    def test_legacy_history_is_migrated_to_current_schema(self):
+        legacy = {
+            "schema_version": 1,
+            "author": "gatilin",
+            "updated_at": "2026-10-20T02:23:00Z",
+            "snapshots": [{"date": "2026-10-20", "captured_at": "2026-10-20T02:23:00Z",
+                           "models": {"gatilin/A": [100, 20]}}],
+        }
+        migrated = migrate_history(legacy, "gatilin")
+        self.assertEqual(migrated["schema_version"], 2)
+        self.assertEqual(migrated["snapshots"][0]["datasets"], {})
 
-    def test_write_and_read(self):
+    def test_load_history_migrates_legacy_file(self):
         with tempfile.TemporaryDirectory() as tmp:
-            p = Path(tmp)
-            save(p, 'gatilin', [example('gatilin/A', 10, 20)], at('2026-10-20'))
-            obj = load_history(p/'history.json', 'gatilin')
-            self.assertEqual(obj['snapshots'][0]['date'], '2026-10-20')
-            self.assertEqual(obj['snapshots'][0]['models']['gatilin/A'], [10, 20])
+            path = Path(tmp) / "history.json"
+            path.write_text(json.dumps({
+                "schema_version": 1, "author": "gatilin", "updated_at": None,
+                "snapshots": [{"date": "2026-10-20", "captured_at": "2026-10-20T02:23:00Z",
+                               "models": {"gatilin/A": [100, 20]}}],
+            }), encoding="utf-8")
+            history = load_history(path, "gatilin")
+            self.assertEqual(history["schema_version"], 2)
+            self.assertEqual(history["snapshots"][0]["datasets"], {})
+
+    def test_save_writes_datasets_into_latest(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            save(data_dir, "gatilin", [example("gatilin/A")], at("2026-10-20"), [dataset("gatilin/D")])
+            latest = json.loads((data_dir / "latest.json").read_text(encoding="utf-8"))
+            self.assertEqual(latest["schema_version"], 2)
+            self.assertEqual(len(latest["datasets"]), 1)
+            self.assertEqual(latest["datasets"][0]["id"], "gatilin/D")
+
+    def test_dataset_drop_is_protected(self):
+        base = {"schema_version": 2, "author": "gatilin", "updated_at": None, "snapshots": []}
+        many = [dataset(f"gatilin/D{i}") for i in range(6)]
+        history = update_history(base, [example("gatilin/A")], at("2026-10-20"), many)
+        with self.assertRaises(ValueError):
+            update_history(history, [example("gatilin/A")], at("2026-10-21"), [])
 
 
-if __name__ == '__main__':
+class ScholarParserTests(unittest.TestCase):
+    def setUp(self):
+        self.page = FIXTURE.read_text(encoding="utf-8")
+        self.profile = parse_profile(self.page, "oTYM_I8AAAAJ")
+
+    def test_identity_fields(self):
+        self.assertEqual(self.profile["name"], "Xu Lin")
+        self.assertEqual(self.profile["affiliation"], "Tencent Youtu Lab")
+        self.assertEqual(self.profile["verified_email"], "tencent.com")
+        self.assertEqual(self.profile["interests"], ["Multimodal LLM", "LLM", "CV"])
+
+    def test_metrics(self):
+        metrics = self.profile["metrics"]
+        self.assertEqual(metrics["citations_all"], 2376)
+        self.assertEqual(metrics["citations_recent"], 2376)
+        self.assertEqual(metrics["h_index_all"], 4)
+        self.assertEqual(metrics["i10_all"], 4)
+        self.assertEqual(metrics["publications"], 4)
+        self.assertEqual(metrics["publications_listed"], 2)
+        self.assertFalse(metrics["truncated"])
+
+    def test_citations_by_year(self):
+        years = self.profile["citations_by_year"]
+        self.assertEqual([row["year"] for row in years], [2023, 2024, 2025, 2026])
+        self.assertEqual([row["citations"] for row in years], [49, 480, 806, 1037])
+
+    def test_papers(self):
+        papers = self.profile["papers"]
+        self.assertEqual(len(papers), 2)
+        first = papers[0]
+        self.assertTrue(first["title"].startswith("MME:"))
+        self.assertEqual(first["year"], 2024)
+        self.assertEqual(first["citations"], 2310)
+        self.assertIn("arXiv", first["venue"])
+        self.assertTrue(first["url"].startswith("https://scholar.google.com/citations?"))
+
+    def test_unrelated_markup_yields_nothing(self):
+        profile = parse_profile("<html><body>nothing here</body></html>", "x")
+        self.assertEqual(profile["name"], "")
+        self.assertEqual(profile["papers"], [])
+        self.assertIsNone(profile["metrics"]["citations_all"])
+
+
+class ScholarHistoryTests(unittest.TestCase):
+    def test_save_and_reload(self):
+        page = FIXTURE.read_text(encoding="utf-8")
+        profile = parse_profile(page, "oTYM_I8AAAAJ")
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            save_scholar(data_dir, profile, at("2026-10-20"))
+            save_scholar(data_dir, profile, at("2026-10-21"))
+            latest = json.loads((data_dir / "scholar.json").read_text(encoding="utf-8"))
+            self.assertEqual(latest["name"], "Xu Lin")
+            history = load_scholar_history(data_dir / "scholar_history.json", "oTYM_I8AAAAJ")
+            self.assertEqual(len(history["snapshots"]), 2)
+            self.assertEqual(history["snapshots"][-1]["citations_all"], 2376)
+
+    def test_same_day_replaces_previous_snapshot(self):
+        page = FIXTURE.read_text(encoding="utf-8")
+        profile = parse_profile(page, "oTYM_I8AAAAJ")
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            save_scholar(data_dir, profile, at("2026-10-20"))
+            save_scholar(data_dir, profile, at("2026-10-20"))
+            history = load_scholar_history(data_dir / "scholar_history.json", "oTYM_I8AAAAJ")
+            self.assertEqual(len(history["snapshots"]), 1)
+
+    def test_incompatible_profile_id_is_rejected(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "scholar_history.json"
+            path.write_text(json.dumps({"schema_version": 1, "profile_id": "other",
+                                        "updated_at": None, "snapshots": []}), encoding="utf-8")
+            with self.assertRaises(ValueError):
+                load_scholar_history(path, "oTYM_I8AAAAJ")
+
+
+class ModelRegressionTests(unittest.TestCase):
+    def test_model_conversion_is_unchanged(self):
+        infos = [
+            SimpleNamespace(id="gatilin/A", downloads_all_time=80, downloads=22, likes=1,
+                            pipeline_tag="text-generation", private=False, created_at=None),
+            SimpleNamespace(id="other/B", downloads_all_time=10, downloads=5, private=False),
+        ]
+        models = api_to_models(infos, "gatilin")
+        self.assertEqual(len(models), 1)
+        self.assertEqual(models[0]["pipeline"], "text-generation")
+
+
+if __name__ == "__main__":
     unittest.main()

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Record public Hugging Face model statistics as append-only daily UTC snapshots.
+"""Record public Hugging Face statistics as append-only daily UTC snapshots.
 
-The Hub 'downloads' count is rolling 30-day usage; 'downloadsAllTime' is
-reported lifetime usage. Historical changes can be negative when HF revises
-its counter. Preserve this signal instead of silently clamping to zero.
+Covers both model and dataset repositories of one author. The Hub 'downloads'
+count is rolling 30-day usage; 'downloadsAllTime' is reported lifetime usage.
+Historical changes can be negative when HF revises its counter. Preserve this
+signal instead of silently clamping to zero.
 """
 from __future__ import annotations
 
@@ -17,7 +18,8 @@ import time
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+LEGACY_SCHEMA_VERSIONS = (1,)
 
 
 def number_or_none(value: Any) -> int | None:
@@ -28,6 +30,20 @@ def number_or_none(value: Any) -> int | None:
         return number if number >= 0 else None
     except (ValueError, TypeError, OverflowError):
         return None
+
+
+def tag_values(tags: Any, prefix: str, limit: int | None = None) -> list[str]:
+    """Collect unique 'prefix:value' tags, optionally capped."""
+    values: list[str] = []
+    for tag in tags or []:
+        if not isinstance(tag, str) or not tag.startswith(prefix):
+            continue
+        value = tag[len(prefix):].strip()
+        if value and value not in values:
+            values.append(value)
+        if limit and len(values) >= limit:
+            break
+    return values
 
 
 def api_to_models(infos: Any, author: str) -> list[dict]:
@@ -59,6 +75,36 @@ def api_to_models(infos: Any, author: str) -> list[dict]:
     return sorted(items, key=lambda x: x["id"].lower())
 
 
+def api_to_datasets(infos: Any, author: str) -> list[dict]:
+    """Convert DatasetInfo instances into sorted public-dataset records."""
+    items = []
+    ids = set()
+    for info in infos:
+        dataset_id = getattr(info, "id", None)
+        if not isinstance(dataset_id, str) or not dataset_id.startswith(f"{author}/"):
+            continue
+        if getattr(info, "private", False):
+            continue
+        if dataset_id in ids:
+            continue
+        ids.add(dataset_id)
+        created = getattr(info, "created_at", None)
+        if isinstance(created, dt.datetime):
+            created = created.isoformat()
+        elif not isinstance(created, str):
+            created = None
+        items.append({
+            "id": dataset_id,
+            "all_time": number_or_none(getattr(info, "downloads_all_time", None)),
+            "last_30d": number_or_none(getattr(info, "downloads", None)),
+            "likes": number_or_none(getattr(info, "likes", None)),
+            "modality": tag_values(getattr(info, "tags", None), "modality:"),
+            "languages": tag_values(getattr(info, "tags", None), "language:", limit=6),
+            "created_at": created,
+        })
+    return sorted(items, key=lambda x: x["id"].lower())
+
+
 def fetch_models(author: str, retries: int = 3) -> list[dict]:
     from huggingface_hub import HfApi
 
@@ -84,18 +130,61 @@ def fetch_models(author: str, retries: int = 3) -> list[dict]:
     raise AssertionError("unreachable")
 
 
+def fetch_datasets(author: str, retries: int = 3) -> list[dict]:
+    """Collect public datasets. An account may legitimately own none."""
+    from huggingface_hub import HfApi
+
+    client = HfApi(token=False)
+    for attempt in range(retries):
+        try:
+            infos = client.list_datasets(
+                author=author,
+                expand=["downloads", "downloadsAllTime", "likes", "createdAt", "private", "tags"],
+                token=False,
+            )
+            return api_to_datasets(infos, author)
+        except Exception as error:
+            if attempt == retries - 1:
+                raise RuntimeError(f"Unable to collect HF dataset metadata after {retries} attempts: {error}") from error
+            print(f"Hugging Face dataset request failed (attempt {attempt + 1}/{retries}): {error}", file=sys.stderr)
+            time.sleep(min(2 ** attempt * 4, 15))
+    raise AssertionError("unreachable")
+
+
+def migrate_history(obj: dict, author: str) -> dict:
+    """Bring a v1 history (models only) forward to the current schema."""
+    snapshots = []
+    for snapshot in obj.get("snapshots", []):
+        if not isinstance(snapshot, dict):
+            continue
+        migrated = dict(snapshot)
+        migrated.setdefault("datasets", {})
+        snapshots.append(migrated)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "author": author,
+        "updated_at": obj.get("updated_at"),
+        "snapshots": snapshots,
+    }
+
+
 def load_history(path: Path, author: str) -> dict:
     if not path.exists():
         return {"schema_version": SCHEMA_VERSION, "author": author, "updated_at": None, "snapshots": []}
     obj = json.loads(path.read_text(encoding="utf-8"))
+    version = obj.get("schema_version")
+    if version in LEGACY_SCHEMA_VERSIONS:
+        obj = migrate_history(obj, author)
     if obj.get("schema_version") != SCHEMA_VERSION or obj.get("author") != author or not isinstance(obj.get("snapshots"), list):
         raise ValueError("Existing history has an incompatible schema or author; will not overwrite")
     return obj
 
 
-def update_history(history: dict, models: list[dict], at: dt.datetime, *, allow_large_drop: bool = False) -> dict:
+def update_history(history: dict, models: list[dict], at: dt.datetime, datasets: list[dict] | None = None,
+                   *, allow_large_drop: bool = False) -> dict:
     if not models:
         raise ValueError("No models returned; preserve previous history")
+    datasets = datasets or []
     day = at.astimezone(dt.timezone.utc).date().isoformat()
     capture = at.astimezone(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
     snapshots = list(history["snapshots"])
@@ -103,14 +192,18 @@ def update_history(history: dict, models: list[dict], at: dt.datetime, *, allow_
     if previous:
         if previous["date"] > day:
             raise ValueError("Cannot write a snapshot older than the latest saved UTC date")
-        existing_count = len(previous["models"])
+        existing_count = len(previous.get("models") or {})
         if existing_count >= 10 and len(models) < existing_count * 0.5 and not allow_large_drop:
             raise ValueError(f"Number of public models suddenly dropped from {existing_count} to {len(models)}; refusing to overwrite (override with --allow-large-drop)")
+        existing_datasets = len(previous.get("datasets") or {})
+        if existing_datasets >= 5 and len(datasets) < existing_datasets * 0.5 and not allow_large_drop:
+            raise ValueError(f"Number of public datasets suddenly dropped from {existing_datasets} to {len(datasets)}; refusing to overwrite (override with --allow-large-drop)")
     new_snapshot = {
         "date": day,
         "captured_at": capture,
         # [all-time, rolling-30-day], with null if HF API field unavailable.
         "models": {m["id"]: [m["all_time"], m["last_30d"]] for m in models},
+        "datasets": {d["id"]: [d["all_time"], d["last_30d"]] for d in datasets},
     }
     snapshots = [snap for snap in snapshots if snap["date"] != day]
     snapshots.append(new_snapshot)
@@ -127,39 +220,48 @@ def atomic_json_write(path: Path, value: Any) -> None:
             out.write(data)
             out.flush()
             os.fsync(out.fileno())
+        os.chmod(temp_path, 0o644)
         os.replace(temp_path, path)
     finally:
         if os.path.exists(temp_path):
             os.unlink(temp_path)
 
 
-def save(data_dir: Path, author: str, models: list[dict], at: dt.datetime, allow_large_drop: bool = False) -> None:
+def save(data_dir: Path, author: str, models: list[dict], at: dt.datetime, datasets: list[dict] | None = None,
+         allow_large_drop: bool = False) -> None:
+    datasets = datasets or []
     history_path = data_dir / "history.json"
-    history = update_history(load_history(history_path, author), models, at, allow_large_drop=allow_large_drop)
+    history = update_history(load_history(history_path, author), models, at, datasets, allow_large_drop=allow_large_drop)
     latest = {
         "schema_version": SCHEMA_VERSION,
         "author": author,
         "date": at.astimezone(dt.timezone.utc).date().isoformat(),
         "captured_at": at.astimezone(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
         "models": models,
+        "datasets": datasets,
     }
     # Latest is a convenience view. History is the authoritative record.
     atomic_json_write(history_path, history)
     atomic_json_write(data_dir / "latest.json", latest)
-    print(f"Saved {len(models)} public models, {len(history['snapshots'])} UTC snapshots as of {latest['captured_at']}")
+    print(f"Saved {len(models)} public models, {len(datasets)} public datasets, {len(history['snapshots'])} UTC snapshots as of {latest['captured_at']}")
     missing = sum(model["all_time"] is None for model in models)
     if missing:
         print(f"WARNING: lifetime download count missing for {missing} models; kept as null", file=sys.stderr)
+    missing_datasets = sum(dataset["all_time"] is None for dataset in datasets)
+    if missing_datasets:
+        print(f"WARNING: lifetime download count missing for {missing_datasets} datasets; kept as null", file=sys.stderr)
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Capture model downloads for a Hugging Face author")
+    parser = argparse.ArgumentParser(description="Capture model and dataset downloads for a Hugging Face author")
     parser.add_argument("--author", default=os.environ.get("HF_AUTHOR", "gatilin"))
     parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parent.parent / "data")
     parser.add_argument("--allow-large-drop", action="store_true")
+    parser.add_argument("--skip-datasets", action="store_true", help="Only refresh model statistics")
     args = parser.parse_args()
     models = fetch_models(args.author)
-    save(args.data_dir, args.author, models, dt.datetime.now(dt.timezone.utc), allow_large_drop=args.allow_large_drop)
+    datasets = [] if args.skip_datasets else fetch_datasets(args.author)
+    save(args.data_dir, args.author, models, dt.datetime.now(dt.timezone.utc), datasets, allow_large_drop=args.allow_large_drop)
 
 
 if __name__ == "__main__":

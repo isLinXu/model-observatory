@@ -44,12 +44,18 @@ jobs:
           HF_AUTHOR: gatilin
         run: python scripts/collect.py --author "$HF_AUTHOR"
 
+      - name: Capture public academic profile
+        continue-on-error: true
+        env:
+          SCHOLAR_USER_ID: oTYM_I8AAAAJ
+        run: python scripts/collect_scholar.py --user "$SCHOLAR_USER_ID"
+
       - name: Commit historical snapshots
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/latest.json data/history.json
+          git add data/latest.json data/history.json data/scholar.json data/scholar_history.json
           if ! git diff --cached --quiet; then
             git commit -m "data: update Hugging Face downloads [skip ci]"
             git push origin HEAD:main

@@ -21,6 +21,11 @@ def build():
         if not src.is_file():
             raise FileNotFoundError(f"{src} missing: run python scripts/collect.py first")
         shutil.copy2(src, data_dir / filename)
+    # Academic profile files are optional: the site degrades gracefully when absent.
+    for filename in ["scholar.json", "scholar_history.json"]:
+        src = ROOT / "data" / filename
+        if src.is_file():
+            shutil.copy2(src, data_dir / filename)
     (OUTPUT / ".nojekyll").write_text("", encoding="utf-8")
     print(f"Built {OUTPUT}")
 
