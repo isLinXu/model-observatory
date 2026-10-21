@@ -1,0 +1,166 @@
+#!/usr/bin/env python3
+"""Record public Hugging Face model statistics as append-only daily UTC snapshots.
+
+The Hub 'downloads' count is rolling 30-day usage; 'downloadsAllTime' is
+reported lifetime usage. Historical changes can be negative when HF revises
+its counter. Preserve this signal instead of silently clamping to zero.
+"""
+from __future__ import annotations
+
+import argparse
+import datetime as dt
+import json
+import os
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Any
+
+SCHEMA_VERSION = 1
+
+
+def number_or_none(value: Any) -> int | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = int(value)
+        return number if number >= 0 else None
+    except (ValueError, TypeError, OverflowError):
+        return None
+
+
+def api_to_models(infos: Any, author: str) -> list[dict]:
+    """Convert ModelInfo instances into sorted public-model records."""
+    items = []
+    ids = set()
+    for info in infos:
+        model_id = getattr(info, "id", None)
+        if not isinstance(model_id, str) or not model_id.startswith(f"{author}/"):
+            continue
+        if getattr(info, "private", False):
+            continue
+        if model_id in ids:
+            continue
+        ids.add(model_id)
+        created = getattr(info, "created_at", None)
+        if isinstance(created, dt.datetime):
+            created = created.isoformat()
+        elif not isinstance(created, str):
+            created = None
+        items.append({
+            "id": model_id,
+            "all_time": number_or_none(getattr(info, "downloads_all_time", None)),
+            "last_30d": number_or_none(getattr(info, "downloads", None)),
+            "likes": number_or_none(getattr(info, "likes", None)),
+            "pipeline": getattr(info, "pipeline_tag", None) or "other",
+            "created_at": created,
+        })
+    return sorted(items, key=lambda x: x["id"].lower())
+
+
+def fetch_models(author: str, retries: int = 3) -> list[dict]:
+    from huggingface_hub import HfApi
+
+    # Never authenticate: the published GitHub Pages site is public, so only
+    # gather models visible without a token, including when HF_TOKEN is set.
+    client = HfApi(token=False)
+    for attempt in range(retries):
+        try:
+            infos = client.list_models(
+                author=author,
+                expand=["downloads", "downloadsAllTime", "likes", "pipeline_tag", "createdAt", "private"],
+                token=False,
+            )
+            models = api_to_models(infos, author)
+            if not models:
+                raise RuntimeError(f"HF API returned zero public models for {author}; refusing to overwrite snapshots")
+            return models
+        except Exception as error:
+            if attempt == retries - 1:
+                raise RuntimeError(f"Unable to collect HF model metadata after {retries} attempts: {error}") from error
+            print(f"Hugging Face request failed (attempt {attempt + 1}/{retries}): {error}", file=sys.stderr)
+            time.sleep(min(2 ** attempt * 4, 15))
+    raise AssertionError("unreachable")
+
+
+def load_history(path: Path, author: str) -> dict:
+    if not path.exists():
+        return {"schema_version": SCHEMA_VERSION, "author": author, "updated_at": None, "snapshots": []}
+    obj = json.loads(path.read_text(encoding="utf-8"))
+    if obj.get("schema_version") != SCHEMA_VERSION or obj.get("author") != author or not isinstance(obj.get("snapshots"), list):
+        raise ValueError("Existing history has an incompatible schema or author; will not overwrite")
+    return obj
+
+
+def update_history(history: dict, models: list[dict], at: dt.datetime, *, allow_large_drop: bool = False) -> dict:
+    if not models:
+        raise ValueError("No models returned; preserve previous history")
+    day = at.astimezone(dt.timezone.utc).date().isoformat()
+    capture = at.astimezone(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+    snapshots = list(history["snapshots"])
+    previous = snapshots[-1] if snapshots else None
+    if previous:
+        if previous["date"] > day:
+            raise ValueError("Cannot write a snapshot older than the latest saved UTC date")
+        existing_count = len(previous["models"])
+        if existing_count >= 10 and len(models) < existing_count * 0.5 and not allow_large_drop:
+            raise ValueError(f"Number of public models suddenly dropped from {existing_count} to {len(models)}; refusing to overwrite (override with --allow-large-drop)")
+    new_snapshot = {
+        "date": day,
+        "captured_at": capture,
+        # [all-time, rolling-30-day], with null if HF API field unavailable.
+        "models": {m["id"]: [m["all_time"], m["last_30d"]] for m in models},
+    }
+    snapshots = [snap for snap in snapshots if snap["date"] != day]
+    snapshots.append(new_snapshot)
+    snapshots.sort(key=lambda snap: snap["date"])
+    return {"schema_version": SCHEMA_VERSION, "author": history["author"], "updated_at": capture, "snapshots": snapshots}
+
+
+def atomic_json_write(path: Path, value: Any) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    data = json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False) + "\n"
+    fd, temp_path = tempfile.mkstemp(prefix=".partial-", suffix=".json", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as out:
+            out.write(data)
+            out.flush()
+            os.fsync(out.fileno())
+        os.replace(temp_path, path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
+
+
+def save(data_dir: Path, author: str, models: list[dict], at: dt.datetime, allow_large_drop: bool = False) -> None:
+    history_path = data_dir / "history.json"
+    history = update_history(load_history(history_path, author), models, at, allow_large_drop=allow_large_drop)
+    latest = {
+        "schema_version": SCHEMA_VERSION,
+        "author": author,
+        "date": at.astimezone(dt.timezone.utc).date().isoformat(),
+        "captured_at": at.astimezone(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+        "models": models,
+    }
+    # Latest is a convenience view. History is the authoritative record.
+    atomic_json_write(history_path, history)
+    atomic_json_write(data_dir / "latest.json", latest)
+    print(f"Saved {len(models)} public models, {len(history['snapshots'])} UTC snapshots as of {latest['captured_at']}")
+    missing = sum(model["all_time"] is None for model in models)
+    if missing:
+        print(f"WARNING: lifetime download count missing for {missing} models; kept as null", file=sys.stderr)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Capture model downloads for a Hugging Face author")
+    parser.add_argument("--author", default=os.environ.get("HF_AUTHOR", "gatilin"))
+    parser.add_argument("--data-dir", type=Path, default=Path(__file__).resolve().parent.parent / "data")
+    parser.add_argument("--allow-large-drop", action="store_true")
+    args = parser.parse_args()
+    models = fetch_models(args.author)
+    save(args.data_dir, args.author, models, dt.datetime.now(dt.timezone.utc), allow_large_drop=args.allow_large_drop)
+
+
+if __name__ == "__main__":
+    main()

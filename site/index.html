@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1120">
+  <meta name="description" content="@gatilin Hugging Face 模型下载量、近期活跃度、每日增量与历史数据可视化">
+  <title>Model Observatory · gatilin</title>
+  <link rel="icon" type="image/svg+xml" href="./favicon.svg">
+  <link rel="stylesheet" href="./style.css">
+  <script src="./app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" aria-label="侧边导航">
+      <a class="brand" href="#overview" aria-label="Model Observatory 首页">
+        <span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 23 12 11 19 20 28 7" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="7" r="2.7" fill="#70e6ce"/></svg></span>
+        <span class="brand-copy"><strong>MODEL<span>OBS.</span></strong><small>PRIVATE ANALYTICS</small></span>
+      </a>
+      <div class="nav-title">WORKSPACE</div>
+      <nav class="navlinks">
+        <a class="active" href="#overview"><span class="navglyph">◈</span> 账户总览</a>
+        <a href="#analytics"><span class="navglyph">◫</span> 下载趋势</a>
+        <a href="#models"><span class="navglyph">▦</span> 模型清单</a>
+        <a href="#compare"><span class="navglyph">⌁</span> 模型对比</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="sidebar-card"><div class="sidebar-card-head"><span class="live-led"></span> DAILY SNAPSHOTS</div><p>GitHub Actions 每日采集<br>无需始终打开浏览器</p><div class="sidebar-card-foot"><span id="snapshotCount">0</span> 个历史快照</div></div>
+        <a class="profile" href="https://huggingface.co/gatilin/models" target="_blank" rel="noopener noreferrer"><span class="profile-avatar">g</span><span><strong>@gatilin</strong><small>Hugging Face profile</small></span><span class="profile-arrow">↗</span></a>
+      </div>
+    </aside>
+
+    <main class="main" id="overview">
+      <header class="topbar">
+        <div class="breadcrumb">WORKSPACE <span>/</span> HUGGING FACE <span>/</span> OVERVIEW</div>
+        <div class="top-right"><span class="freshness"><span id="freshLed" class="status-led"></span><span id="freshLabel">等待数据初始化</span></span><a class="toplink" href="https://huggingface.co/gatilin/models" target="_blank" rel="noopener noreferrer">访问 HF ↗</a></div>
+      </header>
+
+      <section class="hero">
+        <div class="hero-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div class="hero-kicker"><span class="inline-mark"></span> GATILIN / MODEL INTELLIGENCE</div>
+        <h1>模型表现，<br><em>尽在掌握。</em></h1>
+        <p>持续记录 Hugging Face 模型的下载变化，区分真实增长与滚动窗口波动。</p>
+        <div class="hero-meta"><span>账户 <b>@gatilin</b></span><i></i><span>上次采集 <b id="lastSync">—</b></span><i></i><span>时区 <b>UTC</b></span></div>
+      </section>
+
+      <div id="errorBanner" class="notice hidden" role="alert"></div>
+      <div id="emptyBanner" class="empty-state hidden"><div class="empty-icon">◎</div><div><strong>等待第一次 Hugging Face 快照</strong><p>仓库创建后，请到 GitHub Actions 手动运行 “Sync Hugging Face & deploy Pages”。首次采集后，累计和近 30 天下载量会显示；变化趋势需要积累后续每日快照。</p></div></div>
+
+      <section class="kpis" aria-label="账户总体指标">
+        <div class="kpi"><div class="kpi-label">模型总数 <span class="kpi-symbol">◈</span></div><div id="statModels" class="kpi-value">—</div><div class="kpi-caption">当前公开模型仓库</div></div>
+        <div class="kpi"><div class="kpi-label">历史累计下载 <span class="kpi-symbol">↗</span></div><div id="statLifetime" class="kpi-value">—</div><div id="statLifetimeSub" class="kpi-caption">所有模型累计指标之和</div></div>
+        <div class="kpi"><div class="kpi-label">最近 30 天下载 <span class="kpi-symbol blue">◷</span></div><div id="statRolling" class="kpi-value">—</div><div class="kpi-caption">Hugging Face 滚动 30 天</div></div>
+        <div class="kpi accent-kpi"><div class="kpi-label">上次采集以来净变化 <span class="kpi-symbol teal">⌁</span></div><div id="statDelta" class="kpi-value">—</div><div id="statDeltaSub" class="kpi-caption">需至少两日快照</div></div>
+      </section>
+
+      <section id="analytics" class="dashboard-grid">
+        <div class="panel panel-chart"><div class="panel-head"><div><div class="panel-overline">PERFORMANCE OVER TIME</div><h2>下载趋势</h2><p>历史累计与滚动 30 天下载量，请分开查看</p></div><div class="segmented" role="group" aria-label="下载曲线指标"><button class="active" data-metric="all_time">历史累计</button><button data-metric="last_30d">滚动 30 天</button></div></div>
+          <div id="overallChart" class="chart-area" role="img" aria-label="整体模型下载量趋势图"></div>
+          <div class="chart-footer"><div class="legend"><span class="legend-mark"></span><span id="overallLegend">全部模型累计下载</span></div><div class="range-controls" role="group" aria-label="历史范围"><button data-range="30" class="active">30天</button><button data-range="90">90天</button><button data-range="all">全部</button></div></div>
+        </div>
+        <div class="panel top-panel"><div class="panel-head"><div><div class="panel-overline">MOST ACTIVE</div><h2>热门模型 <small>TOP 6</small></h2><p>按照官方最近 30 天下载量</p></div><span class="mini-icon">↗</span></div><div id="topModels" class="top-models"><div class="chart-empty">等待模型数据</div></div><div class="top-footer">RANKED BY 30-DAY DOWNLOADS <span>● LIVE SNAPSHOT</span></div></div>
+      </section>
+
+      <section class="panel changes-panel"><div class="panel-head"><div><div class="panel-overline">MOMENTUM & REVISIONS</div><h2>日度变化观测</h2><p>累计值的相邻快照净变化；负值保留用于识别统计修正</p></div><span id="correctionBadge" class="correction-pill">暂无异常</span></div><div id="deltaChart" class="bar-chart-area"></div><div class="chart-footer"><span class="muted micro">这是累计计数器的观测净差值，并非官方独立提供的每日下载次数。</span><span id="deltaPeriod" class="micro muted">—</span></div></section>
+
+      <section id="models" class="model-section">
+        <div class="section-heading"><div><div class="section-eyebrow">INVENTORY / ALL MODELS</div><h2>全部模型 <span id="modelCountBadge">0</span></h2><p>筛选、排序并打开单模型的完整历史曲线</p></div><div class="section-actions"><button class="button" id="exportCSV">↓ 导出 CSV</button><button class="button secondary" id="exportJSON">↓ 导出历史 JSON</button></div></div>
+        <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="modelSearch" placeholder="搜索模型名称或仓库 ID" autocomplete="off" aria-label="搜索模型"></label><select id="sortModel" aria-label="排序方式"><option value="last_30d">按近30天下载排序</option><option value="all_time">按累计下载排序</option><option value="d1">按上次变化排序</option><option value="d7">按7天变化排序</option><option value="d30">按30天变化排序</option><option value="name">按名称排序</option></select><label class="filter-check"><input type="checkbox" id="onlyAnomalies">只看累计下降</label><span class="toolbar-spacer"></span><span id="tableCount" class="micro muted">—</span></div>
+        <div class="table-scroll"><table class="models-table"><thead><tr><th class="no-sort">模型名称</th><th class="align-right">历史累计</th><th class="align-right">滚动30天</th><th class="align-right">上次变化</th><th class="align-right">7日净变</th><th class="align-right">30日净变</th><th>状态</th><th class="compare-col">对比</th></tr></thead><tbody id="modelRows"><tr><td colspan="8" class="no-rows">尚未有采集数据</td></tr></tbody></table></div>
+        <div class="table-bottom"><span>说明：— 表示该对比日期缺少有效快照，不代表下载量为 0。</span><span id="snapshotDate">—</span></div>
+      </section>
+
+      <section id="compare" class="panel compare-panel"><div class="panel-head"><div><div class="panel-overline">SIDE-BY-SIDE</div><h2>模型对比 <span class="light-info">最多 3 个</span></h2><p>在上方模型表的「对比」一列勾选模型</p></div><button class="button text-button" id="clearCompare">清空选择 ✕</button></div><div id="compareSelected" class="compare-selected"></div><div id="compareChart" class="chart-area compare-chart"></div></section>
+
+      <footer class="footer"><div><span class="footer-mark">◈</span> MODEL OBSERVATORY <span class="faded">/ GATILIN</span></div><p>数据：Hugging Face Hub API · UTC 每日快照 · 仅公开模型 · 不代表独立用户数</p><a href="https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api" target="_blank" rel="noopener noreferrer">数据口径 ↗</a></footer>
+    </main>
+  </div>
+
+  <div id="detailOverlay" class="overlay hidden" aria-hidden="true"><div class="overlay-bg" id="closeOverlayBg"></div><aside class="detail-panel" role="dialog" aria-modal="true" aria-labelledby="detailTitle"><header class="detail-head"><div><div class="panel-overline">MODEL DEEP DIVE</div><h2 id="detailTitle">模型详情</h2><p id="detailID"></p></div><button class="icon-button" id="closeDetail" aria-label="关闭详情">✕</button></header><div id="detailContents"></div></aside></div>
+</body>
+</html>
