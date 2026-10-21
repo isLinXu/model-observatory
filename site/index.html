@@ -1,13 +1,18 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#0b1120">
-  <meta name="description" content="@gatilin Hugging Face 模型与数据集下载量、近期活跃度、每日增量、学术引用与历史数据可视化">
+  <meta name="theme-color" content="#090f1b">
+  <meta name="description" content="@gatilin Hugging Face 模型与数据集下载量、近期活跃度、每日增量、学术引用、社交平台粉丝数与历史数据可视化">
   <title>Model Observatory · gatilin</title>
   <link rel="icon" type="image/svg+xml" href="./favicon.svg">
   <link rel="stylesheet" href="./style.css">
+  <script src="./format.js" defer></script>
+  <script src="./charts.js" defer></script>
+  <script src="./data.js" defer></script>
+  <script src="./render.js" defer></script>
+  <script src="./theme.js" defer></script>
   <script src="./app.js" defer></script>
 </head>
 <body>
@@ -25,6 +30,7 @@
         <a href="#compare"><span class="navglyph">⌁</span> 模型对比</a>
         <a href="#datasets"><span class="navglyph">▤</span> 数据集</a>
         <a href="#scholar"><span class="navglyph">✦</span> 学术主页</a>
+        <a href="#social"><span class="navglyph">◎</span> 社交媒体</a>
       </nav>
       <div class="sidebar-bottom">
         <div class="sidebar-card"><div class="sidebar-card-head"><span class="live-led"></span> DAILY SNAPSHOTS</div><p>GitHub Actions 每日采集<br>无需始终打开浏览器</p><div class="sidebar-card-foot"><span id="snapshotCount">0</span> 个历史快照</div></div>
@@ -35,14 +41,14 @@
     <main class="main" id="overview">
       <header class="topbar">
         <div class="breadcrumb">WORKSPACE <span>/</span> HUGGING FACE <span>/</span> OVERVIEW</div>
-        <div class="top-right"><span class="freshness"><span id="freshLed" class="status-led"></span><span id="freshLabel">等待数据初始化</span></span><a class="toplink" href="https://huggingface.co/gatilin/models" target="_blank" rel="noopener noreferrer">访问 HF ↗</a></div>
+        <div class="top-right"><span class="freshness"><span id="freshLed" class="status-led"></span><span id="freshLabel">等待数据初始化</span></span><button class="theme-toggle" id="themeToggle" type="button" aria-label="切换明暗主题" title="切换明暗主题">☀</button><a class="toplink" href="https://huggingface.co/gatilin/models" target="_blank" rel="noopener noreferrer">访问 HF ↗</a></div>
       </header>
 
       <section class="hero">
         <div class="hero-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
         <div class="hero-kicker"><span class="inline-mark"></span> GATILIN / MODEL INTELLIGENCE</div>
         <h1>模型表现，<br><em>尽在掌握。</em></h1>
-        <p>持续记录 Hugging Face 模型与数据集的下载变化，并同步公开学术档案的引用指标。</p>
+        <p>持续记录 Hugging Face 模型与数据集的下载变化，并同步公开学术档案的引用指标与社交平台粉丝数。</p>
         <div class="hero-meta"><span>账户 <b>@gatilin</b></span><i></i><span>上次采集 <b id="lastSync">—</b></span><i></i><span>时区 <b>UTC</b></span></div>
       </section>
 
@@ -113,7 +119,27 @@
         <div class="table-bottom"><span>说明：引用数据来自公开的 Google Scholar 档案页，指标口径与 Scholar 一致；仅采集档案首页可见的论文列表。</span><span id="scholarCapturedAt">—</span></div>
       </section>
 
-      <footer class="footer"><div><span class="footer-mark">◈</span> MODEL OBSERVATORY <span class="faded">/ GATILIN</span></div><p>数据：Hugging Face Hub API · Google Scholar 公开档案 · UTC 每日快照 · 仅公开内容 · 不代表独立用户数</p><a href="https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api" target="_blank" rel="noopener noreferrer">数据口径 ↗</a></footer>
+      <section id="social" class="model-section">
+        <div class="section-heading"><div><div class="section-eyebrow">SOCIAL AUDIENCE / CROSS-PLATFORM</div><h2>社交媒体 <span id="socialCountBadge">0</span></h2><p>各平台公开粉丝数，按 UTC 每日快照留存，可按平台与时间维度筛选</p></div><div class="section-actions"><button class="button" id="exportSocialCSV">↓ 导出 CSV</button><div class="segmented" role="group" aria-label="社交数据视图"><button class="active" data-social-view="cards">卡片</button><button data-social-view="table">表格</button></div></div></div>
+        <div class="kpis" style="margin-bottom:16px">
+          <div class="kpi"><div class="kpi-label">粉丝总数 <span class="kpi-symbol">◎</span></div><div id="statSocialTotal" class="kpi-value">—</div><div id="statSocialTotalSub" class="kpi-caption">所选平台粉丝数合计</div></div>
+          <div class="kpi"><div class="kpi-label">覆盖平台 <span class="kpi-symbol blue">▦</span></div><div id="statSocialPlatforms" class="kpi-value">—</div><div id="statSocialPlatformsSub" class="kpi-caption">已配置的平台数量</div></div>
+          <div class="kpi"><div class="kpi-label">近 30 天粉丝 <span class="kpi-symbol blue">◷</span></div><div id="statSocialRolling" class="kpi-value">—</div><div id="statSocialRollingSub" class="kpi-caption">滚动 30 天粉丝数合计</div></div>
+          <div class="kpi accent-kpi"><div class="kpi-label">上次采集以来净变化 <span class="kpi-symbol teal">⌁</span></div><div id="statSocialDelta" class="kpi-value">—</div><div id="statSocialDeltaSub" class="kpi-caption">需至少两日快照</div></div>
+        </div>
+        <div class="social-toolbar">
+          <span class="social-filter-label">平台</span>
+          <div class="platform-chips" id="socialPlatformFilter"></div>
+          <div class="range-controls" role="group" aria-label="社交历史范围"><button data-social-range="30" class="active">30天</button><button data-social-range="90">90天</button><button data-social-range="all">全部</button></div>
+          <span id="socialUpdatedAt" class="micro muted">—</span>
+        </div>
+        <div class="panel social-chart-panel"><div class="panel-head"><div><div class="panel-overline">AUDIENCE OVER TIME</div><h2>粉丝增长快照</h2><p>本站每日采集的平台粉丝总数走势</p></div><span class="mini-icon">◎</span></div><div id="socialChart" class="chart-area" role="img" aria-label="社交平台粉丝数趋势图"></div><div class="chart-footer"><span class="muted micro">需要至少两天的社交快照才能绘制粉丝变化曲线。</span><span id="socialChartTotal" class="micro muted">—</span></div></div>
+        <div id="socialCards" class="social-cards"></div>
+        <div id="socialTableWrap" class="table-scroll hidden" style="margin-top:16px"><table class="models-table social-table"><thead><tr><th class="no-sort">平台</th><th class="align-right">粉丝数</th><th class="align-right">格式化</th><th class="align-right">关注数</th><th class="align-right">作品数</th><th class="align-right">上次变化</th><th>状态</th><th>更新日期</th></tr></thead><tbody id="socialRows"><tr><td colspan="8" class="no-rows">尚未有社交数据</td></tr></tbody></table></div>
+        <div class="table-bottom" id="socialTableBottom" style="border-radius:12px;border-top:1px solid var(--table-row-line)"><span>说明：粉丝数来自各平台公开接口，口径以平台自身统计为准；知乎与小红书需要登录态，采集失败时保留上次成功值并标注为过期。</span><span class="social-table-foot"><span id="socialTableCount" class="micro muted">—</span><span id="socialSnapshotDate" class="micro muted">—</span></span></div>
+      </section>
+
+      <footer class="footer"><div><span class="footer-mark">◈</span> MODEL OBSERVATORY <span class="faded">/ GATILIN</span></div><p>数据：Hugging Face Hub API · Google Scholar 公开档案 · 社交平台公开接口 · UTC 每日快照 · 仅公开内容 · 不代表独立用户数</p><a href="https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api" target="_blank" rel="noopener noreferrer">数据口径 ↗</a></footer>
     </main>
   </div>
 

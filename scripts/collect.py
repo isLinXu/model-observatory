@@ -259,6 +259,13 @@ def main() -> None:
     parser.add_argument("--allow-large-drop", action="store_true")
     parser.add_argument("--skip-datasets", action="store_true", help="Only refresh model statistics")
     args = parser.parse_args()
+    args.data_dir.mkdir(parents=True, exist_ok=True)
+    for leftover in args.data_dir.glob(".partial-*.json"):
+        # A previous run may have been interrupted mid-write.
+        try:
+            leftover.unlink()
+        except OSError:
+            pass
     models = fetch_models(args.author)
     datasets = [] if args.skip_datasets else fetch_datasets(args.author)
     save(args.data_dir, args.author, models, dt.datetime.now(dt.timezone.utc), datasets, allow_large_drop=args.allow_large_drop)

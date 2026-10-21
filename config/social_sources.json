@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "description": "社交平台粉丝数据源。每个条目声明一个平台，采集器按 method 分发到对应的 fetcher。新增平台只需在此追加条目并注册 fetcher。",
+  "sources": [
+    {
+      "id": "github",
+      "label": "GitHub",
+      "method": "github",
+      "handle": "isLinXu",
+      "url": "https://github.com/isLinXu",
+      "color": "#9faeff",
+      "enabled": true
+    },
+    {
+      "id": "bilibili",
+      "label": "哔哩哔哩",
+      "method": "bilibili",
+      "handle": "",
+      "url": "https://space.bilibili.com/",
+      "color": "#ff9db4",
+      "enabled": false,
+      "hint": "填入 UP 主主页数字 ID（mid），例如 9567749。留空时该平台显示为未配置。"
+    },
+    {
+      "id": "zhihu",
+      "label": "知乎",
+      "method": "zhihu",
+      "handle": "",
+      "url": "https://www.zhihu.com/people/",
+      "color": "#5aa9ff",
+      "enabled": false,
+      "hint": "填入知乎个人主页的 url_token。知乎接口需要登录态，请在环境变量 ZHIHU_COOKIE 中提供 Cookie。"
+    },
+    {
+      "id": "xiaohongshu",
+      "label": "小红书",
+      "method": "xiaohongshu",
+      "handle": "",
+      "url": "https://www.xiaohongshu.com/user/profile/",
+      "color": "#ff7a8a",
+      "enabled": false,
+      "hint": "填入小红书用户 ID（profile/<id> 中的 id）。匿名访问会返回空数据，请在环境变量 XIAOHONGSHU_COOKIE 中提供 Cookie。"
+    }
+  ]
+}
