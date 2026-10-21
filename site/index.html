@@ -24,6 +24,7 @@
   <script src="./data.js" defer></script>
   <script src="./render.js" defer></script>
   <script src="./theme.js" defer></script>
+  <script src="./templates.js" defer></script>
   <script src="./app.js" defer></script>
 </head>
 <body>
@@ -43,6 +44,7 @@
         <a href="#scholar"><span class="navglyph">✦</span> 学术主页</a>
         <a href="#social"><span class="navglyph">◎</span> 社交媒体</a>
         <a href="#github"><span class="navglyph">◐</span> GitHub 看板</a>
+        <a href="#templates"><span class="navglyph">◈</span> 模版库</a>
       </nav>
       <div class="sidebar-bottom">
         <div class="sidebar-card"><div class="sidebar-card-head"><span class="live-led"></span> DAILY SNAPSHOTS</div><p>GitHub Actions 每日采集<br>无需始终打开浏览器</p><div class="sidebar-card-foot"><span id="snapshotCount">0</span> 个历史快照</div></div>
@@ -170,6 +172,53 @@
         <div class="pagination" id="githubPagination" hidden><button class="button secondary" id="githubPrevPage">← 上一页</button><span id="githubPageInfo" class="micro muted">—</span><button class="button secondary" id="githubNextPage">下一页 →</button></div>
         <div id="githubProjects" class="github-projects hidden"><div class="section-eyebrow" style="margin-bottom:10px">GITHUB PROJECTS</div><div id="githubProjectList" class="project-grid"></div></div>
         <div class="table-bottom"><span>说明：数据来自 GitHub 公开 REST API；Projects 列表需要配置 GITHUB_TOKEN（read:project 权限）才会显示。抓取失败时保留上一次快照并标注为过期。</span><span id="githubCapturedAt">—</span></div>
+      </section>
+
+      <section id="templates" class="model-section">
+        <div class="section-heading"><div><div class="section-eyebrow">SKILL &amp; PROMPT LIBRARY / SYNCED TO GITHUB</div><h2>模版库 <span id="templateCountBadge">0</span></h2><p>可复用的 Skill 定义与 Prompt 模版，Markdown 即唯一事实源，可一键推送回 GitHub</p></div><div class="section-actions"><button class="button secondary" id="templateExport">↓ 导出草稿</button><button class="button" id="templateNew">＋ 新建模版</button><button class="button secondary" id="templateRefresh">↻ 手动刷新</button></div></div>
+        <div id="templateBanner" class="notice hidden" role="status"></div>
+        <div class="kpis" style="margin-bottom:16px">
+          <div class="kpi"><div class="kpi-label">模版总数 <span class="kpi-symbol">◈</span></div><div id="statTemplatesTotal" class="kpi-value">—</div><div id="statTemplatesTotalSub" class="kpi-caption">来自仓库 Markdown</div></div>
+          <div class="kpi"><div class="kpi-label">Skill <span class="kpi-symbol blue">◫</span></div><div id="statTemplatesSkills" class="kpi-value">—</div><div id="statTemplatesSkillsSub" class="kpi-caption">可复用的技能定义</div></div>
+          <div class="kpi"><div class="kpi-label">Prompt <span class="kpi-symbol blue">✎</span></div><div id="statTemplatesPrompts" class="kpi-value">—</div><div id="statTemplatesPromptsSub" class="kpi-caption">可复用的提示词</div></div>
+          <div class="kpi accent-kpi"><div class="kpi-label">标签 <span class="kpi-symbol teal">⌁</span></div><div id="statTemplatesTags" class="kpi-value">—</div><div id="statTemplatesTagsSub" class="kpi-caption">按分类聚合</div></div>
+        </div>
+        <div class="panel template-chart-panel"><div class="panel-head"><div><div class="panel-overline">LIBRARY OVER TIME</div><h2>模版库规模趋势</h2><p>本站每日采集的模版总数走势</p></div><span class="mini-icon">◈</span></div><div id="templateChart" class="chart-area" role="img" aria-label="模版总数趋势图"></div><div class="chart-footer"><span class="muted micro">模版数量来自仓库中 Markdown 文件的每日索引。</span><span id="templateChartNote" class="micro muted">—</span></div></div>
+        <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="templateSearch" placeholder="搜索名称、描述、标签或正文" autocomplete="off" aria-label="搜索模版"></label><select id="filterTemplateKind" aria-label="按类型筛选"><option value="all">全部类型</option><option value="skill">Skill</option><option value="prompt">Prompt</option></select><select id="filterTemplateTag" aria-label="按标签筛选"><option value="all">全部标签</option></select><select id="sortTemplate" aria-label="模版排序方式"><option value="updated">按最近更新排序</option><option value="kind">按类型排序</option><option value="size">按体积排序</option><option value="name">按名称排序</option></select><div class="segmented" role="group" aria-label="模版视图"><button class="active" data-template-view="cards">卡片</button><button data-template-view="table">表格</button></div><span class="toolbar-spacer"></span><span id="templateTableCount" class="micro muted">—</span></div>
+        <div id="templateCards" class="template-cards"></div>
+        <div id="templateTableWrap" class="table-scroll hidden" style="margin-top:16px"><table class="models-table template-table"><thead><tr><th class="no-sort">名称</th><th>类型</th><th>分类</th><th>标签</th><th class="align-right">行数</th><th>版本</th></tr></thead><tbody id="templateRows"><tr><td colspan="6" class="no-rows">尚未建立模版索引</td></tr></tbody></table></div>
+
+        <div id="templateDetail" class="template-detail hidden">
+          <div class="template-detail-head"><div><div class="panel-overline">TEMPLATE DETAIL</div><h3 id="templateDetailTitle">模版详情</h3><div id="templateDetailMeta" class="template-detail-meta"></div></div><button class="icon-button" id="templateCloseDetail" aria-label="关闭详情">✕</button></div>
+          <div id="templateDetailTags" class="template-tags"></div>
+          <pre id="templateDetailBody" class="template-body"></pre>
+          <div id="templateDetailActions" class="template-actions"></div>
+        </div>
+
+        <div id="templateComposer" class="template-composer hidden">
+          <div class="template-detail-head"><div><div class="panel-overline">COMPOSE / DRAFT</div><h3>新建或编辑模版</h3><p class="template-detail-meta">草稿先保存在本地浏览器，确认后推送到 GitHub；推送成功会触发 Actions 重建索引。</p></div><button class="icon-button" id="templateFormClose" aria-label="关闭编辑器">✕</button></div>
+          <div class="template-form-grid">
+            <label><span>类型</span><select id="templateFormKind"><option value="prompt">Prompt 模版</option><option value="skill">Skill 定义</option></select></label>
+            <label><span>文件名（slug）</span><input id="templateFormSlug" placeholder="例如 code-review" autocomplete="off"></label>
+            <label><span>名称</span><input id="templateFormName" placeholder="例如 代码审查" autocomplete="off"></label>
+            <label><span>分类</span><input id="templateFormCategory" placeholder="例如 工程" autocomplete="off"></label>
+            <label><span>版本</span><input id="templateFormVersion" placeholder="例如 1.0.0" autocomplete="off"></label>
+            <label><span>作者</span><input id="templateFormAuthor" placeholder="例如 gatilin" autocomplete="off"></label>
+          </div>
+          <label class="template-form-full"><span>描述</span><input id="templateFormDescription" placeholder="一句话说明这个模版解决什么问题" autocomplete="off"></label>
+          <label class="template-form-full"><span>标签（逗号分隔）</span><input id="templateFormTags" placeholder="例如 代码审查, 协作" autocomplete="off"></label>
+          <label class="template-form-full"><span>正文（Markdown）</span><textarea id="templateFormBody" rows="12" placeholder="# 标题&#10;&#10;正文内容"></textarea></label>
+          <label class="template-form-full"><span>将要写入的文件内容</span><pre id="templateFormPreview" class="template-body small"></pre></label>
+          <div class="template-actions"><button class="button secondary" id="templateFormSave">保存草稿</button><button class="button" id="templateFormPush">保存并推送到 GitHub</button><span id="templateDraftBadge" class="template-draft-badge">无待同步</span></div>
+        </div>
+
+        <div class="template-sync">
+          <div class="template-sync-head"><div><div class="panel-overline">WRITE BACK</div><h3>同步到 GitHub</h3><p class="template-detail-meta">需要一个具备 Contents: Read and write 权限的 fine-grained token。Token 仅保存在本浏览器的 localStorage，且只发送给 api.github.com —— 本站是纯静态页面，没有后端代理。</p></div><span id="templateSyncState" class="template-sync-state">未同步</span></div>
+          <div class="template-sync-row"><input id="templateToken" type="password" placeholder="github_pat_..." autocomplete="off" spellcheck="false" aria-label="GitHub Token"><button class="button secondary" id="templateTokenToggle">显示</button><button class="button secondary" id="templateTokenVerify">校验</button><button class="button text-button" id="templateTokenClear">清除</button></div>
+          <div id="templateSyncMessage" class="template-sync-message"></div>
+        </div>
+
+        <div class="table-bottom"><span>说明：模版以 Markdown + frontmatter 存放在仓库 templates/ 目录，采集器每日索引；点击名称可直达 GitHub 源文件。推送需要 Token，未配置时仍可浏览、复制与导出。</span><span id="templateCapturedAt">—</span></div>
       </section>
 
       <footer class="footer"><div><span class="footer-mark">◈</span> MODEL OBSERVATORY <span class="faded">/ GATILIN</span></div><p>数据：Hugging Face Hub API · Google Scholar 公开档案 · 社交平台公开接口 · GitHub 公开 API · UTC 每日快照 · 仅公开内容 · 不代表独立用户数</p><a href="https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api" target="_blank" rel="noopener noreferrer">数据口径 ↗</a></footer>

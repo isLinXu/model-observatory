@@ -297,6 +297,9 @@
       try { render.renderSocial(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderGitHub(); } catch (secondaryError) { console.error(secondaryError); }
     }
+    // The template library is independent of the download data, so it loads
+    // on its own and a failure here never blocks the other boards.
+    MO.templates.init().catch(error => console.error('模版库初始化失败：', error));
   }
 
   boot();

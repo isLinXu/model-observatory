@@ -205,6 +205,77 @@ GitHub 板块由 `scripts/collect_github.py` 独立采集，输出 `data/github.
 - **一键跳转**：每个仓库名称都是指向 GitHub 原始页面的链接，在新标签页打开；缺少 `url` 的条目降级为纯文本，不生成指向 `#` 的死链。
 - **CSV 导出**：导出当前筛选结果，含 `url` 列。
 
+## 模版库：Skill 与 Prompt 的保存与同步
+
+站点的「模版库」栏目用于集中保存可复用的 Skill 定义与 Prompt 模版，并把它们同步回 GitHub。**仓库中的 Markdown 是唯一事实源**，看板只是它的索引视图。
+
+### 目录与文件格式
+
+```
+templates/
+  skills/<slug>.md      # Skill 定义
+  prompts/<slug>.md     # Prompt 模版
+```
+
+`<slug>` 只允许小写字母、数字与单个连字符 / 下划线（因为它同时是 GitHub 的路径片段）。每个文件以 frontmatter 描述元数据，正文原样保存：
+
+```markdown
+---
+name: 代码审查
+description: 以最小 diff 为目标审查一段改动。
+category: 工程
+tags: [代码审查, 协作]
+version: 2.0.0
+author: gatilin
+---
+
+# 代码审查
+
+正文从这里开始……
+```
+
+| 字段 | 必填 | 说明 |
+| --- | --- | --- |
+| `name` | 否 | 缺省时回退为 `<slug>` |
+| `description` | 否 | 卡片副标题 |
+| `category` | 否 | 单值分类，用于 KPI 说明 |
+| `tags` | 否 | 支持 `tags: [a, b]` 与 `- a` 两种写法 |
+| `version` / `author` | 否 | 仅展示 |
+
+缺少 frontmatter 的文件也能被索引，只是没有元数据。
+
+### 采集与本地预览
+
+```bash
+python scripts/collect_templates.py              # 只读本地目录，不访问网络
+python scripts/collect_templates.py --repo owner/name --branch main
+python scripts/build.py && python scripts/serve.py --port 8080
+```
+
+产出 `data/templates.json`（当前索引，含完整正文）与 `data/templates_history.json`（每日一份，用于「模版库规模趋势」图）。目录不存在时标记为 `unavailable` 并保留上一次快照，不会让看板空白。
+
+### 从页面推送回 GitHub
+
+栏目底部的「同步到 GitHub」面板提供完整回写链路：
+
+1. 新建 / 编辑模版 → 草稿先存在浏览器 `localStorage`，右侧实时预览将要写入的文件内容；
+2. 「保存并推送到 GitHub」→ 通过 Contents API 写入 `templates/{skills,prompts}/<slug>.md`（已存在时自动带 `sha` 覆盖）；
+3. 推送成功触发 GitHub Actions，重新采集索引并部署，页面的模版列表随之更新。
+
+**Token 约定**：需要一个 **fine-grained personal access token**，只勾选目标仓库的 `Contents: Read and write`。Token 仅保存在本浏览器的 `localStorage`，只发送给 `api.github.com`；本站是纯静态页面，没有后端代理，但也意味着**不要在公共电脑上保存 Token**，用完点「清除」。
+
+未配置 Token 时模版库仍可完整浏览、复制与导出草稿，只有写回被禁用——面板会明确提示缺什么，不会静默失败。
+
+### 采集失败时的行为
+
+| 情况 | 行为 |
+| --- | --- |
+| `templates/` 目录不存在 | 标记 `status: unavailable`，保留上一次索引 |
+| 单个文件无法读取或文件名非法 | 跳过该文件并在日志中提示，其余正常索引 |
+| 正文超过 20000 字符 | 截断后发布并置 `truncated: true`，`bytes` 仍记录真实体积 |
+| 未配置 Token 就点推送 | 面板与toast 提示「请先填写 GitHub Token」，草稿保留 |
+| GitHub 返回 401/403/422 | 显示 GitHub 的错误原文，不丢失已保存的草稿 |
+
 ## 历史快照的保留策略
 
 每日快照会随时间线性增长，若不做处理，`data/history.json`（139 个模型 × 每日）一年后可达数 MB，且首屏每次都要全量下载。因此采集器在写入时做**分级留存**：
@@ -228,6 +299,7 @@ GitHub 板块由 `scripts/collect_github.py` 独立采集，输出 `data/github.
 | 论文 | `data/scholar.json` → `papers[]` | `url` | Scholar 引用页链接（`cited_by_url` 为被引检索链接） | 可选，缺失为 `null` |
 | 仓库 | `data/github.json` → `repositories[]` | `url` | `https://github.com/<owner>/<repo>` | 可选，缺失为 `null` |
 | 项目 | `data/github.json` → `projects.items[]` | `url` | GitHub Projects 页面地址 | 可选，缺失为 `null` |
+| 模版 | `data/templates.json` → `templates[]` | `url` | 仓库内 Markdown 源文件地址 | 必填，由 `path` 生成 |
 
 约定细节：
 
@@ -260,6 +332,9 @@ python scripts/collect.py --author gatilin
 python scripts/collect_scholar.py --user oTYM_I8AAAAJ
 python scripts/collect_social.py --config config/social_sources.json
 python scripts/collect_github.py --login isLinXu
+
+# 模版库只读本地目录，不访问网络
+python scripts/collect_templates.py
 
 # 构建静态站点并启动本地预览
 python scripts/build.py
@@ -378,14 +453,18 @@ scripts/collect.py            # Hugging Face 模型 + 数据集 API、异常保�
 scripts/collect_scholar.py    # 公开 Google Scholar 档案抓取与解析
 scripts/collect_social.py     # 社交平台粉丝数采集（可插拔 fetcher 注册表）
 scripts/collect_github.py      # GitHub 账号指标、公开仓库分页与 Projects 采集
+scripts/collect_templates.py   # 索引 templates/ 下的 Skill 与 Prompt 模版（只读本地）
 scripts/build.py              # 组装纯静态站点
 scripts/serve.py              # 本地预览用多线程静态服务器
+templates/skills/<slug>.md    # Skill 定义（frontmatter + 正文）
+templates/prompts/<slug>.md   # Prompt 模版（frontmatter + 正文）
 site/index.html               # 看板 DOM
 site/style.css                # 设计令牌 + 明暗双主题 + 响应式布局
 site/format.js                # 数值格式化（万/亿、千位分隔、日期、涨跌符号）
 site/charts.js                # SVG 图表原语（折线、柱状、排行）
 site/data.js                  # 数据获取与全局状态、派生序列计算
 site/render.js                # 各板块渲染逻辑
+site/templates.js             # 模版库：浏览、草稿、复制与 GitHub 回写
 site/theme.js                 # 明暗主题切换与持久化
 site/app.js                   # 事件绑定与启动编排
 site/favicon.svg
@@ -398,9 +477,12 @@ data/social.json              # 最新社交平台指标
 data/social_history.json      # 逐日粉丝数快照
 data/github.json              # 最新 GitHub 账号指标 + 公开仓库 + Projects
 data/github_history.json      # 逐日 GitHub 粉丝快照
+data/templates.json           # 最新模版索引（含完整正文）
+data/templates_history.json   # 逐日模版数量快照
 tests/test_collect.py         # 离线测试（数据集 + url 字段 + 档案解析）
 tests/test_social.py          # 离线测试（社交配置、降级、小红书解析）
 tests/test_github.py          # 离线测试（仓库转换、历史、降级）
+tests/test_templates.py       # 离线测试（frontmatter 解析、标签归一、索引与降级）
 tests/fixtures/               # 离线测试用的真实页面片段
 ```
 

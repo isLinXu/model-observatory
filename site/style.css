@@ -736,3 +736,236 @@ select { height: 38px; background: var(--input-bg); border: 1px solid var(--inpu
 .ext-link:hover { border-color: var(--blue); background: var(--surface-3); }
 .model-link-plain { cursor: default; color: var(--txt-soft); }
 .paper-title-plain { color: var(--txt-soft); }
+
+/* --- Template library ---------------------------------------------------- */
+/* The board reuses the tokens above, so both themes are covered without a
+   single extra colour declaration. */
+
+.template-chart-panel { margin-bottom: var(--gap); }
+
+.template-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(292px, 1fr));
+  gap: var(--gap);
+}
+
+/* The whole card is the click target, but the title stays a real link so the
+   GitHub source page remains reachable with a middle-click. */
+.template-card {
+  background: var(--card-bg);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 16px 17px;
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  cursor: pointer;
+  transition: border-color .16s ease, transform .16s ease;
+}
+.template-card:hover,
+.template-card:focus-visible {
+  border-color: var(--blue);
+  transform: translateY(-2px);
+  outline: none;
+}
+.template-card-head { display: flex; align-items: center; gap: 8px; }
+
+.template-kind {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--chip-line);
+  background: var(--chip-tiny-bg);
+  color: var(--chip-tiny-txt);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: .7px;
+  text-transform: uppercase;
+}
+.template-kind.skill { color: var(--chart-2); border-color: var(--line-2); }
+.template-kind.prompt { color: var(--chart-1); border-color: var(--line-2); }
+.template-version { color: var(--subtle); font-size: 9.5px; letter-spacing: .3px; }
+
+.template-card-title { font-size: 14.5px; font-weight: 650; line-height: 1.4; }
+.template-title { color: var(--txt-strong); text-decoration: none; }
+.template-title:hover { color: var(--chart-1); }
+
+.template-desc {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11.5px;
+  line-height: 1.62;
+  /* Two lines keeps every card the same height regardless of description. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.template-tags { display: flex; flex-wrap: wrap; gap: 5px; margin-top: auto; }
+.template-tag {
+  padding: 2px 7px;
+  border-radius: 5px;
+  background: var(--chip-tiny-bg);
+  border: 1px solid var(--chip-tiny-line);
+  color: var(--chip-tiny-txt);
+  font-size: 9px;
+}
+.template-tag.muted { color: var(--subtle); }
+
+.template-card-foot {
+  display: flex;
+  justify-content: space-between;
+  border-top: 1px solid var(--line);
+  padding-top: 9px;
+  color: var(--subtle);
+  font-size: 9.5px;
+  letter-spacing: .3px;
+}
+
+/* --- Detail + composer --------------------------------------------------- */
+
+.template-detail,
+.template-composer {
+  margin-top: var(--gap);
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  background: var(--panel-bg);
+  padding: 18px 20px;
+}
+.template-detail-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+.template-detail-head h3 { margin: 5px 0 0; font-size: 16px; }
+.template-detail-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 7px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+/* The body is shown verbatim rather than rendered as Markdown: a template is
+   meant to be copied exactly as written, formatting included. */
+.template-body {
+  margin: 0;
+  max-height: 420px;
+  overflow: auto;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-2);
+  color: var(--txt-soft);
+  font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.72;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.template-body.small { max-height: 190px; font-size: 10.5px; }
+
+.template-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; margin-top: 13px; }
+.template-draft-badge {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 10px;
+  letter-spacing: .3px;
+}
+.template-draft-badge.accent { color: var(--chart-3); }
+
+.template-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(158px, 1fr));
+  gap: 11px;
+  margin-bottom: 11px;
+}
+.template-form-grid label,
+.template-form-full { display: flex; flex-direction: column; gap: 5px; }
+.template-form-grid label > span,
+.template-form-full > span {
+  color: var(--muted);
+  font-size: 9.5px;
+  letter-spacing: .5px;
+  text-transform: uppercase;
+}
+.template-form-full { margin-bottom: 11px; }
+
+/* --- Write-back panel ---------------------------------------------------- */
+
+.template-sync {
+  margin-top: var(--gap);
+  border: 1px solid var(--line);
+  border-left: 2px solid var(--chart-2);
+  border-radius: 13px;
+  background: var(--surface-2);
+  padding: 16px 18px;
+}
+.template-sync-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+.template-sync-head h3 { margin: 5px 0 0; font-size: 14px; }
+.template-sync-head .template-detail-meta { max-width: 74ch; line-height: 1.6; }
+
+.template-sync-state {
+  flex: none;
+  padding: 3px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line-2);
+  color: var(--muted);
+  font-size: 9.5px;
+  letter-spacing: .5px;
+  white-space: nowrap;
+}
+.template-sync-state.accent { color: var(--chart-3); border-color: var(--chart-3); }
+.template-sync-state.ok { color: var(--chart-2); border-color: var(--chart-2); }
+.template-sync-state.warn { color: var(--red); border-color: var(--red); }
+
+.template-sync-row { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 13px; }
+.template-sync-row input {
+  flex: 1 1 260px;
+  min-width: 0;
+  padding: 9px 12px;
+  border: 1px solid var(--line-2);
+  border-radius: 9px;
+  background: var(--surface);
+  color: var(--txt);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.template-sync-row input:focus { outline: none; border-color: var(--blue); }
+.template-sync-message { margin-top: 10px; color: var(--muted); font-size: 10.5px; line-height: 1.6; min-height: 16px; }
+
+@media (max-width: 700px) {
+  .template-cards { grid-template-columns: 1fr; }
+  .template-detail-head,
+  .template-sync-head { flex-direction: column; }
+  .template-draft-badge { margin-left: 0; }
+  .template-body { max-height: 300px; font-size: 11px; }
+}
+
+/* Composer controls inherit the same input tokens as the toolbar selects, so
+   the form follows the active theme instead of falling back to the browser's
+   light default. */
+.template-form-grid input,
+.template-form-full input,
+.template-form-full textarea {
+  background: var(--input-bg);
+  border: 1px solid var(--input-line);
+  border-radius: var(--radius-sm);
+  color: var(--input-txt);
+  font-family: inherit;
+  font-size: 12px;
+  padding: 9px 12px;
+  outline: none;
+  transition: border-color .16s ease;
+}
+.template-form-full textarea { line-height: 1.68; resize: vertical; min-height: 150px; }
+.template-form-grid input:focus,
+.template-form-full input:focus,
+.template-form-full textarea:focus { border-color: var(--blue); }
+.template-form-grid input::placeholder,
+.template-form-full input::placeholder,
+.template-form-full textarea::placeholder { color: var(--faint); }

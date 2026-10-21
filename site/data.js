@@ -392,6 +392,7 @@ MO.data = (() => {
     subscribe,
     notify,
     loadAll,
+    getJSON,
     getDateShift,
     modelSeries,
     sumSeries,
