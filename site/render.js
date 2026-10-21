@@ -552,7 +552,6 @@ MO.render = (() => {
     charts.ranking($('githubLangChart'), languages.map(item => ({
       label: item.language,
       value: item.count,
-      note: `${fmt(item.count)} 个仓库`,
       color: 'var(--chart-2)'
     })), { emptyText: '暂无语言数据。' });
     $('githubLangTotal').textContent = `共 ${fmt(total)} 个带语言标注的仓库`;

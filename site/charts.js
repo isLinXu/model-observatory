@@ -136,7 +136,7 @@ MO.charts = (() => {
   }
 
   /**
-   * Horizontal ranking bars, used for the social platform cards.
+   * Horizontal ranking bars, used for the repository language board.
    * rows: [{ label, value, color, note }]
    */
   function ranking(node, rows, opts = {}) {
