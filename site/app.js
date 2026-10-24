@@ -9,6 +9,15 @@
   const { fmt, signed, tone, timestamp } = MO.format;
   const data = MO.data;
   const render = MO.render;
+  let detailTrigger = null;
+
+  function setActiveButton(selector, activeButton) {
+    document.querySelectorAll(selector).forEach(button => {
+      const active = button === activeButton;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+  }
 
   function csvEscape(value) {
     return `"${String(value ?? '').replace(/"/g, '""')}"`;
@@ -101,19 +110,41 @@
 
   function openDetail(id) {
     if (!data.state.latest.models.some(model => model.id === id)) return;
+    detailTrigger = document.activeElement;
     data.state.model = id;
     $('detailOverlay').classList.remove('hidden');
     $('detailOverlay').setAttribute('aria-hidden', 'false');
+    document.querySelector('.shell').inert = true;
     document.body.style.overflow = 'hidden';
     render.renderDetail();
     $('closeDetail').focus();
   }
 
   function closeDetail() {
+    if (!data.state.model) return;
     data.state.model = null;
     $('detailOverlay').classList.add('hidden');
     $('detailOverlay').setAttribute('aria-hidden', 'true');
+    document.querySelector('.shell').inert = false;
     document.body.style.overflow = '';
+    if (detailTrigger instanceof HTMLElement) detailTrigger.focus();
+    detailTrigger = null;
+  }
+
+  function trapDetailFocus(event) {
+    const focusable = [...document.querySelectorAll(
+      '#detailOverlay button:not([disabled]), #detailOverlay a[href], #detailOverlay [tabindex]:not([tabindex="-1"])'
+    )].filter(element => element.getClientRects().length);
+    if (!focusable.length) return;
+    const first = focusable[0];
+    const last = focusable.at(-1);
+    if (event.shiftKey && (document.activeElement === first || !document.activeElement.closest('#detailOverlay'))) {
+      event.preventDefault();
+      last.focus();
+    } else if (!event.shiftKey && (document.activeElement === last || !document.activeElement.closest('#detailOverlay'))) {
+      event.preventDefault();
+      first.focus();
+    }
   }
 
   /** Toggle a platform in the social filter. Clicking the active chip resets to all. */
@@ -133,28 +164,30 @@
   }
 
   function bind() {
+    document.querySelectorAll('.segmented button, .range-controls button').forEach(button =>
+      button.setAttribute('aria-pressed', String(button.classList.contains('active'))));
     document.querySelectorAll('[data-metric]').forEach(button => button.addEventListener('click', () => {
       data.state.metric = button.dataset.metric;
-      document.querySelectorAll('[data-metric]').forEach(item => item.classList.toggle('active', item === button));
+      setActiveButton('[data-metric]', button);
       render.renderOverall();
     }));
 
     document.querySelectorAll('[data-range]').forEach(button => button.addEventListener('click', () => {
       data.state.range = button.dataset.range;
-      document.querySelectorAll('[data-range]').forEach(item => item.classList.toggle('active', item === button));
+      setActiveButton('[data-range]', button);
       render.renderOverall();
       render.renderCompare();
     }));
 
     document.querySelectorAll('[data-dataset-metric]').forEach(button => button.addEventListener('click', () => {
       data.state.datasetMetric = button.dataset.datasetMetric;
-      document.querySelectorAll('[data-dataset-metric]').forEach(item => item.classList.toggle('active', item === button));
+      setActiveButton('[data-dataset-metric]', button);
       render.renderDatasetChart();
     }));
 
     document.querySelectorAll('[data-dataset-range]').forEach(button => button.addEventListener('click', () => {
       data.state.datasetRange = button.dataset.datasetRange;
-      document.querySelectorAll('[data-dataset-range]').forEach(item => item.classList.toggle('active', item === button));
+      setActiveButton('[data-dataset-range]', button);
       render.renderDatasetChart();
     }));
 
@@ -209,7 +242,7 @@
     });
     document.querySelectorAll('[data-social-range]').forEach(button => button.addEventListener('click', () => {
       data.state.socialRange = button.dataset.socialRange;
-      document.querySelectorAll('[data-social-range]').forEach(item => item.classList.toggle('active', item === button));
+      setActiveButton('[data-social-range]', button);
       render.renderSocialChart();
     }));
     document.querySelectorAll('[data-social-view]').forEach(button => button.addEventListener('click', () => {
@@ -241,8 +274,7 @@
         if (data.state.githubForks === scope) return;
         data.state.githubForks = scope;
         data.state.githubPage = 1;
-        document.querySelectorAll('[data-github-forks]').forEach(item =>
-          item.classList.toggle('active', item === button));
+        setActiveButton('[data-github-forks]', button);
         render.renderGitHub();
       });
     });
@@ -259,7 +291,9 @@
     $('closeDetail').onclick = closeDetail;
     $('closeOverlayBg').onclick = closeDetail;
     document.addEventListener('keydown', event => {
-      if (event.key === 'Escape' && data.state.model) closeDetail();
+      if (!data.state.model) return;
+      if (event.key === 'Escape') closeDetail();
+      else if (event.key === 'Tab') trapDetailFocus(event);
     });
     document.querySelectorAll('.navlinks a').forEach(link => link.addEventListener('click', () => {
       document.querySelectorAll('.navlinks a').forEach(item => item.classList.toggle('active', item === link));
@@ -294,6 +328,8 @@
       render.stateMessage('页面可以加载，但读取历史 JSON 失败：' + error.message +
         '。请检查 GitHub Actions 是否成功完成采集与部署。');
       // Secondary panels still render so a partial failure is visible, not blank.
+      try { render.renderScholar(); } catch (secondaryError) { console.error(secondaryError); }
+      try { render.renderPapers(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderSocial(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderGitHub(); } catch (secondaryError) { console.error(secondaryError); }
     }

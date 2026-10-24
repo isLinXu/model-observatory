@@ -969,3 +969,12 @@ select { height: 38px; background: var(--input-bg); border: 1px solid var(--inpu
 .template-form-grid input::placeholder,
 .template-form-full input::placeholder,
 .template-form-full textarea::placeholder { color: var(--faint); }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

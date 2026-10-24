@@ -8,7 +8,7 @@
  *   3. pushing those drafts to GitHub through the Contents API, so the
  *      Markdown under templates/ stays the single source of truth.
  *
- * Token handling: the personal access token lives in localStorage only and is
+ * Token handling: the personal access token lives in sessionStorage only and is
  * sent exclusively to api.github.com. Nothing is proxied through this site,
  * which is static and has no backend. Without a token the library still
  * browses and exports; only the write-back is disabled.
@@ -37,7 +37,7 @@ MO.templates = (() => {
     search: '',
     kind: 'all',
     tag: 'all',
-    sort: 'updated',
+    sort: 'name',
     view: 'cards',
     selected: null,
     draft: null,
@@ -50,7 +50,7 @@ MO.templates = (() => {
   };
 
   // --- Storage -------------------------------------------------------------
-  // localStorage throws in private browsing modes, so every access is guarded;
+  // Browser storage can throw in private modes, so every access is guarded;
   // the board stays fully usable as a read-only library in that case.
 
   function readStore(key, fallback) {
@@ -79,6 +79,30 @@ MO.templates = (() => {
     }
   }
 
+  function readSession(key) {
+    try {
+      return sessionStorage.getItem(key) || '';
+    } catch (error) {
+      return '';
+    }
+  }
+
+  function writeSession(key, value) {
+    try {
+      sessionStorage.setItem(key, value);
+    } catch (error) {
+      /* Keep the token in memory for this page. */
+    }
+  }
+
+  function clearSession(key) {
+    try {
+      sessionStorage.removeItem(key);
+    } catch (error) {
+      /* nothing to clean up */
+    }
+  }
+
   // --- Derived data --------------------------------------------------------
 
   function summary() {
@@ -97,10 +121,9 @@ MO.templates = (() => {
       return haystack.includes(search);
     });
     const byName = (a, b) => a.name.localeCompare(b.name, 'zh-CN');
-    if (state.sort === 'name') rows = rows.sort(byName);
-    else if (state.sort === 'kind') rows = rows.sort((a, b) => a.kind.localeCompare(b.kind) || byName(a, b));
+    if (state.sort === 'kind') rows = rows.sort((a, b) => a.kind.localeCompare(b.kind) || byName(a, b));
     else if (state.sort === 'size') rows = rows.sort((a, b) => (b.bytes || 0) - (a.bytes || 0));
-    else rows = rows.sort((a, b) => (b.updated_at || '').localeCompare(a.updated_at || '') || byName(a, b));
+    else rows = rows.sort(byName);
     return rows;
   }
 
@@ -220,7 +243,7 @@ MO.templates = (() => {
     const library = state.library;
     if (!library || library.status === 'unavailable') {
       banner.textContent = library?.error
-        ? `模版索引读取失败：${library.error}。已保留上一次结果，可手动刷新重试。`
+        ? `模版索引读取失败：${library.error}。${state.entries.length ? '已保留上一次结果，' : ''}可手动刷新重试。`
         : '尚未建立模版索引。';
       banner.classList.remove('hidden', 'info');
       return;
@@ -315,8 +338,11 @@ MO.templates = (() => {
     const isCards = state.view === 'cards';
     $('templateCards').classList.toggle('hidden', !isCards);
     $('templateTableWrap').classList.toggle('hidden', isCards);
-    document.querySelectorAll('[data-template-view]').forEach(button =>
-      button.classList.toggle('active', button.dataset.templateView === state.view));
+    document.querySelectorAll('[data-template-view]').forEach(button => {
+      const active = button.dataset.templateView === state.view;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
   }
 
   function renderDraftBadge() {
@@ -579,7 +605,12 @@ MO.templates = (() => {
       state.status = 'ready';
     }
     state.drafts = readStore(DRAFT_KEY, {}) || {};
-    state.token = readStore(TOKEN_KEY, '') || '';
+    const legacyToken = readStore(TOKEN_KEY, '') || '';
+    state.token = readSession(TOKEN_KEY) || legacyToken;
+    if (legacyToken) {
+      writeSession(TOKEN_KEY, legacyToken);
+      clearStore(TOKEN_KEY);
+    }
   }
 
   async function refresh() {
@@ -629,7 +660,8 @@ MO.templates = (() => {
     state.selected = id;
     $('templateComposer').classList.add('hidden');
     renderDetail();
-    $('templateDetail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+    $('templateDetail').scrollIntoView({ behavior: reducedMotion ? 'auto' : 'smooth', block: 'nearest' });
   }
 
   function bind() {
@@ -702,7 +734,7 @@ MO.templates = (() => {
 
     $('templateToken').addEventListener('input', event => {
       state.token = event.target.value.trim();
-      writeStore(TOKEN_KEY, state.token);
+      writeSession(TOKEN_KEY, state.token);
     });
     $('templateTokenToggle').addEventListener('click', () => {
       state.revealToken = !state.revealToken;
@@ -712,6 +744,7 @@ MO.templates = (() => {
     $('templateTokenClear').addEventListener('click', () => {
       state.token = '';
       clearStore(TOKEN_KEY);
+      clearSession(TOKEN_KEY);
       renderTokenField();
       setSync('idle', 'Token 已从本地清除');
     });

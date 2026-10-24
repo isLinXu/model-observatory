@@ -70,7 +70,7 @@
       <div id="emptyBanner" class="empty-state hidden"><div class="empty-icon">◎</div><div><strong>等待第一次 Hugging Face 快照</strong><p>仓库创建后，请到 GitHub Actions 手动运行 “Sync Hugging Face & deploy Pages”。首次采集后，累计和近 30 天下载量会显示；变化趋势需要积累后续每日快照。</p></div></div>
 
       <section class="kpis" aria-label="账户总体指标">
-        <div class="kpi"><div class="kpi-label">模型总数 <span class="kpi-symbol">◈</span></div><div id="statModels" class="kpi-value">—</div><div class="kpi-caption">当前公开模型仓库</div></div>
+        <div class="kpi"><div class="kpi-label">模型总数 <span class="kpi-symbol">◈</span></div><div id="statModels" class="kpi-value">—</div><div id="statModelsSub" class="kpi-caption">当前公开模型仓库</div></div>
         <div class="kpi"><div class="kpi-label">历史累计下载 <span class="kpi-symbol">↗</span></div><div id="statLifetime" class="kpi-value">—</div><div id="statLifetimeSub" class="kpi-caption">所有模型累计指标之和</div></div>
         <div class="kpi"><div class="kpi-label">最近 30 天下载 <span class="kpi-symbol blue">◷</span></div><div id="statRolling" class="kpi-value">—</div><div class="kpi-caption">Hugging Face 滚动 30 天</div></div>
         <div class="kpi accent-kpi"><div class="kpi-label">上次采集以来净变化 <span class="kpi-symbol teal">⌁</span></div><div id="statDelta" class="kpi-value">—</div><div id="statDeltaSub" class="kpi-caption">需至少两日快照</div></div>
@@ -87,7 +87,7 @@
       <section class="panel changes-panel"><div class="panel-head"><div><div class="panel-overline">MOMENTUM & REVISIONS</div><h2>日度变化观测</h2><p>累计值的相邻快照净变化；负值保留用于识别统计修正</p></div><span id="correctionBadge" class="correction-pill">暂无异常</span></div><div id="deltaChart" class="bar-chart-area"></div><div class="chart-footer"><span class="muted micro">这是累计计数器的观测净差值，并非官方独立提供的每日下载次数。</span><span id="deltaPeriod" class="micro muted">—</span></div></section>
 
       <section id="models" class="model-section">
-        <div class="section-heading"><div><div class="section-eyebrow">INVENTORY / ALL MODELS</div><h2>全部模型 <span id="modelCountBadge">0</span></h2><p>筛选、排序并打开单模型的完整历史曲线</p></div><div class="section-actions"><button class="button" id="exportCSV">↓ 导出 CSV</button><button class="button secondary" id="exportJSON">↓ 导出历史 JSON</button></div></div>
+        <div class="section-heading"><div><div class="section-eyebrow">INVENTORY / ALL MODELS</div><h2>全部模型 <span id="modelCountBadge">0</span></h2><p>筛选、排序并打开单模型的完整历史曲线</p></div><div class="section-actions"><button class="button" id="exportCSV">↓ 导出全部 CSV</button><button class="button secondary" id="exportJSON">↓ 导出历史 JSON</button></div></div>
         <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="modelSearch" placeholder="搜索模型名称或仓库 ID" autocomplete="off" aria-label="搜索模型"></label><select id="sortModel" aria-label="排序方式"><option value="last_30d">按近30天下载排序</option><option value="all_time">按累计下载排序</option><option value="d1">按上次变化排序</option><option value="d7">按7天变化排序</option><option value="d30">按30天变化排序</option><option value="name">按名称排序</option></select><label class="filter-check"><input type="checkbox" id="onlyAnomalies">只看累计下降</label><span class="toolbar-spacer"></span><span id="tableCount" class="micro muted">—</span></div>
         <div class="table-scroll"><table class="models-table"><thead><tr><th class="no-sort">模型名称</th><th class="align-right">历史累计</th><th class="align-right">滚动30天</th><th class="align-right">上次变化</th><th class="align-right">7日净变</th><th class="align-right">30日净变</th><th>状态</th><th class="compare-col">对比</th></tr></thead><tbody id="modelRows"><tr><td colspan="8" class="no-rows">尚未有采集数据</td></tr></tbody></table></div>
         <div class="table-bottom"><span>说明：— 表示该对比日期缺少有效快照，不代表下载量为 0。</span><span id="snapshotDate">—</span></div>
@@ -96,7 +96,7 @@
       <section id="compare" class="panel compare-panel"><div class="panel-head"><div><div class="panel-overline">SIDE-BY-SIDE</div><h2>模型对比 <span class="light-info">最多 3 个</span></h2><p>在上方模型表的「对比」一列勾选模型</p></div><button class="button text-button" id="clearCompare">清空选择 ✕</button></div><div id="compareSelected" class="compare-selected"></div><div id="compareChart" class="chart-area compare-chart"></div></section>
 
       <section id="datasets" class="model-section">
-        <div class="section-heading"><div><div class="section-eyebrow">INVENTORY / ALL DATASETS</div><h2>全部数据集 <span id="datasetCountBadge">0</span></h2><p>与模型完全同口径：历史累计、滚动 30 天与每日净变化</p></div><div class="section-actions"><button class="button" id="exportDatasetCSV">↓ 导出 CSV</button><button class="button secondary" id="exportDatasetJSON">↓ 导出历史 JSON</button></div></div>
+        <div class="section-heading"><div><div class="section-eyebrow">INVENTORY / ALL DATASETS</div><h2>全部数据集 <span id="datasetCountBadge">0</span></h2><p>与模型完全同口径：历史累计、滚动 30 天与每日净变化</p></div><div class="section-actions"><button class="button" id="exportDatasetCSV">↓ 导出全部 CSV</button><button class="button secondary" id="exportDatasetJSON">↓ 导出历史 JSON</button></div></div>
         <div class="kpis">
           <div class="kpi"><div class="kpi-label">数据集总数 <span class="kpi-symbol">▤</span></div><div id="statDatasets" class="kpi-value">—</div><div class="kpi-caption">当前公开数据集仓库</div></div>
           <div class="kpi"><div class="kpi-label">历史累计下载 <span class="kpi-symbol">↗</span></div><div id="statDatasetLifetime" class="kpi-value">—</div><div id="statDatasetLifetimeSub" class="kpi-caption">所有数据集累计指标之和</div></div>
@@ -120,7 +120,7 @@
         <div id="scholarCard" class="scholar-card"><div class="chart-empty">等待学术档案数据</div></div>
         <div class="kpis" style="margin:16px 0 20px">
           <div class="kpi"><div class="kpi-label">引用总数 <span class="kpi-symbol">✦</span></div><div id="statCitations" class="kpi-value">—</div><div id="statCitationsSub" class="kpi-caption">Google Scholar 累计引用</div></div>
-          <div class="kpi"><div class="kpi-label">h-index <span class="kpi-symbol blue">h</span></div><div id="statHIndex" class="kpi-value">—</div><div class="kpi-caption">单篇最高被引次数</div></div>
+          <div class="kpi"><div class="kpi-label">h-index <span class="kpi-symbol blue">h</span></div><div id="statHIndex" class="kpi-value">—</div><div class="kpi-caption">至少有 h 篇论文各被引 ≥h 次</div></div>
           <div class="kpi"><div class="kpi-label">i10-index <span class="kpi-symbol blue">i</span></div><div id="statI10" class="kpi-value">—</div><div class="kpi-caption">被引 ≥10 次的论文数</div></div>
           <div class="kpi accent-kpi"><div class="kpi-label">收录论文 <span class="kpi-symbol teal">▤</span></div><div id="statPapers" class="kpi-value">—</div><div id="statPapersSub" class="kpi-caption">Google Scholar 收录数</div></div>
         </div>
@@ -134,11 +134,11 @@
       </section>
 
       <section id="social" class="model-section">
-        <div class="section-heading"><div><div class="section-eyebrow">SOCIAL AUDIENCE / CROSS-PLATFORM</div><h2>社交媒体 <span id="socialCountBadge">0</span></h2><p>各平台公开粉丝数，按 UTC 每日快照留存，可按平台与时间维度筛选</p></div><div class="section-actions"><button class="button" id="exportSocialCSV">↓ 导出 CSV</button><div class="segmented" role="group" aria-label="社交数据视图"><button class="active" data-social-view="cards">卡片</button><button data-social-view="table">表格</button></div></div></div>
+        <div class="section-heading"><div><div class="section-eyebrow">SOCIAL AUDIENCE / CROSS-PLATFORM</div><h2>社交媒体 <span id="socialCountBadge">0</span></h2><p>各平台公开粉丝数，按 UTC 每日快照留存，可按平台与时间维度筛选</p></div><div class="section-actions"><button class="button" id="exportSocialCSV">↓ 导出全部 CSV</button><div class="segmented" role="group" aria-label="社交数据视图"><button class="active" data-social-view="cards">卡片</button><button data-social-view="table">表格</button></div></div></div>
         <div class="kpis" style="margin-bottom:16px">
           <div class="kpi"><div class="kpi-label">粉丝总数 <span class="kpi-symbol">◎</span></div><div id="statSocialTotal" class="kpi-value">—</div><div id="statSocialTotalSub" class="kpi-caption">所选平台粉丝数合计</div></div>
           <div class="kpi"><div class="kpi-label">覆盖平台 <span class="kpi-symbol blue">▦</span></div><div id="statSocialPlatforms" class="kpi-value">—</div><div id="statSocialPlatformsSub" class="kpi-caption">已配置的平台数量</div></div>
-          <div class="kpi"><div class="kpi-label">近 30 天粉丝 <span class="kpi-symbol blue">◷</span></div><div id="statSocialRolling" class="kpi-value">—</div><div id="statSocialRollingSub" class="kpi-caption">滚动 30 天粉丝数合计</div></div>
+          <div class="kpi"><div class="kpi-label">近 30 天粉丝净增 <span class="kpi-symbol blue">◷</span></div><div id="statSocialRolling" class="kpi-value">—</div><div id="statSocialRollingSub" class="kpi-caption">与恰好 30 天前的快照比较</div></div>
           <div class="kpi accent-kpi"><div class="kpi-label">上次采集以来净变化 <span class="kpi-symbol teal">⌁</span></div><div id="statSocialDelta" class="kpi-value">—</div><div id="statSocialDeltaSub" class="kpi-caption">需至少两日快照</div></div>
         </div>
         <div class="social-toolbar">
@@ -154,7 +154,7 @@
       </section>
 
       <section id="github" class="model-section">
-        <div class="section-heading"><div><div class="section-eyebrow">GITHUB / ACCOUNT & REPOSITORIES</div><h2>GitHub 看板 <span id="githubRepoBadge">0</span></h2><p>粉丝历史变化、公开仓库与项目清单，支持搜索、排序、筛选与分页</p></div><div class="section-actions"><button class="button secondary" id="exportGitHubCSV">↓ 导出 CSV</button><button class="button" id="githubRefresh">↻ 手动刷新</button><a class="button secondary" id="githubProfileLink" href="https://github.com/isLinXu" target="_blank" rel="noopener noreferrer">GitHub 主页 ↗</a></div></div>
+        <div class="section-heading"><div><div class="section-eyebrow">GITHUB / ACCOUNT & REPOSITORIES</div><h2>GitHub 看板 <span id="githubRepoBadge">0</span></h2><p>粉丝历史变化、公开仓库与项目清单，支持搜索、排序、筛选与分页</p></div><div class="section-actions"><button class="button secondary" id="exportGitHubCSV">↓ 导出筛选 CSV</button><button class="button" id="githubRefresh">↻ 手动刷新</button><a class="button secondary" id="githubProfileLink" href="https://github.com/isLinXu" target="_blank" rel="noopener noreferrer">GitHub 主页 ↗</a></div></div>
         <div id="githubBanner" class="notice hidden" role="status"></div>
         <div class="kpis" style="margin-bottom:16px">
           <div class="kpi"><div class="kpi-label">粉丝总数 <span class="kpi-symbol">◐</span></div><div id="statGithubFollowers" class="kpi-value">—</div><div id="statGithubFollowersSub" class="kpi-caption">当前关注者数量</div></div>
@@ -184,7 +184,7 @@
           <div class="kpi accent-kpi"><div class="kpi-label">标签 <span class="kpi-symbol teal">⌁</span></div><div id="statTemplatesTags" class="kpi-value">—</div><div id="statTemplatesTagsSub" class="kpi-caption">按分类聚合</div></div>
         </div>
         <div class="panel template-chart-panel"><div class="panel-head"><div><div class="panel-overline">LIBRARY OVER TIME</div><h2>模版库规模趋势</h2><p>本站每日采集的模版总数走势</p></div><span class="mini-icon">◈</span></div><div id="templateChart" class="chart-area" role="img" aria-label="模版总数趋势图"></div><div class="chart-footer"><span class="muted micro">模版数量来自仓库中 Markdown 文件的每日索引。</span><span id="templateChartNote" class="micro muted">—</span></div></div>
-        <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="templateSearch" placeholder="搜索名称、描述、标签或正文" autocomplete="off" aria-label="搜索模版"></label><select id="filterTemplateKind" aria-label="按类型筛选"><option value="all">全部类型</option><option value="skill">Skill</option><option value="prompt">Prompt</option></select><select id="filterTemplateTag" aria-label="按标签筛选"><option value="all">全部标签</option></select><select id="sortTemplate" aria-label="模版排序方式"><option value="updated">按最近更新排序</option><option value="kind">按类型排序</option><option value="size">按体积排序</option><option value="name">按名称排序</option></select><div class="segmented" role="group" aria-label="模版视图"><button class="active" data-template-view="cards">卡片</button><button data-template-view="table">表格</button></div><span class="toolbar-spacer"></span><span id="templateTableCount" class="micro muted">—</span></div>
+        <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="templateSearch" placeholder="搜索名称、描述、标签或正文" autocomplete="off" aria-label="搜索模版"></label><select id="filterTemplateKind" aria-label="按类型筛选"><option value="all">全部类型</option><option value="skill">Skill</option><option value="prompt">Prompt</option></select><select id="filterTemplateTag" aria-label="按标签筛选"><option value="all">全部标签</option></select><select id="sortTemplate" aria-label="模版排序方式"><option value="name">按名称排序</option><option value="kind">按类型排序</option><option value="size">按体积排序</option></select><div class="segmented" role="group" aria-label="模版视图"><button class="active" data-template-view="cards">卡片</button><button data-template-view="table">表格</button></div><span class="toolbar-spacer"></span><span id="templateTableCount" class="micro muted">—</span></div>
         <div id="templateCards" class="template-cards"></div>
         <div id="templateTableWrap" class="table-scroll hidden" style="margin-top:16px"><table class="models-table template-table"><thead><tr><th class="no-sort">名称</th><th>类型</th><th>分类</th><th>标签</th><th class="align-right">行数</th><th>版本</th></tr></thead><tbody id="templateRows"><tr><td colspan="6" class="no-rows">尚未建立模版索引</td></tr></tbody></table></div>
 
@@ -213,7 +213,7 @@
         </div>
 
         <div class="template-sync">
-          <div class="template-sync-head"><div><div class="panel-overline">WRITE BACK</div><h3>同步到 GitHub</h3><p class="template-detail-meta">需要一个具备 Contents: Read and write 权限的 fine-grained token。Token 仅保存在本浏览器的 localStorage，且只发送给 api.github.com —— 本站是纯静态页面，没有后端代理。</p></div><span id="templateSyncState" class="template-sync-state">未同步</span></div>
+          <div class="template-sync-head"><div><div class="panel-overline">WRITE BACK</div><h3>同步到 GitHub</h3><p class="template-detail-meta">需要一个具备 Contents: Read and write 权限的 fine-grained token。Token 仅保存在当前标签页的 sessionStorage，且只发送给 api.github.com —— 本站是纯静态页面，没有后端代理。</p></div><span id="templateSyncState" class="template-sync-state">未同步</span></div>
           <div class="template-sync-row"><input id="templateToken" type="password" placeholder="github_pat_..." autocomplete="off" spellcheck="false" aria-label="GitHub Token"><button class="button secondary" id="templateTokenToggle">显示</button><button class="button secondary" id="templateTokenVerify">校验</button><button class="button text-button" id="templateTokenClear">清除</button></div>
           <div id="templateSyncMessage" class="template-sync-message"></div>
         </div>
