@@ -1,12 +1,12 @@
 # Model Observatory · @gatilin
 
-一个**直接托管到 GitHub Pages** 的 Hugging Face 模型与数据集下载统计看板，并附带类 Google Scholar 的公开学术档案板块、社交平台粉丝数板块与 GitHub 账号/仓库看板。静态前端，无后端服务器和前端密钥；GitHub Actions 每日自动抓取你的 **全部公开模型与数据集**、**公开 Google Scholar 档案**、**各平台公开粉丝数**、**GitHub 账号与公开仓库**并提交历史 JSON，同时重新部署网站。
+一个**直接托管到 GitHub Pages** 的 Hugging Face 模型与数据集下载统计看板，并附带类 Google Scholar 的公开学术档案板块、社交平台粉丝数板块与 GitHub 账号/仓库看板。静态前端，无后端服务器和前端密钥；页面打开时会通过 Hugging Face 公共 API 自动分页读取最新公开模型清单，新上传模型无需等待每日采集即可出现；GitHub Actions 每日自动抓取你的 **全部公开模型与数据集**、**公开 Google Scholar 档案**、**各平台公开粉丝数**、**GitHub 账号与公开仓库**并提交历史 JSON，同时重新部署网站。
 
 支持：模型排行、单模型详情、总体趋势、最近 30 天活跃下载、历史累计、相邻快照净变化、7/30 日净变化、统计下调异常标记、3 模型对比、搜索和 CSV / JSON 导出；数据集板块与模型完全同口径；学术主页展示引用总数、h-index、i10-index、逐年引用分布、每日引用快照与论文列表；社交媒体板块展示各平台粉丝数、平台筛选、时间范围筛选与卡片/表格双视图；GitHub 看板展示粉丝历史趋势、增长量与增长率，以及仓库的名称 / Star / Fork / 语言 / 最近更新时间，支持搜索、排序、语言筛选、**仅自有 / 含 Fork 口径切换**、分页与一键跳转，并可导出 CSV。界面支持**明暗双主题**，默认跟随系统偏好。首次采集仅有当天数据，不伪造历史走势。
 
 **所有实体都带 `url` 字段**：模型、数据集、论文、仓库与项目在列表中点击名称即可在新标签页打开原始页面；链接缺失时优雅降级为纯文本，不产生死链。
 
-**质量保障**：每次 push 与每日定时任务都会先跑完整离线测试套件（58 项），不通过则不采集、不部署。历史快照采用分级留存，避免数据文件无限膨胀（见下文）。
+**质量保障**：每次 push 与每日定时任务都会先跑完整的 Python 采集测试与 Node.js 前端回归测试，不通过则不采集、不部署。历史快照采用分级留存，避免数据文件无限膨胀（见下文）。
 
 ## GitHub CLI 一键发布（无需手动上传文件）
 
@@ -67,6 +67,7 @@ GitHub Actions 使用 `GITHUB_TOKEN` 写入快照，不需要额外配置 GitHub
 
 ## 下载量的准确口径
 
+- 模型总数、模型表格、热门模型与当前下载总量在页面加载时读取 HF 实时公开 API，自动跟随全部分页；实时接口失败或限流时回退到 `data/latest.json`，不会清空页面。历史趋势、7/30 日变化和 CSV 历史导出仍使用每日 UTC 快照，浏览器不会改写历史。
 - `downloads`: Hugging Face 官方**滚动近 30 天**下载次数，降低属正常。
 - `downloadsAllTime`: 官方历史累计下载数（SDK: `downloads_all_time`），一般应随时间上升，但可能因官方修正而下调。看板保存负变化并标记待核查。
 - `上次变化`: 同一模型最近两次**不同 UTC 日期**累计快照之差；如果采集漏天，显示为「上次变化」，而不是伪称 24 小时下载。
@@ -152,7 +153,8 @@ GitHub Actions 使用 `GITHUB_TOKEN` 写入快照，不需要额外配置 GitHub
 ### 社交数据的口径
 
 - 粉丝数是**各平台自身的统计口径**，彼此不可直接相加比较（平台对「粉丝/关注」的定义不同），看板的「粉丝总数」仅作量级参考。
-- 「近 30 天粉丝」= 最近 30 天快照之和 − 之前 30 天快照之和，需要至少 60 天快照才能计算。
+- 「近 30 天粉丝净增」= 最新快照粉丝数 − 恰好 30 天前的粉丝数；没有该 UTC 日期的基线则显示 `—`，只汇总两个日期都有有效值的平台。
+- 趋势曲线只使用所选平台都有有效值的快照；平台采集失败不会被当成 0，合法的 0 粉丝数仍会保留。
 - 「上次采集以来净变化」是相邻两次 UTC 快照之差，负值表示平台统计被回调。
 - 采集频率为每日一次 UTC，与下载统计同步。
 
@@ -262,7 +264,7 @@ python scripts/build.py && python scripts/serve.py --port 8080
 2. 「保存并推送到 GitHub」→ 通过 Contents API 写入 `templates/{skills,prompts}/<slug>.md`（已存在时自动带 `sha` 覆盖）；
 3. 推送成功触发 GitHub Actions，重新采集索引并部署，页面的模版列表随之更新。
 
-**Token 约定**：需要一个 **fine-grained personal access token**，只勾选目标仓库的 `Contents: Read and write`。Token 仅保存在本浏览器的 `localStorage`，只发送给 `api.github.com`；本站是纯静态页面，没有后端代理，但也意味着**不要在公共电脑上保存 Token**，用完点「清除」。
+**Token 约定**：需要一个 **fine-grained personal access token**，只勾选目标仓库的 `Contents: Read and write`。Token 仅保存在当前标签页的 `sessionStorage`，只发送给 `api.github.com`；关闭标签页后由浏览器清除。旧版本保存在 `localStorage` 的 Token 会在下次打开页面时迁移到会话存储并删除持久副本。本站是纯静态页面，没有后端代理；在公共电脑上仍应在使用后点「清除」。
 
 未配置 Token 时模版库仍可完整浏览、复制与导出草稿，只有写回被禁用——面板会明确提示缺什么，不会静默失败。
 
@@ -357,9 +359,10 @@ python scripts/collect_social.py --only github bilibili
 
 ```bash
 PYTHONPATH=. python -m unittest discover -s tests
+node --test tests/test_frontend.js
 ```
 
-覆盖数据集转换、历史迁移、url 字段生成、Scholar 解析、社交配置校验、各平台降级路径与小红书状态解析、GitHub 仓库转换与降级逻辑，全部离线运行，不访问网络。
+Python 套件覆盖数据集转换、历史迁移、url 字段生成、Scholar 解析、社交配置校验、各平台降级路径与小红书状态解析、GitHub 仓库转换与降级逻辑。Node.js 套件覆盖社交净增基线、缺失平台处理、趋势范围及辅助数据加载隔离；全部离线运行，不访问网络。
 
 `data/latest.json` 保存最新模型与数据集清单及对应数值，`data/history.json` 保存逐日快照。历史格式：
 
@@ -483,6 +486,7 @@ tests/test_collect.py         # 离线测试（数据集 + url 字段 + 档案�
 tests/test_social.py          # 离线测试（社交配置、降级、小红书解析）
 tests/test_github.py          # 离线测试（仓库转换、历史、降级）
 tests/test_templates.py       # 离线测试（frontmatter 解析、标签归一、索引与降级）
+tests/test_frontend.js        # 前端派生指标与辅助数据加载回归测试
 tests/fixtures/               # 离线测试用的真实页面片段
 ```
 
@@ -494,9 +498,9 @@ tests/fixtures/               # 离线测试用的真实页面片段
 
 - 如果 `git push` 在 Actions 中失败，先检查 workflow permissions 或分支保护策略。工作流需要把数据提交回仓库来保证历史永久保存。
 - 如果 `deploy-pages` 返回配置问题，核对 Settings → Pages → Source = GitHub Actions。
-- 此项目不请求浏览器直接访问 HF，不受浏览器跨域（CORS）限制；运行时页面只请求自己的 `./data/*.json`。
-- 每天一个 UTC 快照，定时采集不等于实时统计。可以手动重新运行工作流刷新当天数据。
-- 全部历史默认永久保留；账户模型极多且运行多年时，`data/history.json` 会逐年增长，可以进一步拆分年度历史文件。
+- 页面会直接请求 HF 的公开模型 API 来发现新上传模型；该接口允许跨域且无需 Token。单次请求超过 10 秒、请求失败或限流时自动回退到自己站点的 `./data/latest.json`，数据集和其它板块仍只读取发布的 JSON。
+- 模型清单实时读取，历史仍是每天一个 UTC 快照，定时采集不等于实时历史。可以手动重新运行工作流刷新当天快照。
+- 历史按前文策略有界保留：HF 近 400 天为日粒度，更早数据按周聚合并最多保留 104 个周桶；GitHub、Scholar 与模版历史保留最近 1100 天。
 - 学术档案依赖 Google Scholar 的公开页面：若被验证码拦截，采集会跳过并保留上一次成功的快照，网站仍可正常展示下载统计。不要提高抓取频率，工作流每日一次即可。
 - 知乎与小红书需要登录态，请把 Cookie 存在**仓库 Secret**（`ZHIHU_COOKIE` / `XIAOHONGSHU_COOKIE`）而不是提交进代码库。Cookie 会过期，属于正常现象：过期后该平台显示为「暂不可用」并保留上次数据，其它平台不受影响。
 - 社交平台的粉丝数会随平台自身的风控与统计口径变化，与下载统计一样，负向跳变会被保留并标记为待核查，而不是被静默抹平。

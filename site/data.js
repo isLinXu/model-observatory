@@ -37,6 +37,9 @@ MO.data = (() => {
     // GitHub's own profile page lists owned repositories, so 'own' is the
     // default and keeps the headline number comparable with github.com.
     githubForks: 'own',
+    modelSource: 'snapshot',
+    modelsCapturedAt: null,
+    modelRefreshError: null,
     status: 'loading'
   };
 
@@ -74,6 +77,64 @@ MO.data = (() => {
     return response.json();
   }
 
+  function liveModelNumber(value) {
+    return Number.isFinite(value) && value >= 0 ? value : null;
+  }
+
+  function liveNextPage(header, currentUrl) {
+    const part = String(header || '').split(',').find(value => /;\s*rel="?next"?/.test(value));
+    const target = part?.match(/<([^>]+)>/)?.[1];
+    if (!target) return null;
+    const url = new URL(target, currentUrl);
+    if (url.origin !== 'https://huggingface.co' || url.pathname !== '/api/models') {
+      throw new Error('HF 模型分页地址无效');
+    }
+    return url.href;
+  }
+
+  async function fetchLiveModels(author) {
+    const fields = ['downloads', 'downloadsAllTime', 'likes', 'pipeline_tag', 'createdAt', 'private'];
+    const query = fields.map(field => `expand=${encodeURIComponent(field)}`).join('&');
+    let url = `https://huggingface.co/api/models?author=${encodeURIComponent(author)}&limit=100&${query}`;
+    const visited = new Set();
+    const models = [];
+    const ids = new Set();
+    while (url) {
+      if (visited.has(url)) throw new Error('HF 模型分页出现循环');
+      visited.add(url);
+      const response = await fetch(url, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+      if (!response.ok) throw new Error(`HF 实时模型读取失败（HTTP ${response.status}）`);
+      const batch = await response.json();
+      if (!Array.isArray(batch)) throw new Error('HF 实时模型响应格式不完整');
+      for (const item of batch) {
+        const id = item?.id;
+        if (typeof id !== 'string' || !id.startsWith(`${author}/`) || item.private || ids.has(id)) continue;
+        ids.add(id);
+        models.push({
+          id,
+          url: `https://huggingface.co/${id.split('/').map(encodeURIComponent).join('/')}`,
+          all_time: liveModelNumber(item.downloadsAllTime),
+          last_30d: liveModelNumber(item.downloads),
+          likes: liveModelNumber(item.likes),
+          pipeline: typeof item.pipeline_tag === 'string' && item.pipeline_tag ? item.pipeline_tag : 'other',
+          created_at: typeof item.createdAt === 'string' ? item.createdAt : null
+        });
+      }
+      url = liveNextPage(response.headers.get('Link'), url);
+    }
+    if (!models.length) throw new Error(`HF API 未返回 ${author} 的公开模型，保留已发布快照`);
+    return models.sort((a, b) => a.id.toLowerCase().localeCompare(b.id.toLowerCase()));
+  }
+
+  async function refreshLiveModels() {
+    const models = await fetchLiveModels(state.latest.author);
+    state.latest = { ...state.latest, models };
+    state.modelSource = 'live';
+    state.modelsCapturedAt = new Date().toISOString();
+    state.modelRefreshError = null;
+    return models;
+  }
+
   async function loadDownloads() {
     const [latest, history] = await Promise.all([
       getJSON('./data/latest.json', '下载数据'),
@@ -91,6 +152,15 @@ MO.data = (() => {
     state.history = history;
     state.snapshots = [...history.snapshots].sort((a, b) => a.date.localeCompare(b.date));
     state.snapshotMap = new Map(state.snapshots.map(snapshot => [snapshot.date, snapshot]));
+    state.modelSource = 'snapshot';
+    state.modelsCapturedAt = null;
+    state.modelRefreshError = null;
+    try {
+      await refreshLiveModels();
+    } catch (error) {
+      state.modelRefreshError = error.message;
+      console.warn('HF 实时模型读取失败，使用已发布快照：', error);
+    }
   }
 
   async function loadScholar() {
@@ -170,8 +240,10 @@ MO.data = (() => {
 
   /** Load every dataset. Only a download failure is fatal for the page. */
   async function loadAll() {
-    await loadDownloads();
-    await Promise.all([loadScholar(), loadSocial(), loadGitHub()]);
+    const [downloads] = await Promise.allSettled([
+      loadDownloads(), loadScholar(), loadSocial(), loadGitHub()
+    ]);
+    if (downloads.status === 'rejected') throw downloads.reason;
     state.status = 'ready';
   }
 
@@ -271,13 +343,32 @@ MO.data = (() => {
     const source = range === 'all' ? state.socialSnapshots : state.socialSnapshots.slice(-Number(range));
     const wanted = selectedSocialIds();
     return source.map(snapshot => {
-      const followers = snapshot.followers || {};
-      const total = wanted.reduce((sum, id) => {
-        const value = followers[id];
-        return sum + (Number.isFinite(value) ? value : 0);
-      }, 0);
-      return { date: snapshot.date, value: total };
-    }).filter(point => point.value > 0);
+      let total = 0;
+      for (const id of wanted) {
+        const value = snapshot.followers?.[id];
+        if (!Number.isFinite(value)) return null;
+        total += value;
+      }
+      return wanted.length ? { date: snapshot.date, value: total } : null;
+    }).filter(Boolean);
+  }
+
+  function socialNetChange(days) {
+    const latest = state.socialSnapshots.at(-1);
+    if (!latest) return null;
+    const baselineDate = getDateShift(latest.date, days);
+    const baseline = state.socialSnapshots.find(snapshot => snapshot.date === baselineDate);
+    if (!baseline) return null;
+    let value = 0;
+    let compared = 0;
+    for (const id of selectedSocialIds()) {
+      const current = latest.followers?.[id];
+      const previous = baseline.followers?.[id];
+      if (!Number.isFinite(current) || !Number.isFinite(previous)) continue;
+      value += current - previous;
+      compared++;
+    }
+    return { value: compared ? value : null, compared, baseline: baselineDate };
   }
 
   /** Ids of the platforms currently included in the social views. */
@@ -392,6 +483,7 @@ MO.data = (() => {
     subscribe,
     notify,
     loadAll,
+    refreshLiveModels,
     getJSON,
     getDateShift,
     modelSeries,
@@ -404,6 +496,7 @@ MO.data = (() => {
     localDatasets,
     socialSources,
     socialSeries,
+    socialNetChange,
     socialDelta,
     selectedSocialIds,
     reloadGitHub,

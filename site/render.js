@@ -44,6 +44,9 @@ MO.render = (() => {
     const net = data.netChange(latest, previous);
 
     $('statModels').textContent = fmt(models.length);
+    $('statModelsSub').textContent = state.modelSource === 'live'
+      ? `HF 实时清单 · ${timestamp(state.modelsCapturedAt)} UTC`
+      : state.modelRefreshError ? '实时接口暂不可用 · 显示已发布快照' : '每日快照中的公开模型仓库';
     $('statLifetime').textContent = withTotal.length ? countCN(lifetime) : '—';
     $('statLifetime').title = withTotal.length ? fmt(lifetime) : '无累计数据';
     $('statLifetimeSub').textContent = withTotal.length !== models.length
@@ -57,7 +60,12 @@ MO.render = (() => {
 
     $('lastSync').textContent = timestamp(state.latest.captured_at);
     $('snapshotCount').textContent = fmt(state.snapshots.length);
-    $('snapshotDate').textContent = `最新快照 ${state.latest.date} UTC`;
+    $('snapshotDate').textContent = state.modelSource === 'live'
+      ? `清单实时 · 趋势快照 ${state.latest.date} UTC`
+      : `最新快照 ${state.latest.date} UTC`;
+    $('snapshotDate').title = state.modelSource === 'live'
+      ? `模型清单读取于 ${timestamp(state.modelsCapturedAt)} UTC；历史趋势不会由浏览器改写`
+      : '';
     $('modelCountBadge').textContent = fmt(models.length);
 
     const age = ageInDays(state.latest.captured_at);
@@ -311,11 +319,12 @@ MO.render = (() => {
     const sources = data.state.social?.sources || [];
     const ids = data.socialSources().map(source => source.id);
     const current = data.state.socialPlatforms;
-    const chips = [`<button class="platform-chip${current === 'all' ? ' active' : ''}" data-platform="all">全部平台</button>`];
+    const chips = [`<button class="platform-chip${current === 'all' ? ' active' : ''}" data-platform="all" aria-pressed="${current === 'all'}">全部平台</button>`];
     sources.forEach(source => {
       const active = current === 'all' || current.split(',').includes(source.id);
+      const selected = current !== 'all' && active;
       const label = ids.includes(source.id) ? source.label : `${source.label} · 未配置`;
-      chips.push(`<button class="platform-chip${current !== 'all' && active ? ' active' : ''}" data-platform="${esc(source.id)}" ` +
+      chips.push(`<button class="platform-chip${selected ? ' active' : ''}" data-platform="${esc(source.id)}" aria-pressed="${selected}" ` +
         `style="--chip-accent:${esc(source.color || 'var(--chart-1)')}">${esc(label)}</button>`);
     });
     $('socialPlatformFilter').innerHTML = chips.join('');
@@ -330,22 +339,8 @@ MO.render = (() => {
     const latest = data.state.socialSnapshots.at(-1);
     const capturedAt = data.state.social?.captured_at;
 
-    // Rolling 30-day total: the sum over the last 30 daily snapshots minus the
-    // sum over the 30 before that, so it answers "how many new followers in
-    // the last month" using the same daily-snapshot source as everything else.
     const snapshots = data.state.socialSnapshots;
-    const window30 = snapshots.slice(-30);
-    const previousWindow = snapshots.slice(-60, -30);
-    const sumWindow = (window, ids) => window.reduce((sum, snapshot) => {
-      const followers = snapshot.followers || {};
-      return sum + ids.reduce((inner, id) => {
-        const value = followers[id];
-        return inner + (Number.isFinite(value) ? value : 0);
-      }, 0);
-    }, 0);
-    const rolling = previousWindow.length
-      ? sumWindow(window30, selected) - sumWindow(previousWindow, selected)
-      : null;
+    const rolling = data.socialNetChange(30);
 
     $('statSocialTotal').textContent = selected.length ? countCN(total) : '—';
     $('statSocialTotal').title = fmt(total);
@@ -356,11 +351,11 @@ MO.render = (() => {
     $('statSocialPlatformsSub').textContent = sources.length
       ? `其中 ${sources.filter(source => source.status === 'ok').length} 个采集成功`
       : '暂无已配置的平台';
-    $('statSocialRolling').textContent = rolling === null ? '—' : countCN(rolling);
-    $('statSocialRolling').title = rolling === null ? '需要至少 30 天快照' : fmt(rolling);
-    $('statSocialRollingSub').textContent = rolling === null
-      ? '需至少 60 天快照才能计算'
-      : `最近 30 天净增 · 窗口 ${window30.length} 天`;
+    $('statSocialRolling').textContent = !rolling || rolling.value === null ? '—' : countCN(rolling.value);
+    $('statSocialRolling').title = !rolling || rolling.value === null ? '需要恰好 30 天前的快照' : fmt(rolling.value);
+    $('statSocialRollingSub').textContent = !rolling || rolling.value === null
+      ? '需恰好 30 天前的可比快照'
+      : `相比 ${rolling.baseline} · ${rolling.compared} 个平台`;
     $('statSocialDelta').textContent = snapshots.length >= 2 ? signedCN(delta) : '—';
     $('statSocialDelta').classList.toggle('neg', Boolean(delta < 0));
     $('statSocialDeltaSub').textContent = snapshots.length >= 2
@@ -435,10 +430,7 @@ MO.render = (() => {
     const series = selected.length === 1
       ? [{
         name: data.socialSources().find(source => source.id === selected[0])?.label || '',
-        points: state.socialSnapshots.map(snapshot => {
-          const value = snapshot.followers?.[selected[0]];
-          return { date: snapshot.date, value: Number.isFinite(value) ? value : NaN };
-        }).filter(point => Number.isFinite(point.value)),
+        points,
         color: data.socialSources().find(source => source.id === selected[0])?.color
       }]
       : [{ name: '粉丝总数', points, color: 'var(--chart-1)' }];
@@ -461,8 +453,11 @@ MO.render = (() => {
     const view = data.state.socialView;
     $('socialCards').classList.toggle('hidden', view !== 'cards');
     $('socialTableWrap').classList.toggle('hidden', view !== 'table');
-    document.querySelectorAll('[data-social-view]').forEach(button =>
-      button.classList.toggle('active', button.dataset.socialView === view));
+    document.querySelectorAll('[data-social-view]').forEach(button => {
+      const active = button.dataset.socialView === view;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
   }
 
   // --- GitHub board ---------------------------------------------------------
