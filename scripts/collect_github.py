@@ -296,12 +296,14 @@ def save(data_dir: Path, account: dict, repos: list[dict], projects: dict,
         "projects": projects,
     }
     history_path = data_dir / "github_history.json"
-    history = update_history(load_previous(history_path), account, at)
+    history = load_previous(history_path)
     atomic_json_write(data_dir / "github.json", latest)
-    atomic_json_write(history_path, history)
+    if error is None:
+        history = update_history(history, account, at)
+        atomic_json_write(history_path, history)
     print(f"Saved {len(repos)} public repositories, "
           f"{len(projects.get('items') or [])} projects, "
-          f"{len(history['snapshots'])} UTC snapshots as of {capture}")
+          f"{len(history.get('snapshots') or [])} UTC snapshots as of {capture}")
     if error:
         print(f"WARNING: {error}", file=sys.stderr)
 

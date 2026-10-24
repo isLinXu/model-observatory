@@ -127,8 +127,20 @@ class SaveTests(unittest.TestCase):
             latest = json.loads((data_dir / "github.json").read_text(encoding="utf-8"))
             self.assertEqual(latest["status"], "stale")
             self.assertIn("403", latest["error"])
-            # The follower value survives so the trend chart keeps working.
             self.assertEqual(latest["account"]["followers"], 344)
+            self.assertFalse((data_dir / "github_history.json").exists())
+
+    def test_failed_run_does_not_copy_stale_metrics_into_history(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            data_dir = Path(tmp)
+            account = {"login": "isLinXu", "followers": 344}
+            projects = {"status": "unavailable", "reason": "", "items": []}
+            save(data_dir, account, [], projects, at("2026-10-20"))
+            save(data_dir, account, [], projects, at("2026-10-21"), error="HTTP 403 rate limited")
+            history = json.loads((data_dir / "github_history.json").read_text(encoding="utf-8"))
+            self.assertEqual(len(history["snapshots"]), 1)
+            self.assertEqual(history["snapshots"][0]["date"], "2026-10-20")
+            self.assertEqual(history["updated_at"], "2026-10-20T02:23:00Z")
 
 
 class DegradationTests(unittest.TestCase):
