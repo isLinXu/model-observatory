@@ -47,6 +47,16 @@ MO.data = (() => {
     modelSearch: '',
     modelSort: 'last_30d',
     modelOnlyAnomalies: false,
+    modelscope: null,
+    modelscopeSnapshots: [],
+    modelscopeSource: 'snapshot',
+    modelscopeRefreshError: null,
+    modelscopeSearch: '',
+    modelscopeTask: 'all',
+    modelscopeSort: 'downloads',
+    modelscopePage: 1,
+    modelscopeModel: 'all',
+    modelscopeMetric: 'downloads',
     status: 'loading'
   };
 
@@ -336,10 +346,130 @@ MO.data = (() => {
     return latest;
   }
 
+  const MODELSCOPE_AUTHOR = 'isLinXu';
+  const MODELSCOPE_SOURCE = 'modelscope-openapi-v1';
+  const msIdValid = id => typeof id === 'string' && /^isLinXu\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) && !id.includes('..');
+  const msCount = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
+
+  async function loadModelScope() {
+    try {
+      const [latest, history] = await Promise.all([
+        getJSON('./data/modelscope.json', 'ModelScope 数据'),
+        getJSON('./data/modelscope_history.json', 'ModelScope 历史')
+      ]);
+      if ([latest, history].some(item => item?.schema_version !== 1 || item.author !== MODELSCOPE_AUTHOR || item.metric_source !== MODELSCOPE_SOURCE) ||
+          !['ok', 'stale', 'unavailable'].includes(latest.status) || !Array.isArray(latest.models) ||
+          latest.models.some(model => !msIdValid(model.id) || !Array.isArray(model.tasks)) || !Array.isArray(history.snapshots)) {
+        throw new Error('ModelScope 快照格式或统计来源不兼容');
+      }
+      state.modelscope = latest;
+      state.modelscopeSnapshots = [...history.snapshots].sort((a, b) => a.date.localeCompare(b.date));
+    } catch (error) {
+      state.modelscope = { status: 'unavailable', author: MODELSCOPE_AUTHOR, models: [], error: error.message };
+      state.modelscopeSnapshots = [];
+      console.warn('ModelScope 快照读取失败：', error);
+    }
+  }
+
+  async function refreshModelScope() {
+    const models = [], ids = new Set();
+    const budget = AbortSignal.timeout(120000);
+    let total = null;
+    try {
+      for (let page = 1; page <= 60; page++) {
+        const url = `https://www.modelscope.cn/openapi/v1/models?owner=${MODELSCOPE_AUTHOR}&page_number=${page}&page_size=50`;
+        const response = await fetch(url, {
+          credentials: 'omit', redirect: 'error', cache: 'no-store',
+          signal: AbortSignal.any([budget, AbortSignal.timeout(20000)])
+        });
+        if (!response.ok) throw new Error(`ModelScope 读取失败（HTTP ${response.status}）`);
+        const payload = await response.json(), batch = payload?.data;
+        if (payload.success !== true || !Array.isArray(batch?.models) || msCount(batch.total_count) === null ||
+            batch.page_number !== page || batch.page_size !== 50 || batch.total_count > 3000 ||
+            (total !== null && batch.total_count !== total)) throw new Error('ModelScope 分页不完整或清单已变化');
+        total = batch.total_count;
+        if (batch.models.length !== Math.min(50, total - (page - 1) * 50)) throw new Error('ModelScope 模型清单不完整');
+        for (const model of batch.models) {
+          if (!msIdValid(model?.id) || model.private !== false || typeof model.gated !== 'boolean' || ids.has(model.id)) {
+            throw new Error('ModelScope 返回重复、非公开或非当前账户的模型');
+          }
+          ids.add(model.id);
+          models.push({
+            id: model.id, name: typeof model.display_name === 'string' ? model.display_name : model.id.split('/')[1],
+            url: `https://www.modelscope.cn/models/${model.id}`,
+            downloads: msCount(model.downloads), likes: msCount(model.likes), gated: model.gated,
+            tasks: Array.isArray(model.tasks) ? model.tasks.filter(task => typeof task === 'string') : [],
+            license: typeof model.license === 'string' ? model.license : '',
+            created_at: typeof model.created_at === 'string' ? model.created_at : null,
+            updated_at: typeof model.last_modified === 'string' ? model.last_modified : null
+          });
+        }
+        if (models.length === total) break;
+      }
+      if (models.length !== total) throw new Error('ModelScope 清单超过分页范围');
+      const capture = new Date().toISOString();
+      state.modelscope = {
+        ...state.modelscope, schema_version: 1, author: MODELSCOPE_AUTHOR, metric_source: MODELSCOPE_SOURCE,
+        status: 'ok', error: null, captured_at: capture, date: capture.slice(0, 10), models
+      };
+      state.modelscopeSource = 'live';
+      state.modelscopeRefreshError = null;
+      if (state.modelscopeModel !== 'all' && !ids.has(state.modelscopeModel)) state.modelscopeModel = 'all';
+      if (state.modelscopeTask !== 'all' && !models.some(model => model.tasks.includes(state.modelscopeTask))) state.modelscopeTask = 'all';
+      return state.modelscope;
+    } catch (error) {
+      state.modelscopeRefreshError = error.message;
+      throw error;
+    }
+  }
+
+  function modelscopeModels() {
+    const search = state.modelscopeSearch.trim().toLowerCase();
+    const rows = (state.modelscope?.models || []).filter(model =>
+      (state.modelscopeTask === 'all' || model.tasks.includes(state.modelscopeTask)) &&
+      (!search || `${model.id} ${model.name} ${model.tasks.join(' ')}`.toLowerCase().includes(search)));
+    const sort = state.modelscopeSort;
+    return rows.sort((a, b) => sort === 'name' ? a.id.localeCompare(b.id)
+      : sort === 'updated_at' ? String(b.updated_at || '').localeCompare(String(a.updated_at || '')) || a.id.localeCompare(b.id)
+        : (b[sort] ?? -Infinity) - (a[sort] ?? -Infinity) || a.id.localeCompare(b.id));
+  }
+
+  function modelscopeTotals() {
+    const models = state.modelscope?.models || [];
+    const metric = key => {
+      const known = models.filter(model => Number.isFinite(model[key]));
+      return { value: known.length ? known.reduce((sum, model) => sum + model[key], 0) : null, known: known.length };
+    };
+    return { count: models.length, downloads: metric('downloads'), likes: metric('likes') };
+  }
+
+  function modelscopeSeries() {
+    const index = state.modelscopeMetric === 'likes' ? 1 : 0;
+    return state.modelscopeSnapshots.flatMap(snapshot => {
+      const values = state.modelscopeModel === 'all' ? Object.values(snapshot.models || {}).map(pair => pair[index])
+        : [snapshot.models?.[state.modelscopeModel]?.[index]];
+      if (!values.length || values.some(value => !Number.isFinite(value))) return [];
+      return [{ date: snapshot.date, value: values.reduce((sum, value) => sum + value, 0) }];
+    });
+  }
+
+  function modelscopeDelta(id = null) {
+    const [older, newer] = state.modelscopeSnapshots.slice(-2);
+    if (!older || !newer) return null;
+    let value = 0, compared = 0;
+    for (const key of id ? [id] : Object.keys(newer.models || {})) {
+      const before = older.models?.[key]?.[0], after = newer.models?.[key]?.[0];
+      if (!Number.isFinite(before) || !Number.isFinite(after)) continue;
+      value += after - before;
+      compared++;
+    }
+    return compared ? { value, compared, from: older.date, to: newer.date } : null;
+  }
+
   /** Load every dataset. Only a download failure is fatal for the page. */
   async function loadAll() {
     const [downloads] = await Promise.allSettled([
-      loadDownloads(), loadScholar(), loadSocial(), loadGitHub()
+      loadDownloads(), loadScholar(), loadSocial(), loadGitHub(), loadModelScope()
     ]);
     if (downloads.status === 'rejected') throw downloads.reason;
     state.status = 'ready';
@@ -654,6 +784,11 @@ MO.data = (() => {
     githubScope,
     githubLanguages,
     githubRepositories,
-    githubTotals
+    githubTotals,
+    refreshModelScope,
+    modelscopeModels,
+    modelscopeTotals,
+    modelscopeSeries,
+    modelscopeDelta
   };
 })();

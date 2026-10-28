@@ -49,6 +49,34 @@
       'text/csv;charset=utf-8');
   }
 
+  function exportModelScopeCsv() {
+    const latest = data.state.modelscope;
+    const header = ['model_id', 'name', 'modelscope_downloads', 'modelscope_likes', 'snapshot_download_change',
+      'tasks', 'gated', 'updated_at', 'observed_at', 'source', 'url'];
+    const rows = data.modelscopeModels().map(model => [model.id, model.name, model.downloads, model.likes,
+      data.modelscopeDelta(model.id)?.value, model.tasks.join('; '), model.gated, model.updated_at,
+      latest.captured_at, latest.metric_source, `https://www.modelscope.cn/models/${model.id}`]);
+    const content = [header, ...rows].map(row => row.map(value =>
+      csvEscape(typeof value === 'string' && /^[=+\-@\t\r\n]/.test(value) ? `'${value}` : value)).join(',')).join('\r\n');
+    download(`isLinXu-modelscope-${latest.date || 'latest'}.csv`, '\uFEFF' + content, 'text/csv;charset=utf-8');
+  }
+
+  async function refreshModelScope(manual = true) {
+    const button = $('modelscopeRefresh');
+    button.disabled = true;
+    button.textContent = '读取公开清单…';
+    try {
+      await data.refreshModelScope();
+      if (manual) render.showToast('ModelScope 公开清单已刷新；历史曲线和主页关注者仍来自每日快照。');
+    } catch (error) {
+      if (manual) render.showToast(`ModelScope 刷新失败：${error.message}。保留上次数据。`);
+    } finally {
+      render.renderModelScopeBoard();
+      button.disabled = false;
+      button.textContent = '刷新实时清单';
+    }
+  }
+
   function exportDatasetCsv() {
     const header = ['dataset_id', 'downloads_all_time', 'downloads_rolling_30d', 'change_since_previous_snapshot',
       'change_7d', 'change_30d', 'likes', 'modality', 'languages', 'date_utc', 'huggingface_url'];
@@ -198,6 +226,41 @@
   }
 
   function bind() {
+    $('modelscopeRefresh').addEventListener('click', () => refreshModelScope());
+    $('modelscopeExport').onclick = exportModelScopeCsv;
+    for (const [id, key, eventName] of [['modelscopeSearch', 'modelscopeSearch', 'input'], ['modelscopeTask', 'modelscopeTask', 'change'], ['modelscopeSort', 'modelscopeSort', 'change']]) {
+      $(id).addEventListener(eventName, event => {
+        data.state[key] = event.target.value;
+        data.state.modelscopePage = 1;
+        render.renderModelScopeTable();
+      });
+    }
+    $('modelscopePrev').addEventListener('click', () => {
+      data.state.modelscopePage--;
+      render.renderModelScopeTable();
+    });
+    $('modelscopeNext').addEventListener('click', () => {
+      data.state.modelscopePage++;
+      render.renderModelScopeTable();
+    });
+    $('modelscopeMetric').addEventListener('change', event => {
+      data.state.modelscopeMetric = event.target.value;
+      render.renderModelScopeChart();
+    });
+    $('modelscopeChartReset').addEventListener('click', () => {
+      data.state.modelscopeModel = 'all';
+      render.renderModelScopeChart();
+      render.renderModelScopeTable();
+    });
+    $('modelscopeRows').addEventListener('click', event => {
+      const button = event.target.closest('[data-ms-model]');
+      if (!button) return;
+      data.state.modelscopeModel = button.dataset.msModel;
+      render.renderModelScopeChart();
+      render.renderModelScopeTable();
+      $('modelscopeChartReset').focus({ preventScroll: true });
+      $('modelscopeChart').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
+    });
     $('collectionFilter').addEventListener('change', event => selectCollection(event.target.value));
     $('collectionReset').addEventListener('click', () => selectCollection('all'));
     $('collectionRefresh').addEventListener('click', refreshCollections);
@@ -373,6 +436,7 @@
     render.renderPapers();
     render.renderSocial();
     render.renderGitHub();
+    render.renderModelScopeBoard();
   }
 
   async function boot() {
@@ -391,7 +455,9 @@
       try { render.renderPapers(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderSocial(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderGitHub(); } catch (secondaryError) { console.error(secondaryError); }
+      try { render.renderModelScopeBoard(); } catch (secondaryError) { console.error(secondaryError); }
     }
+    refreshModelScope(false);
     // The template library is independent of the download data, so it loads
     // on its own and a failure here never blocks the other boards.
     MO.templates.init().catch(error => console.error('模版库初始化失败：', error));

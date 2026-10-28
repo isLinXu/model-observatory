@@ -42,6 +42,7 @@
         <a href="#compare"><span class="navglyph">⌁</span> 模型对比</a>
         <a href="#collections"><span class="navglyph">▦</span> 集合分类</a>
         <a href="#datasets"><span class="navglyph">▤</span> 数据集</a>
+        <a href="#modelscope"><span class="navglyph">▦</span> ModelScope</a>
         <a href="#scholar"><span class="navglyph">✦</span> 学术主页</a>
         <a href="#social"><span class="navglyph">◎</span> 社交媒体</a>
         <a href="#github"><span class="navglyph">◐</span> GitHub 看板</a>
@@ -63,7 +64,7 @@
         <div class="hero-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
         <div class="hero-kicker"><span class="inline-mark"></span> GATILIN / MODEL INTELLIGENCE</div>
         <h1>模型表现，<br><em>尽在掌握。</em></h1>
-        <p>持续记录 Hugging Face 模型与数据集的下载变化，并同步公开学术档案的引用指标与社交平台粉丝数。</p>
+        <p>分别观测 Hugging Face 与 ModelScope 的公开模型，记录下载计数变化，并同步学术引用与社交平台粉丝数。</p>
         <div class="hero-meta"><span>账户 <b>@gatilin</b></span><i></i><span>上次采集 <b id="lastSync">—</b></span><i></i><span>时区 <b>UTC</b></span></div>
       </section>
 
@@ -126,6 +127,24 @@
         <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="datasetSearch" placeholder="搜索数据集名称或仓库 ID" autocomplete="off" aria-label="搜索数据集"></label><select id="sortDataset" aria-label="数据集排序方式"><option value="last_30d">按近30天下载排序</option><option value="all_time">按累计下载排序</option><option value="d1">按上次变化排序</option><option value="d7">按7天变化排序</option><option value="d30">按30天变化排序</option><option value="name">按名称排序</option></select><span class="toolbar-spacer"></span><span id="datasetTableCount" class="micro muted">—</span></div>
         <div class="table-scroll"><table class="models-table"><thead><tr><th class="no-sort">数据集名称</th><th class="align-right">历史累计</th><th class="align-right">滚动30天</th><th class="align-right">上次变化</th><th class="align-right">7日净变</th><th class="align-right">30日净变</th><th>状态</th><th>类型</th></tr></thead><tbody id="datasetRows"><tr><td colspan="8" class="no-rows">尚未有采集数据</td></tr></tbody></table></div>
         <div class="table-bottom"><span>说明：数据集与模型使用同一套 HF 公开 API 口径；— 表示该对比日期缺少有效快照。</span><span id="datasetSnapshotDate">—</span></div>
+      </section>
+
+      <section id="modelscope" class="model-section">
+        <div class="section-heading"><div><div class="section-eyebrow">MODELSCOPE / ISLINXU</div><h2>魔搭模型观测</h2><p>独立记录 ModelScope 公开模型，不与 Hugging Face 重复合计</p></div><div class="section-actions"><a class="button secondary" href="https://www.modelscope.cn/profile/isLinXu" target="_blank" rel="noopener noreferrer">魔搭主页 ↗</a><button class="button secondary" id="modelscopeRefresh">刷新实时清单</button><button class="button" id="modelscopeExport" disabled>导出筛选 CSV</button></div></div>
+        <p id="modelscopeStatus" class="collection-note" role="status" aria-live="polite">正在读取 ModelScope 快照…</p>
+        <div class="kpis">
+          <div class="kpi"><div class="kpi-label">公开模型</div><div id="statModelscopeModels" class="kpi-value">—</div><div class="kpi-caption">官方 OpenAPI 可枚举模型</div></div>
+          <div class="kpi"><div class="kpi-label">模型下载计数之和</div><div id="statModelscopeDownloads" class="kpi-value">—</div><div id="statModelscopeDownloadsSub" class="kpi-caption">仅 ModelScope downloads 字段</div></div>
+          <div class="kpi"><div class="kpi-label">模型点赞计数之和</div><div id="statModelscopeLikes" class="kpi-value">—</div><div id="statModelscopeLikesSub" class="kpi-caption">仅 ModelScope likes 字段</div></div>
+          <div class="kpi accent-kpi"><div class="kpi-label">主页关注者</div><div id="statModelscopeFollowers" class="kpi-value">—</div><div class="kpi-caption">公开主页每日快照 · 非实时清单</div></div>
+        </div>
+        <p id="modelscopeProfileNote" class="collection-note"></p>
+        <div class="panel"><div class="panel-head"><div><div class="panel-overline">OBSERVED COUNTERS / DAILY SNAPSHOTS</div><h2>下载与点赞观测趋势</h2><p id="modelscopeChartLabel">全部 OpenAPI 模型 · 下载计数</p></div><div class="section-actions"><select id="modelscopeMetric" aria-label="ModelScope 趋势指标"><option value="downloads">下载计数</option><option value="likes">点赞计数</option></select><button class="button text-button" id="modelscopeChartReset" disabled>全部模型趋势</button></div></div><div id="modelscopeChart" class="chart-area"></div><div class="chart-footer"><span id="modelscopeChartNote" class="micro muted">等待首次快照</span></div></div>
+        <p class="collection-note modelscope-method">下载时间窗口未由接口明确定义，不标作累计下载或近 30 天；快照差值不是独立日下载量，下降保留为计数修正。趋势只使用每日保存的数据，实时刷新不会伪造历史；总趋势跳过字段不全的快照，按各日当时公开模型求和。搜索与任务筛选仅影响清单和 CSV。</p>
+        <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="modelscopeSearch" placeholder="搜索模型、中文名称或任务" aria-label="搜索 ModelScope 模型" autocomplete="off"></label><select id="modelscopeTask" aria-label="ModelScope 任务类型"><option value="all">全部任务类型</option></select><select id="modelscopeSort" aria-label="ModelScope 模型排序"><option value="downloads">按下载计数排序</option><option value="likes">按点赞计数排序</option><option value="updated_at">按最近更新排序</option><option value="name">按仓库名称排序</option></select><span class="toolbar-spacer"></span><span id="modelscopeTableCount" class="micro muted">—</span></div>
+        <div class="table-scroll"><table class="models-table modelscope-table"><thead><tr><th>模型名称</th><th class="align-right">下载计数</th><th class="align-right">点赞</th><th class="align-right">上次快照净变</th><th>任务</th><th>更新时间</th><th>访问状态</th><th>历史</th></tr></thead><tbody id="modelscopeRows"><tr><td colspan="8" class="no-rows">等待 ModelScope 数据</td></tr></tbody></table></div>
+        <div id="modelscopePagination" class="pagination" hidden><button class="button secondary" id="modelscopePrev">上一页</button><span id="modelscopePageInfo" class="micro muted">—</span><button class="button secondary" id="modelscopeNext">下一页</button></div>
+        <div class="table-bottom"><span>数据来源：ModelScope 官方公开 OpenAPI 与公开主页；不使用访问令牌，仅记录匿名可见的元数据。公开或需申请访问不代表权重可直接推理。</span></div>
       </section>
 
       <section id="scholar" class="model-section">
@@ -234,7 +253,7 @@
         <div class="table-bottom"><span>说明：模版以 Markdown + frontmatter 存放在仓库 templates/ 目录，采集器每日索引；点击名称可直达 GitHub 源文件。推送需要 Token，未配置时仍可浏览、复制与导出。</span><span id="templateCapturedAt">—</span></div>
       </section>
 
-      <footer class="footer"><div><span class="footer-mark">◈</span> MODEL OBSERVATORY <span class="faded">/ GATILIN</span></div><p>数据：Hugging Face Hub API · Google Scholar 公开档案 · 社交平台公开接口 · GitHub 公开 API · UTC 每日快照 · 仅公开内容 · 不代表独立用户数</p><a href="https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api" target="_blank" rel="noopener noreferrer">数据口径 ↗</a></footer>
+      <footer class="footer"><div><span class="footer-mark">◈</span> MODEL OBSERVATORY <span class="faded">/ GATILIN</span></div><p>数据：Hugging Face Hub API · ModelScope OpenAPI · Google Scholar 公开档案 · 社交平台公开接口 · GitHub 公开 API · UTC 每日快照 · 仅公开内容 · 不代表独立用户数</p><a href="https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api" target="_blank" rel="noopener noreferrer">数据口径 ↗</a></footer>
     </main>
   </div>
 

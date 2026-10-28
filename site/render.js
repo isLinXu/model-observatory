@@ -82,6 +82,71 @@ MO.render = (() => {
     }).join('');
   }
 
+  function renderModelScopeTable() {
+    const state = data.state, rows = data.modelscopeModels();
+    const pages = Math.max(1, Math.ceil(rows.length / 20));
+    state.modelscopePage = Math.min(Math.max(1, state.modelscopePage), pages);
+    $('modelscopeTableCount').textContent = `${fmt(rows.length)} / ${fmt(state.modelscope?.models?.length || 0)} MODELS`;
+    $('modelscopeRows').innerHTML = rows.length ? rows.slice((state.modelscopePage - 1) * 20, state.modelscopePage * 20).map(model => {
+      const change = data.modelscopeDelta(model.id);
+      const href = `https://www.modelscope.cn/models/${model.id.split('/').map(encodeURIComponent).join('/')}`;
+      return `<tr><td><a class="model-link" href="${href}" target="_blank" rel="noopener noreferrer">${esc(model.name || model.id)} ↗</a>` +
+        `<div class="micro muted">${esc(model.id)}</div></td><td class="align-right">${esc(fmt(model.downloads))}</td>` +
+        `<td class="align-right">${esc(fmt(model.likes))}</td><td class="align-right ${tone(change?.value)}">${esc(signed(change?.value))}</td>` +
+        `<td>${esc(model.tasks.join(' · ') || '未标注')}</td><td>${esc(model.updated_at?.slice(0, 10) || '—')}</td>` +
+        `<td>${model.gated ? '需申请访问' : '公开'}</td><td><button class="button text-button" data-ms-model="${esc(model.id)}" aria-pressed="${state.modelscopeModel === model.id}">观测趋势</button></td></tr>`;
+    }).join('') : '<tr><td colspan="8" class="no-rows">没有匹配的 ModelScope 模型</td></tr>';
+    $('modelscopePageInfo').textContent = `${state.modelscopePage} / ${pages}`;
+    $('modelscopePrev').disabled = state.modelscopePage === 1;
+    $('modelscopeNext').disabled = state.modelscopePage === pages;
+    $('modelscopePagination').hidden = rows.length <= 20;
+  }
+
+  function renderModelScopeChart() {
+    const state = data.state;
+    const label = state.modelscopeMetric === 'likes' ? '点赞计数' : '下载计数';
+    const model = state.modelscopeModel === 'all' ? '全部 OpenAPI 模型' : state.modelscopeModel;
+    $('modelscopeChartLabel').textContent = `${model} · ${label}`;
+    $('modelscopeChartReset').disabled = state.modelscopeModel === 'all';
+    const points = data.modelscopeSeries();
+    charts.line($('modelscopeChart'), [{ name: label, points, color: 'var(--chart-4)' }], {
+      area: true, label: `ModelScope ${label}历史观测`, emptyText: '尚无有效历史快照；每日采集后开始积累，不补造历史数据。'
+    });
+    const delta = data.modelscopeDelta(state.modelscopeModel === 'all' ? null : state.modelscopeModel);
+    $('modelscopeChartNote').textContent = `${points.length} 个有效快照` + (delta
+      ? ` · 下载计数净变化 ${signed(delta.value)}（${delta.from} → ${delta.to}，${delta.compared} 个可比模型）`
+      : ' · 至少两日快照后显示下载计数净变化');
+  }
+
+  function renderModelScopeBoard() {
+    const state = data.state, latest = state.modelscope || {}, totals = data.modelscopeTotals();
+    const available = ['ok', 'stale'].includes(latest.status);
+    $('statModelscopeModels').textContent = available ? fmt(totals.count) : '—';
+    for (const [metric, id] of [['downloads', 'statModelscopeDownloads'], ['likes', 'statModelscopeLikes']]) {
+      $(id).textContent = countCN(totals[metric].value);
+      $(id).title = fmt(totals[metric].value);
+      $(id + 'Sub').textContent = `已知 ${totals[metric].known}/${totals.count} 个模型 · 不含其他平台`;
+    }
+    const profile = latest.profile;
+    $('statModelscopeFollowers').textContent = countCN(profile?.followers);
+    $('statModelscopeFollowers').title = fmt(profile?.followers);
+    $('modelscopeProfileNote').textContent = profile?.status === 'ok'
+      ? `公开主页显示 ${fmt(profile.model_count)} 个模型（含预发布），主页下载计数 ${fmt(profile.downloads)}；与本看板 OpenAPI 清单和计数不混用。主页指标采集于 ${timestamp(profile.captured_at)} UTC。`
+      : '公开主页辅助指标暂不可用；不影响 OpenAPI 模型观测。';
+    const error = state.modelscopeRefreshError || latest.error;
+    $('modelscopeStatus').textContent = available
+      ? `${state.modelscopeSource === 'live' ? 'OpenAPI 实时清单' : '已发布 OpenAPI 快照'} · ${timestamp(latest.captured_at)} UTC${error ? ' · 刷新失败，保留上次数据' : ''}`
+      : 'ModelScope 数据暂不可用，其他看板不受影响。';
+    $('modelscopeStatus').title = error || '';
+    $('modelscopeStatus').classList.toggle('neg', Boolean(error));
+    $('modelscopeExport').disabled = !available;
+    const tasks = [...new Set((latest.models || []).flatMap(model => model.tasks))].sort();
+    $('modelscopeTask').innerHTML = '<option value="all">全部任务类型</option>' + tasks.map(task => `<option value="${esc(task)}">${esc(task)}</option>`).join('');
+    $('modelscopeTask').value = state.modelscopeTask;
+    renderModelScopeChart();
+    renderModelScopeTable();
+  }
+
   // --- Models ---------------------------------------------------------------
 
   function renderSummary() {
@@ -769,6 +834,9 @@ MO.render = (() => {
     stateMessage,
     showToast,
     renderCollections,
+    renderModelScopeBoard,
+    renderModelScopeTable,
+    renderModelScopeChart,
     renderSummary,
     renderOverall,
     renderTop,
