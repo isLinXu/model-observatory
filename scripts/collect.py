@@ -12,10 +12,12 @@ import argparse
 import datetime as dt
 import json
 import os
+import re
 import sys
 import tempfile
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 from typing import Any
 
@@ -32,6 +34,10 @@ WEEKLY_RETENTION_COUNT = 104  # roughly two years of weekly points
 # Canonical landing page for a public model / dataset repository.
 HF_MODEL_URL = "https://huggingface.co/{repo_id}"
 HF_DATASET_URL = "https://huggingface.co/datasets/{repo_id}"
+HF_COLLECTIONS_API = "https://huggingface.co/api/collections"
+COLLECTION_REQUEST_TIMEOUT = 15
+COLLECTION_FETCH_TIMEOUT = 120
+COLLECTION_RESPONSE_LIMIT = 8 * 1024 * 1024
 
 
 def entity_url(template: str, repo_id: str) -> str:
@@ -176,6 +182,151 @@ def fetch_datasets(author: str, retries: int = 3) -> list[dict]:
             print(f"Hugging Face dataset request failed (attempt {attempt + 1}/{retries}): {error}", file=sys.stderr)
             time.sleep(min(2 ** attempt * 4, 15))
     raise AssertionError("unreachable")
+
+
+class _NoCollectionRedirects(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        # Do not let a public API request silently leave its validated endpoint.
+        raise ValueError("HF collections API unexpectedly redirected")
+
+
+def _collection_json(opener: Any, url: str, deadline: float) -> tuple[Any, str]:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise TimeoutError("HF collections fetch exceeded its time budget")
+    request = urllib.request.Request(url, headers={"Accept": "application/json"})
+    with opener.open(request, timeout=min(COLLECTION_REQUEST_TIMEOUT, remaining)) as response:
+        if response.status != 200:
+            raise ValueError("HF collections API returned an unexpected status")
+        # Read in bounded chunks, checking the overall budget even for a server
+        # that keeps trickling data without reaching the socket timeout.
+        body = bytearray()
+        while True:
+            if time.monotonic() >= deadline:
+                raise TimeoutError("HF collections fetch exceeded its time budget")
+            chunk = response.read1(min(65536, COLLECTION_RESPONSE_LIMIT + 1 - len(body)))
+            if not chunk:
+                break
+            body.extend(chunk)
+            if len(body) > COLLECTION_RESPONSE_LIMIT:
+                raise ValueError("HF collections API response is too large")
+        return json.loads(body), ", ".join(response.headers.get_all("Link", []))
+
+
+def _collection_slug(value: Any) -> str:
+    if (not isinstance(value, str)
+            or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*/[A-Za-z0-9][A-Za-z0-9._-]*", value)
+            or ".." in value):
+        raise ValueError("HF collection has an unsafe or missing slug")
+    return value
+
+
+def _collection_identity(value: Any, author: str, expected_slug: str | None = None) -> str:
+    if not isinstance(value, dict) or not isinstance(value.get("private"), bool):
+        raise ValueError("HF collection has missing or invalid public/private metadata")
+    slug = _collection_slug(value.get("slug"))
+    owner = value.get("owner")
+    if (not isinstance(owner, dict) or owner.get("name") != author
+            or slug.split("/", 1)[0] != author
+            or (expected_slug is not None and slug != expected_slug)):
+        raise ValueError("HF collection owner or slug does not match the request")
+    return slug
+
+
+def _collection_page_url(url: str, author: str) -> str:
+    if any(ord(char) <= 32 or ord(char) == 127 for char in url):
+        raise ValueError("Unsafe HF collection pagination URL")
+    parsed = urllib.parse.urlsplit(url)
+    query = urllib.parse.parse_qsl(parsed.query, keep_blank_values=True)
+    if (parsed.scheme != "https" or parsed.netloc != "huggingface.co"
+            or parsed.path != "/api/collections" or parsed.fragment
+            or [value for key, value in query if key == "owner"] != [author]):
+        raise ValueError("Unsafe HF collection pagination URL")
+    # Canonical query order also detects loops whose URLs only reorder fields.
+    return HF_COLLECTIONS_API + "?" + urllib.parse.urlencode(sorted(query))
+
+
+def _collection_next_page(link: str, current_url: str, author: str) -> str | None:
+    next_url = None
+    for part in re.split(r",\s*(?=<)", link) if link else []:
+        match = re.fullmatch(r"\s*<([^<>\s]+)>(.*)", part)
+        if not match:
+            raise ValueError("Malformed HF collection pagination Link header")
+        relations = re.findall(r'(?:^|;)\s*rel\s*=\s*(?:"([^"]*)"|([^;\s]+))\s*(?=;|$)',
+                               match[2], flags=re.IGNORECASE)
+        if any("next" in (quoted or unquoted).lower().split() for quoted, unquoted in relations):
+            if next_url is not None:
+                raise ValueError("Ambiguous HF collection pagination Link header")
+            next_url = _collection_page_url(urllib.parse.urljoin(current_url, match[1]), author)
+    return next_url
+
+
+def _normalize_collection(detail: dict, slug: str) -> dict:
+    title = detail.get("title")
+    description = detail.get("description")
+    updated_at = detail.get("lastUpdated")
+    if (not isinstance(title, str)
+            or (description is not None and not isinstance(description, str))
+            or (updated_at is not None and not isinstance(updated_at, str))
+            or not isinstance(detail.get("items"), list)):
+        raise ValueError("HF collection detail has missing or invalid fields")
+    items = []
+    seen = set()
+    for item in detail["items"]:
+        if not isinstance(item, dict) or not isinstance(item.get("private", False), bool):
+            raise ValueError("HF collection detail has invalid item metadata")
+        if item.get("private", False):
+            continue
+        kind = item.get("type")
+        if not isinstance(kind, str) or not kind.strip():
+            raise ValueError("HF collection detail has an invalid item type")
+        item_id = _collection_slug(item.get("slug")) if kind == "collection" else item.get("id")
+        if not isinstance(item_id, str) or not item_id.strip():
+            raise ValueError("HF collection detail has a missing item ID")
+        key = (kind, item_id)
+        if key in seen:
+            continue
+        seen.add(key)
+        note = item.get("note")
+        text = note.get("text") if isinstance(note, dict) else None
+        items.append({"id": item_id, "type": kind, "note": text if isinstance(text, str) else ""})
+    return {"slug": slug, "title": title, "description": description or "",
+            "updated_at": updated_at, "items": items}
+
+
+def fetch_collections(author: str) -> list[dict]:
+    """Fetch complete public collections, or raise without returning partial data.
+
+    Listing items are truncated previews; every public collection needs its own
+    detail request. A private opener avoids globally installed authentication,
+    cookies, HF tokens, and environment proxy credentials.
+    """
+    _collection_slug(f"{author}/collection")
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoCollectionRedirects())
+    deadline = time.monotonic() + COLLECTION_FETCH_TIMEOUT
+    url = _collection_page_url(HF_COLLECTIONS_API + "?" + urllib.parse.urlencode(
+        {"owner": author, "limit": 100}), author)
+    pages = set()
+    slugs = {}  # Ordered deduplication, independent of truncated preview items.
+    while url is not None:
+        if url in pages:
+            raise ValueError("HF collection pagination loop detected")
+        pages.add(url)
+        page, link = _collection_json(opener, url, deadline)
+        if not isinstance(page, list):
+            raise ValueError("HF collections listing must be an array")
+        for preview in page:
+            slug = _collection_identity(preview, author)
+            if not preview["private"]:
+                slugs.setdefault(slug, None)
+        url = _collection_next_page(link, url, author)
+    collections = []
+    for slug in slugs:
+        detail, _ = _collection_json(opener, HF_COLLECTIONS_API + "/" + slug, deadline)
+        _collection_identity(detail, author, slug)
+        if not detail["private"]:
+            collections.append(_normalize_collection(detail, slug))
+    return collections
 
 
 def migrate_history(obj: dict, author: str) -> dict:
@@ -339,8 +490,32 @@ def atomic_json_write(path: Path, value: Any) -> None:
             os.unlink(temp_path)
 
 
+def _collections_for_save(path: Path, author: str, collections: dict) -> dict:
+    status = collections.get("status")
+    error = collections.get("error")
+    if status not in ("ok", "stale", "unavailable") or (error is not None and not isinstance(error, str)):
+        raise ValueError("Invalid collections status or error")
+    if status == "ok":
+        if not isinstance(collections.get("items"), list) or not isinstance(collections.get("captured_at"), str):
+            raise ValueError("Successful collections need items and their capture time")
+        return {"status": "ok", "captured_at": collections["captured_at"],
+                "error": None, "items": collections["items"]}
+    # Failure payloads must never replace complete membership with partial data
+    # or advance its capture time. Only reuse this author's last successful set.
+    try:
+        previous = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        previous = None
+    old = previous.get("collections") if isinstance(previous, dict) and previous.get("author") == author else None
+    if (isinstance(old, dict) and old.get("status") in ("ok", "stale")
+            and isinstance(old.get("captured_at"), str) and isinstance(old.get("items"), list)):
+        return {"status": "stale", "captured_at": old["captured_at"],
+                "error": error, "items": old["items"]}
+    return {"status": "unavailable", "captured_at": None, "error": error, "items": []}
+
+
 def save(data_dir: Path, author: str, models: list[dict], at: dt.datetime, datasets: list[dict] | None = None,
-         allow_large_drop: bool = False) -> None:
+         allow_large_drop: bool = False, *, collections: dict | None = None) -> None:
     datasets = datasets or []
     history_path = data_dir / "history.json"
     history = update_history(load_history(history_path, author), models, at, datasets, allow_large_drop=allow_large_drop)
@@ -352,7 +527,10 @@ def save(data_dir: Path, author: str, models: list[dict], at: dt.datetime, datas
         "models": models,
         "datasets": datasets,
     }
+    if collections is not None:
+        latest["collections"] = _collections_for_save(data_dir / "latest.json", author, collections)
     # Latest is a convenience view. History is the authoritative record.
+    # Collection membership lives only in latest, not in compact history.
     atomic_json_write(history_path, history)
     atomic_json_write(data_dir / "latest.json", latest)
     print(f"Saved {len(models)} public models, {len(datasets)} public datasets, {len(history['snapshots'])} UTC snapshots as of {latest['captured_at']}")
@@ -380,7 +558,19 @@ def main() -> None:
             pass
     models = fetch_models(args.author)
     datasets = [] if args.skip_datasets else fetch_datasets(args.author)
-    save(args.data_dir, args.author, models, dt.datetime.now(dt.timezone.utc), datasets, allow_large_drop=args.allow_large_drop)
+    try:
+        items = fetch_collections(args.author)
+        collections = {
+            "status": "ok",
+            "captured_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z"),
+            "error": None,
+            "items": items,
+        }
+    except Exception as error:
+        print(f"Unable to collect HF collections: {error}", file=sys.stderr)
+        collections = {"status": "unavailable", "captured_at": None, "error": str(error), "items": []}
+    save(args.data_dir, args.author, models, dt.datetime.now(dt.timezone.utc), datasets,
+         allow_large_drop=args.allow_large_drop, collections=collections)
 
 
 if __name__ == "__main__":

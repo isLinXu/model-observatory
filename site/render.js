@@ -31,17 +31,68 @@ MO.render = (() => {
     setTimeout(() => toast.remove(), 3300);
   }
 
+  function renderCollections() {
+    const state = data.state;
+    const available = data.collectionsAvailable();
+    const collections = state.collections?.items || [];
+    const selected = collections.find(item => item.slug === state.modelCollection);
+    const scopeName = state.modelCollection === 'all' ? '全部模型'
+      : state.modelCollection === 'unassigned' ? '未归入集合' : selected?.title || '集合不可用';
+    $('collectionFilter').innerHTML = '<option value="all">全部模型</option>' + (available
+      ? '<option value="unassigned">未归入集合</option>' + collections.map(item =>
+        `<option value="${esc(item.slug)}">${esc(item.title)} · ${fmt(data.modelScope(item.slug).length)} 个模型</option>`).join('')
+      : '');
+    $('collectionFilter').value = state.modelCollection;
+    $('collectionFilter').disabled = !available;
+    $('collectionReset').disabled = state.modelCollection === 'all';
+    $('modelScopeLabel').textContent = scopeName;
+    $('modelScopeNote').textContent = state.modelCollection === 'all'
+      ? '集合选择联动模型指标、趋势、热门排行与清单；搜索仅筛选清单。'
+      : '按当前集合归属回看历史，仅统计当前公开模型；缺失字段不当作 0，不代表各日当时的集合成员。';
+    $('collectionDescription').textContent = selected?.description || '';
+    $('collectionCount').textContent = fmt(collections.length);
+    const error = state.collectionRefreshError || state.collections?.error;
+    const source = available ? state.collectionSource === 'live' ? 'HF 实时集合' : '已发布集合快照' : '集合暂不可用';
+    $('collectionSource').textContent = `${source}${state.collections?.captured_at ? ` · ${timestamp(state.collections.captured_at)} UTC` : ''}${error ? ' · 刷新失败，保留上次数据' : ''}`;
+    $('collectionSource').title = error || '';
+    $('collectionSource').classList.toggle('neg', Boolean(error));
+    const all = state.latest?.models || [];
+    const covered = new Set(all.filter(model => data.modelCollections(model.id).length).map(model => model.id));
+    $('collectionCoverage').textContent = available
+      ? `已归类 ${fmt(covered.size)} / ${fmt(all.length)} 个公开模型 · 未归类 ${fmt(all.length - covered.size)} 个`
+      : '集合不可用时不会把模型误判为未归类。';
+    if (!available || !collections.length) {
+      $('collectionCards').innerHTML = `<div class="chart-empty">${available ? '该账户暂无公开集合，可继续观测全部模型。' : '暂时无法读取公开集合；模型下载与其他看板不受影响。'}</div>`;
+      return;
+    }
+    $('collectionCards').innerHTML = collections.map((collection, index) => {
+      const stats = data.collectionStats(collection.slug);
+      const members = collection.items.filter(item => item.type === 'model');
+      const other = collection.items.length - members.length;
+      const href = `https://huggingface.co/collections/${collection.slug.split('/').map(encodeURIComponent).join('/')}`;
+      const metric = (key, label) => `<div><span>${label}</span><strong title="${esc(fmt(stats[key].value))}">${esc(countCN(stats[key].value))}</strong>` +
+        `<small>有效 ${stats[key].known}/${stats.count} 个</small></div>`;
+      return `<article class="collection-card${state.modelCollection === collection.slug ? ' selected' : ''}" style="--collection-accent:${charts.colorAt(index)}">` +
+        `<div class="collection-card-head"><span class="collection-kind">${members.length ? 'MODEL COLLECTION' : '导航 / 其他条目'}</span><span class="micro muted">${stats.count} 个模型</span></div>` +
+        `<h3><a href="${href}" target="_blank" rel="noopener noreferrer">${esc(collection.title)} ↗</a></h3>` +
+        `<p class="collection-description" title="${esc(collection.description)}">${esc(collection.description || '暂无集合说明')}</p>` +
+        `<div class="collection-metrics">${metric('all_time', '累计下载')}${metric('last_30d', '滚动 30 天')}</div>` +
+        `<div class="collection-card-foot"><span>${members.length - stats.count} 个模型不在当前清单${other ? ` · ${other} 个非模型条目` : ''}</span>` +
+        `<button class="button secondary" data-collection="${esc(collection.slug)}" aria-pressed="${state.modelCollection === collection.slug}">观测集合</button></div></article>`;
+    }).join('');
+  }
+
   // --- Models ---------------------------------------------------------------
 
   function renderSummary() {
     const state = data.state;
-    const models = state.latest.models;
+    const models = data.modelScope();
     const withTotal = models.filter(model => Number.isFinite(model.all_time));
     const withRolling = models.filter(model => Number.isFinite(model.last_30d));
     const lifetime = withTotal.reduce((sum, model) => sum + model.all_time, 0);
     const rolling = withRolling.reduce((sum, model) => sum + model.last_30d, 0);
     const latest = state.snapshots.at(-1), previous = state.snapshots.at(-2);
-    const net = data.netChange(latest, previous);
+    const net = data.netChange(latest, previous, 'models', data.modelScopeIds());
 
     $('statModels').textContent = fmt(models.length);
     $('statModelsSub').textContent = state.modelSource === 'live'
@@ -51,9 +102,9 @@ MO.render = (() => {
     $('statLifetime').title = withTotal.length ? fmt(lifetime) : '无累计数据';
     $('statLifetimeSub').textContent = withTotal.length !== models.length
       ? `已知 ${withTotal.length}/${models.length} 个模型的累计值`
-      : '全部当前公开模型累计之和';
+      : '当前观测范围公开模型累计之和';
     $('statRolling').textContent = withRolling.length ? countCN(rolling) : '—';
-    $('statRolling').title = fmt(rolling);
+    $('statRolling').title = withRolling.length ? `${fmt(rolling)} · 有效 ${withRolling.length}/${models.length} 个模型` : '无有效数据';
     $('statDelta').textContent = net?.value === null || !net ? '—' : signed(net.value);
     $('statDelta').classList.toggle('neg', Boolean(net?.value < 0));
     $('statDeltaSub').textContent = previous ? `可比 ${net?.compared || 0} 个模型 · 自 ${previous.date} 起` : '需要至少两天快照';
@@ -82,19 +133,18 @@ MO.render = (() => {
   function renderOverall() {
     const state = data.state;
     const metric = state.metric;
-    $('overallLegend').textContent = metric === 'all_time'
-      ? '历史累计下载 · 各日当时公开模型之和'
-      : '滚动30天下载 · 各日当时公开模型之和';
+    const ids = data.modelScopeIds();
+    $('overallLegend').textContent = `${metric === 'all_time' ? '历史累计下载' : '滚动30天下载'} · ${ids ? '当前集合成员的历史观测值' : '各日当时公开模型之和'}`;
     charts.line($('overallChart'), [{
       name: metric === 'all_time' ? '历史累计' : '滚动30天',
-      points: data.sumSeries('models', metric, state.range),
+      points: data.sumSeries('models', metric, state.range, ids),
       color: 'var(--chart-1)'
     }], { area: true, label: '模型总体下载趋势' });
 
     const snapshots = state.snapshots.slice(-16);
     const points = [];
     for (let index = 1; index < snapshots.length; index++) {
-      const change = data.netChange(snapshots[index], snapshots[index - 1]);
+      const change = data.netChange(snapshots[index], snapshots[index - 1], 'models', ids);
       points.push({
         date: snapshots[index].date,
         previous: snapshots[index - 1].date,
@@ -107,8 +157,8 @@ MO.render = (() => {
   }
 
   function renderTop() {
-    const top = [...data.state.latest.models]
-      .filter(model => model.last_30d !== null)
+    const top = [...data.modelScope()]
+      .filter(model => Number.isFinite(model.last_30d))
       .sort((a, b) => (b.last_30d ?? 0) - (a.last_30d ?? 0))
       .slice(0, 6);
     if (!top.length) {
@@ -126,23 +176,22 @@ MO.render = (() => {
 
   function renderTable() {
     const state = data.state;
-    const search = $('modelSearch').value.trim().toLowerCase();
-    const sort = $('sortModel').value;
-    const onlyNegative = $('onlyAnomalies').checked;
-    let rows = data.localModels().filter(model =>
-      (!search || model.id.toLowerCase().includes(search)) && (!onlyNegative || model.d1 < 0));
-    if (sort === 'name') rows.sort((a, b) => a.id.localeCompare(b.id));
-    else rows.sort((a, b) => ((b[sort] ?? -Infinity) - (a[sort] ?? -Infinity)) || a.id.localeCompare(b.id));
+    const rows = data.filteredModels();
 
-    $('tableCount').textContent = `${fmt(rows.length)} / ${fmt(state.latest.models.length)} MODELS`;
+    $('tableCount').textContent = `${fmt(rows.length)} / ${fmt(data.modelScope().length)} MODELS · 账户共 ${fmt(state.latest.models.length)}`;
     $('modelRows').innerHTML = rows.length ? rows.map(model => {
       const stateName = model.all_time === null ? '累计缺失' : model.d1 < 0 ? '统计修正?' : model.d1 === null ? '待积累' : '正常';
       const stateClass = model.all_time === null ? 'missing' : model.d1 < 0 ? 'alert' : model.d1 === null ? 'new' : '';
       const checked = state.compare.includes(model.id) ? 'checked' : '';
+      const groups = data.modelCollections(model.id);
+      const membership = groups.length ? groups.map(group =>
+        `<button class="chip tiny collection-tag" data-collection="${esc(group.slug)}" title="${esc(group.title)}">${esc(group.title.split('|').at(-1).trim())}</button>`).join('')
+        : `<span class="micro muted">${data.collectionsAvailable() ? '未归入集合' : '集合归属未知'}</span>`;
       return `<tr><td><button class="model-link" data-detail="${esc(model.id)}" title="查看 ${esc(model.id)} 的历史">` +
         `<span class="model-square">${esc(model.id.split('/').at(-1).slice(0, 1).toUpperCase())}</span>` +
         `<span class="model-title">${esc(model.id.split('/').slice(1).join('/'))}</span></button>` +
-        `${model.url ? `<a class="ext-link" href="${esc(model.url)}" target="_blank" rel="noopener noreferrer" title="在 Hugging Face 打开 ${esc(model.id)}" aria-label="打开 ${esc(model.id)} 的 Hugging Face 页面">↗</a>` : ''}</td>` +
+        `${model.url ? `<a class="ext-link" href="${esc(model.url)}" target="_blank" rel="noopener noreferrer" title="在 Hugging Face 打开 ${esc(model.id)}" aria-label="打开 ${esc(model.id)} 的 Hugging Face 页面">↗</a>` : ''}` +
+        `<div class="model-collections">${membership}</div></td>` +
         `<td class="align-right">${esc(fmt(model.all_time))}</td>` +
         `<td class="align-right">${esc(fmt(model.last_30d))}</td>` +
         `<td class="align-right ${tone(model.d1)}">${esc(signed(model.d1))}</td>` +
@@ -673,7 +722,14 @@ MO.render = (() => {
     $('detailTitle').textContent = model.id.split('/').slice(1).join('/');
     $('detailID').textContent = model.id;
     const d1 = data.delta(id, 'prev'), d7 = data.delta(id, 7), d30 = data.delta(id, 30);
+    const groups = data.modelCollections(id);
     $('detailContents').innerHTML =
+      `<div class="detail-collections"><h3>集合归属与条目备注</h3>${groups.length ? groups.map(group => {
+        const note = group.items.find(item => item.type === 'model' && item.id === id)?.note;
+        const href = `https://huggingface.co/collections/${group.slug.split('/').map(encodeURIComponent).join('/')}`;
+        return `<div><a href="${href}" target="_blank" rel="noopener noreferrer">${esc(group.title)} ↗</a>` +
+          `<p>${esc(note || '该条目暂无备注')}</p></div>`;
+      }).join('') : `<p>${data.collectionsAvailable() ? '未归入当前公开集合' : '集合归属暂不可用'}</p>`}</div>` +
       `<div class="detail-metrics">` +
       `<div class="detail-stat"><span>历史累计下载</span><strong>${esc(fmt(model.all_time))}</strong></div>` +
       `<div class="detail-stat"><span>滚动 30 天</span><strong>${esc(fmt(model.last_30d))}</strong></div>` +
@@ -712,6 +768,7 @@ MO.render = (() => {
   return {
     stateMessage,
     showToast,
+    renderCollections,
     renderSummary,
     renderOverall,
     renderTop,
