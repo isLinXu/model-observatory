@@ -40,6 +40,7 @@
         <a href="#analytics"><span class="navglyph">◫</span> 下载趋势</a>
         <a href="#models"><span class="navglyph">▦</span> 模型清单</a>
         <a href="#compare"><span class="navglyph">⌁</span> 模型对比</a>
+        <a href="#collections"><span class="navglyph">▦</span> 集合分类</a>
         <a href="#datasets"><span class="navglyph">▤</span> 数据集</a>
         <a href="#scholar"><span class="navglyph">✦</span> 学术主页</a>
         <a href="#social"><span class="navglyph">◎</span> 社交媒体</a>
@@ -69,7 +70,13 @@
       <div id="errorBanner" class="notice hidden" role="alert"></div>
       <div id="emptyBanner" class="empty-state hidden"><div class="empty-icon">◎</div><div><strong>等待第一次 Hugging Face 快照</strong><p>仓库创建后，请到 GitHub Actions 手动运行 “Sync Hugging Face & deploy Pages”。首次采集后，累计和近 30 天下载量会显示；变化趋势需要积累后续每日快照。</p></div></div>
 
-      <section class="kpis" aria-label="账户总体指标">
+      <section id="collectionScope" class="collection-scope" aria-label="模型集合观测范围">
+        <div class="collection-controls"><label for="collectionFilter">观测范围</label><select id="collectionFilter" disabled><option value="all">全部模型</option></select><button class="button secondary" id="collectionReset" disabled>全部模型</button><button class="button secondary" id="collectionRefresh">刷新集合</button><a class="button text-button" href="#collections">浏览集合分类 ↘</a></div>
+        <h2 id="modelScopeLabel">全部模型</h2><p id="collectionDescription"></p><p id="modelScopeNote">集合选择联动模型指标、趋势、热门排行与清单；搜索仅筛选清单。</p>
+        <p id="collectionSource" class="collection-source" role="status" aria-live="polite">正在读取公开集合…</p>
+      </section>
+
+      <section class="kpis" aria-label="当前观测范围模型指标">
         <div class="kpi"><div class="kpi-label">模型总数 <span class="kpi-symbol">◈</span></div><div id="statModels" class="kpi-value">—</div><div id="statModelsSub" class="kpi-caption">当前公开模型仓库</div></div>
         <div class="kpi"><div class="kpi-label">历史累计下载 <span class="kpi-symbol">↗</span></div><div id="statLifetime" class="kpi-value">—</div><div id="statLifetimeSub" class="kpi-caption">所有模型累计指标之和</div></div>
         <div class="kpi"><div class="kpi-label">最近 30 天下载 <span class="kpi-symbol blue">◷</span></div><div id="statRolling" class="kpi-value">—</div><div class="kpi-caption">Hugging Face 滚动 30 天</div></div>
@@ -87,13 +94,19 @@
       <section class="panel changes-panel"><div class="panel-head"><div><div class="panel-overline">MOMENTUM & REVISIONS</div><h2>日度变化观测</h2><p>累计值的相邻快照净变化；负值保留用于识别统计修正</p></div><span id="correctionBadge" class="correction-pill">暂无异常</span></div><div id="deltaChart" class="bar-chart-area"></div><div class="chart-footer"><span class="muted micro">这是累计计数器的观测净差值，并非官方独立提供的每日下载次数。</span><span id="deltaPeriod" class="micro muted">—</span></div></section>
 
       <section id="models" class="model-section">
-        <div class="section-heading"><div><div class="section-eyebrow">INVENTORY / ALL MODELS</div><h2>全部模型 <span id="modelCountBadge">0</span></h2><p>筛选、排序并打开单模型的完整历史曲线</p></div><div class="section-actions"><button class="button" id="exportCSV">↓ 导出全部 CSV</button><button class="button secondary" id="exportJSON">↓ 导出历史 JSON</button></div></div>
+        <div class="section-heading"><div><div class="section-eyebrow">INVENTORY / MODEL COLLECTIONS</div><h2>模型清单 <span id="modelCountBadge">0</span></h2><p>按观测集合筛选，点击归属标签切换集合，打开模型查看原始条目备注</p></div><div class="section-actions"><button class="button" id="exportCSV">↓ 导出筛选 CSV</button><button class="button secondary" id="exportJSON">↓ 导出全部历史 JSON</button></div></div>
         <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="modelSearch" placeholder="搜索模型名称或仓库 ID" autocomplete="off" aria-label="搜索模型"></label><select id="sortModel" aria-label="排序方式"><option value="last_30d">按近30天下载排序</option><option value="all_time">按累计下载排序</option><option value="d1">按上次变化排序</option><option value="d7">按7天变化排序</option><option value="d30">按30天变化排序</option><option value="name">按名称排序</option></select><label class="filter-check"><input type="checkbox" id="onlyAnomalies">只看累计下降</label><span class="toolbar-spacer"></span><span id="tableCount" class="micro muted">—</span></div>
         <div class="table-scroll"><table class="models-table"><thead><tr><th class="no-sort">模型名称</th><th class="align-right">历史累计</th><th class="align-right">滚动30天</th><th class="align-right">上次变化</th><th class="align-right">7日净变</th><th class="align-right">30日净变</th><th>状态</th><th class="compare-col">对比</th></tr></thead><tbody id="modelRows"><tr><td colspan="8" class="no-rows">尚未有采集数据</td></tr></tbody></table></div>
         <div class="table-bottom"><span>说明：— 表示该对比日期缺少有效快照，不代表下载量为 0。</span><span id="snapshotDate">—</span></div>
       </section>
 
       <section id="compare" class="panel compare-panel"><div class="panel-head"><div><div class="panel-overline">SIDE-BY-SIDE</div><h2>模型对比 <span class="light-info">最多 3 个</span></h2><p>在上方模型表的「对比」一列勾选模型</p></div><button class="button text-button" id="clearCompare">清空选择 ✕</button></div><div id="compareSelected" class="compare-selected"></div><div id="compareChart" class="chart-area compare-chart"></div></section>
+
+      <section id="collections" class="model-section">
+        <div class="section-heading"><div><div class="section-eyebrow">HUGGING FACE / COLLECTIONS</div><h2>集合分类观测 <span id="collectionCount">—</span></h2><p id="collectionCoverage">正在关联公开模型与集合…</p></div><a class="button secondary" href="https://huggingface.co/gatilin/collections" target="_blank" rel="noopener noreferrer">HF Collections ↗</a></div>
+        <p class="collection-note">分类沿用 HF 集合标题与备注，不根据模型名称猜测。一个模型可属于多个集合，各集合指标不可相加；导航集合不递归计入子集合。仅统计当前账户公开模型，仓库数量不代表已具备完整权重或可直接推理。</p>
+        <div id="collectionCards" class="collection-grid"><div class="chart-empty">等待完整集合成员数据</div></div>
+      </section>
 
       <section id="datasets" class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">INVENTORY / ALL DATASETS</div><h2>全部数据集 <span id="datasetCountBadge">0</span></h2><p>与模型完全同口径：历史累计、滚动 30 天与每日净变化</p></div><div class="section-actions"><button class="button" id="exportDatasetCSV">↓ 导出全部 CSV</button><button class="button secondary" id="exportDatasetJSON">↓ 导出历史 JSON</button></div></div>

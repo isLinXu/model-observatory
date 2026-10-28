@@ -1,10 +1,17 @@
+import copy
 import datetime as dt
+import io
 import json
+import os
 import tempfile
 import unittest
+import urllib.error
+from email.message import Message
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
 
+from scripts import collect
 from scripts.collect import (
     HF_DATASET_URL,
     HF_MODEL_URL,
@@ -35,6 +42,365 @@ def example(id, all_time=100, last_30d=20):
 def dataset(id, all_time=10, last_30d=3):
     return {"id": id, "all_time": all_time, "last_30d": last_30d, "likes": 0,
             "modality": ["text"], "languages": ["en"], "created_at": None}
+
+
+def collection_detail(name="group", **fields):
+    return {"slug": f"gatilin/{name}", "title": "A collection", "description": "Public grouping",
+            "owner": {"name": "gatilin"}, "private": False, "lastUpdated": "2026-10-19T12:00:00Z",
+            "items": [{"type": "model", "id": "gatilin/A", "private": False}], **fields}
+
+
+def collection_state(items=None, status="ok", error=None):
+    return {"status": status, "captured_at": "2026-10-20T02:23:00Z" if status == "ok" else None,
+            "error": error, "items": items if items is not None else []}
+
+
+class CollectionResponse(io.BytesIO):
+    def __init__(self, value, link=""):
+        super().__init__(value if isinstance(value, bytes) else json.dumps(value).encode("utf-8"))
+        self.status = 200
+        self.headers = Message()
+        if link:
+            self.headers["Link"] = link
+
+
+class CollectionFetchTests(unittest.TestCase):
+    list_url = collect.HF_COLLECTIONS_API + "?limit=100&owner=gatilin"
+
+    def fetch(self, responses, links=None):
+        self.requests = []
+        links = links or {}
+
+        def open_public(request, *, timeout):
+            self.requests.append(request)
+            self.assertGreater(timeout, 0)
+            self.assertLessEqual(timeout, collect.COLLECTION_REQUEST_TIMEOUT)
+            value = responses[request.full_url]
+            if isinstance(value, Exception):
+                raise value
+            return CollectionResponse(value, links.get(request.full_url, ""))
+
+        with mock.patch("scripts.collect.urllib.request.OpenerDirector.open", side_effect=open_public):
+            return collect.fetch_collections("gatilin")
+
+    def detail_url(self, name="group"):
+        return collect.HF_COLLECTIONS_API + "/gatilin/" + name
+
+    def test_uses_all_full_detail_items_not_truncated_preview(self):
+        full = collection_detail(items=[{"type": "model", "id": f"gatilin/M{i}"} for i in range(6)])
+        preview = {**full, "title": "Old preview title", "items": full["items"][:4]}
+        result = self.fetch({self.list_url: [preview], self.detail_url(): full})
+        self.assertEqual(result, [{
+            "slug": "gatilin/group", "title": "A collection", "description": "Public grouping",
+            "updated_at": "2026-10-19T12:00:00Z",
+            "items": [{"type": "model", "id": f"gatilin/M{i}", "note": ""} for i in range(6)],
+        }])
+        self.assertEqual([r.full_url for r in self.requests], [self.list_url, self.detail_url()])
+
+    def test_pagination_dedupes_slugs_and_fetches_every_detail(self):
+        second = collect.HF_COLLECTIONS_API + "?cursor=two&owner=gatilin"
+        third = collect.HF_COLLECTIONS_API + "?cursor=three&owner=gatilin"
+        a, b, c = [collection_detail(name) for name in ("a", "b", "c")]
+        # Previews need not contain items at all; only detail membership counts.
+        previews = [{key: value for key, value in item.items() if key != "items"} for item in (a, b, c)]
+        result = self.fetch({self.list_url: [previews[0], previews[0]], second: previews[:2],
+                             third: previews[1:], self.detail_url("a"): a,
+                             self.detail_url("b"): b, self.detail_url("c"): c},
+                            {self.list_url: f'<{self.list_url}>; rel="first", '
+                                            '<?owner=gatilin&cursor=two>; rel="next"',
+                             second: f'<{third}>; rel=next',
+                             third: f'<{second}>; rel="prev"'})
+        self.assertEqual([item["slug"] for item in result], ["gatilin/a", "gatilin/b", "gatilin/c"])
+        self.assertEqual([r.full_url for r in self.requests], [self.list_url, second, third,
+                         self.detail_url("a"), self.detail_url("b"), self.detail_url("c")])
+
+    def test_empty_listing_is_a_success(self):
+        self.assertEqual(self.fetch({self.list_url: []}), [])
+        self.assertEqual(len(self.requests), 1)
+
+    def test_does_not_use_tokens_proxies_or_global_authenticated_opener(self):
+        build_opener = collect.urllib.request.build_opener
+        global_opener = mock.Mock()
+        with mock.patch.dict(os.environ, {"HF_TOKEN": "secret-token", "HF_HUB_TOKEN": "another-token",
+                                          "HUGGING_FACE_HUB_TOKEN": "legacy-token",
+                                          "HTTPS_PROXY": "http://user:password@proxy.invalid"}), \
+                mock.patch("scripts.collect.urllib.request._opener", global_opener), \
+                mock.patch("scripts.collect.urllib.request.build_opener", wraps=build_opener) as build:
+            full = collection_detail()
+            self.fetch({self.list_url: [full], self.detail_url(): full})
+        global_opener.open.assert_not_called()
+        self.assertEqual(build.call_args.args[0].proxies, {})
+        self.assertIsInstance(build.call_args.args[1], collect._NoCollectionRedirects)
+        for request in self.requests:
+            self.assertEqual(request.header_items(), [("Accept", "application/json")])
+            self.assertNotIn("token", request.full_url)
+            self.assertEqual(request.get_method(), "GET")
+
+    def test_privacy_collection_refs_plain_notes_and_other_item_types(self):
+        full = collection_detail(items=[
+            {"type": "model", "id": "gatilin/A", "private": False,
+             "note": {"text": "Plain text **note**", "html": "<p>DO NOT STORE</p>"}},
+            {"type": "model", "id": "gatilin/A", "note": {"text": "Duplicate"}},
+            {"type": "model", "id": "other/external"},
+            {"type": "dataset", "id": "gatilin/A", "note": {"html": "<b>HTML only</b>"}},
+            {"type": "collection", "id": "6addc6d5b04b81f86ac0e942", "slug": "other/child-123",
+             "note": {"text": "Nested grouping", "html": "<p>Nested grouping</p>"}},
+            {"type": "collection", "id": "different-id", "slug": "other/child-123"},
+            {"type": "space", "id": "other/demo", "note": {"text": 42}},
+            {"type": "paper", "id": "1234.56789", "note": "Not a note.text object"},
+            {"type": "future-type", "id": "future-id", "note": None},
+            {"type": "model", "id": "gatilin/private", "private": True},
+            {"type": "collection", "private": True},
+        ])
+        private = collection_detail("private", private=True)
+        changed = collection_detail("changed")
+        result = self.fetch({self.list_url: [full, private, changed], self.detail_url(): full,
+                             self.detail_url("changed"): {**changed, "private": True}})
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0]["items"], [
+            {"type": "model", "id": "gatilin/A", "note": "Plain text **note**"},
+            {"type": "model", "id": "other/external", "note": ""},
+            {"type": "dataset", "id": "gatilin/A", "note": ""},
+            {"type": "collection", "id": "other/child-123", "note": "Nested grouping"},
+            {"type": "space", "id": "other/demo", "note": ""},
+            {"type": "paper", "id": "1234.56789", "note": ""},
+            {"type": "future-type", "id": "future-id", "note": ""},
+        ])
+        self.assertNotIn("html", json.dumps(result))
+        self.assertNotIn("DO NOT STORE", json.dumps(result))
+        self.assertNotIn(self.detail_url("private"), [r.full_url for r in self.requests])
+
+    def test_empty_detail_and_optional_text_metadata(self):
+        full = collection_detail(items=[], description=None, lastUpdated=None)
+        result = self.fetch({self.list_url: [full], self.detail_url(): full})
+        self.assertEqual(result[0]["items"], [])
+        self.assertEqual(result[0]["description"], "")
+        self.assertIsNone(result[0]["updated_at"])
+
+    def test_missing_or_malformed_detail_never_returns_partial_results(self):
+        a, b = collection_detail("a"), collection_detail("b")
+        bad_details = [None, [], {}, b"not JSON", {key: value for key, value in b.items() if key != "items"},
+                       urllib.error.HTTPError(self.detail_url("b"), 404, "Not found", {}, None),
+                       urllib.error.URLError("Unavailable"), TimeoutError("Timed out")]
+        for key, values in {
+            "items": [None, {}, [None], [{}], [{"type": "model"}], [{"id": "gatilin/A"}],
+                      [{"type": "model", "id": ""}], [{"type": [], "id": "gatilin/A"}],
+                      [{"type": "model", "id": "gatilin/A", "private": "false"}],
+                      [{"type": "collection", "id": "hex-without-slug"}]],
+            "owner": [None, "gatilin", {"name": "other"}],
+            "slug": [None, "gatilin/wrong", "other/b"],
+            "private": [None, "false", 0],
+            "title": [None, {}], "description": [{}], "lastUpdated": [[]],
+        }.items():
+            bad_details.extend({**b, key: value} for value in values)
+        for key in ("slug", "private", "owner", "title"):
+            bad_details.append({name: value for name, value in b.items() if name != key})
+        for bad in bad_details:
+            with self.subTest(detail=bad):
+                with self.assertRaises((ValueError, urllib.error.URLError, TimeoutError)):
+                    self.fetch({self.list_url: [a, b], self.detail_url("a"): a, self.detail_url("b"): bad})
+                self.assertEqual(self.requests[-1].full_url, self.detail_url("b"))
+
+    def test_invalid_listing_fails_instead_of_publishing_empty_data(self):
+        for page in (None, {}, {"items": []}, b"invalid JSON", [None], [{}],
+                     [collection_detail(owner={"name": "other"})], [collection_detail(private="false")]):
+            with self.subTest(page=page), self.assertRaises(ValueError):
+                self.fetch({self.list_url: page})
+
+    def test_unsafe_slugs_are_rejected_in_listings_and_nested_refs(self):
+        for slug in ("gatilin/../secret", "gatilin/..", "gatilin/%2e%2e", "gatilin/a/b", "gatilin/a?x=1",
+                     "gatilin/a#fragment", "gatilin/\\secret", "https://evil.invalid/a", "/gatilin/a", "gatilin/"):
+            with self.subTest(slug=slug):
+                with self.assertRaises(ValueError):
+                    self.fetch({self.list_url: [collection_detail(slug=slug)]})
+                full = collection_detail(items=[{"type": "collection", "id": "hex", "slug": slug}])
+                with self.assertRaises(ValueError):
+                    self.fetch({self.list_url: [full], self.detail_url(): full})
+
+    def test_unsafe_author_is_rejected_before_http(self):
+        with mock.patch("scripts.collect.urllib.request.OpenerDirector.open") as request:
+            for author in ("../gatilin", "gatilin/other", "gatilin?owner=other", "", "gatilin%2fother"):
+                with self.subTest(author=author), self.assertRaises(ValueError):
+                    collect.fetch_collections(author)
+            request.assert_not_called()
+
+    def test_pagination_rejects_unsafe_endpoints_and_wrong_owners(self):
+        for url in ("https://evil.invalid/api/collections?owner=gatilin",
+                    "http://huggingface.co/api/collections?owner=gatilin",
+                    "https://huggingface.co:443/api/collections?owner=gatilin",
+                    "https://user:password@huggingface.co/api/collections?owner=gatilin",
+                    "https://huggingface.co/api/models?owner=gatilin", "/login?owner=gatilin",
+                    "/api/collections/extra?owner=gatilin", "?owner=other", "?cursor=two",
+                    "?owner=gatilin&owner=other", "?owner=gatilin#fragment"):
+            with self.subTest(url=url), self.assertRaises(ValueError):
+                self.fetch({self.list_url: []}, {self.list_url: f'<{url}>; rel="next"'})
+            self.assertEqual(len(self.requests), 1)
+
+    def test_pagination_rejects_loops_and_malformed_links(self):
+        for link in (f'<{self.list_url}>; rel="next"', '<?owner=gatilin&limit=100>; rel="next"',
+                     '<?owner=gatilin&cursor=two>; rel="next", <?owner=gatilin&cursor=three>; rel="next"',
+                     'not-a-link; rel="next"'):
+            with self.subTest(link=link), self.assertRaises(ValueError):
+                self.fetch({self.list_url: []}, {self.list_url: link})
+            self.assertEqual(len(self.requests), 1)
+        second = collect.HF_COLLECTIONS_API + "?cursor=two&owner=gatilin"
+        with self.assertRaisesRegex(ValueError, "loop"):
+            self.fetch({self.list_url: [], second: []},
+                       {self.list_url: f'<{second}>; rel="next"', second: f'<{self.list_url}>; rel="next"'})
+        self.assertEqual(len(self.requests), 2)
+
+    def test_http_redirects_are_rejected(self):
+        handler = collect._NoCollectionRedirects()
+        for url in ("https://evil.invalid/", self.list_url):
+            with self.subTest(url=url), self.assertRaisesRegex(ValueError, "redirect"):
+                handler.redirect_request(None, None, 302, "Found", {}, url)
+
+    def test_fetch_budget_and_response_size_are_bounded(self):
+        with mock.patch("scripts.collect.time.monotonic", side_effect=[0, 121]):
+            with self.assertRaises(TimeoutError):
+                self.fetch({self.list_url: []})
+            self.assertEqual(self.requests, [])
+        with mock.patch("scripts.collect.COLLECTION_RESPONSE_LIMIT", 64):
+            with self.assertRaisesRegex(ValueError, "too large"):
+                self.fetch({self.list_url: b" " * 65 + b"[]"})
+        with mock.patch("scripts.collect.time.monotonic", side_effect=[0, 0, 121]):
+            with self.assertRaises(TimeoutError):
+                self.fetch({self.list_url: []})
+            self.assertEqual(len(self.requests), 1)
+
+
+class CollectionPersistenceTests(unittest.TestCase):
+    def setUp(self):
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        self.data_dir = Path(temporary.name)
+        self.items = [{"slug": "gatilin/group", "title": "A collection", "description": "",
+                       "updated_at": None, "items": [{"type": "model", "id": "gatilin/A", "note": ""}]}]
+
+    def save_collections(self, collections, day="2026-10-20"):
+        save(self.data_dir, "gatilin", [example("gatilin/A")], at(day), [dataset("gatilin/D")],
+             collections=collections)
+        return json.loads((self.data_dir / "latest.json").read_text(encoding="utf-8"))
+
+    def test_success_and_empty_success_replace_previous_membership(self):
+        success = collection_state(self.items)
+        self.assertEqual(self.save_collections(success)["collections"], success)
+        empty = {**collection_state(), "captured_at": "2026-10-21T02:23:00Z"}
+        latest = self.save_collections(empty, "2026-10-21")
+        self.assertEqual(latest["collections"], empty)
+        self.assertEqual(latest["schema_version"], 3)
+
+    def test_failure_preserves_original_capture_across_repeated_failures(self):
+        original = collection_state(self.items)
+        self.save_collections(original)
+        for day, status in (("2026-10-21", "unavailable"), ("2026-10-22", "stale")):
+            failure = {"status": status, "captured_at": day + "T00:00:00Z",
+                       "error": f"Failed on {day}", "items": [{"slug": "gatilin/partial"}]}
+            unchanged = copy.deepcopy(failure)
+            latest = self.save_collections(failure, day)
+            self.assertEqual(latest["collections"], {**original, "status": "stale", "error": failure["error"]})
+            self.assertEqual(latest["captured_at"], day + "T02:23:00Z")
+            self.assertEqual(latest["models"], [example("gatilin/A")])
+            self.assertEqual(latest["datasets"], [dataset("gatilin/D")])
+            self.assertEqual(failure, unchanged)
+        self.assertEqual(original["status"], "ok")
+
+    def test_empty_success_can_become_stale(self):
+        original = collection_state()
+        self.save_collections(original)
+        failure = collection_state(status="unavailable", error="Offline")
+        latest = self.save_collections(failure, "2026-10-21")
+        self.assertEqual(latest["collections"], {**original, "status": "stale", "error": "Offline"})
+
+    def test_failure_without_prior_collections_is_unavailable(self):
+        failure = collection_state([{"slug": "gatilin/partial"}], status="unavailable", error="Offline")
+        for day in ("2026-10-20", "2026-10-21"):
+            latest = self.save_collections(failure, day)
+            self.assertEqual(latest["collections"], {"status": "unavailable", "captured_at": None,
+                                                    "error": "Offline", "items": []})
+
+    def test_missing_or_unreadable_previous_metadata_is_unavailable(self):
+        previous_values = [None, [], {"author": "gatilin"}, {"author": "gatilin", "collections": []},
+                           {"author": "gatilin", "collections": {"status": "ok", "items": []}},
+                           {"author": "gatilin", "collections": collection_state(status="unavailable")},
+                           "invalid JSON"]
+        for previous in previous_values:
+            with self.subTest(previous=previous):
+                (self.data_dir / "latest.json").write_text(
+                    previous if isinstance(previous, str) else json.dumps(previous), encoding="utf-8")
+                failure = collection_state(status="unavailable", error="Offline")
+                self.assertEqual(self.save_collections(failure)["collections"], failure)
+
+    def test_other_authors_collections_are_never_reused(self):
+        (self.data_dir / "latest.json").write_text(json.dumps({
+            "author": "other", "collections": collection_state(self.items),
+        }), encoding="utf-8")
+        failure = collection_state(status="unavailable", error="Offline")
+        self.assertEqual(self.save_collections(failure)["collections"], failure)
+
+    def test_save_is_offline_and_omitted_collections_remain_optional(self):
+        with mock.patch("scripts.collect.fetch_collections") as fetch, \
+                mock.patch("scripts.collect.urllib.request.OpenerDirector.open") as request:
+            save(self.data_dir, "gatilin", [example("gatilin/A")], at("2026-10-20"))
+            latest = json.loads((self.data_dir / "latest.json").read_text(encoding="utf-8"))
+            self.assertNotIn("collections", latest)
+            self.save_collections(collection_state(self.items))
+            fetch.assert_not_called()
+            request.assert_not_called()
+
+    def test_collections_do_not_change_compact_history(self):
+        save(self.data_dir, "gatilin", [example("gatilin/A")], at("2026-10-20"), [dataset("gatilin/D")])
+        path = self.data_dir / "history.json"
+        original = path.read_bytes()
+        self.save_collections(collection_state(self.items))
+        self.assertEqual(path.read_bytes(), original)
+        self.save_collections(collection_state(status="unavailable", error="Offline"))
+        self.assertEqual(path.read_bytes(), original)
+        history = json.loads(original)
+        self.assertEqual(set(history), {"schema_version", "author", "updated_at", "snapshots"})
+        self.assertEqual(history["snapshots"], [{
+            "date": "2026-10-20", "captured_at": "2026-10-20T02:23:00Z",
+            "models": {"gatilin/A": [100, 20]}, "datasets": {"gatilin/D": [10, 3]},
+        }])
+
+    def test_main_collects_membership_and_survives_collection_failure(self):
+        for result in (self.items, [], RuntimeError("Collections offline")):
+            with self.subTest(result=result):
+                with mock.patch("sys.argv", ["collect.py", "--author", "gatilin", "--data-dir", str(self.data_dir)]), \
+                        mock.patch("scripts.collect.fetch_models", return_value=[example("gatilin/A")]) as models, \
+                        mock.patch("scripts.collect.fetch_datasets", return_value=[dataset("gatilin/D")]) as datasets, \
+                        mock.patch("scripts.collect.fetch_collections") as collections:
+                    if isinstance(result, Exception):
+                        collections.side_effect = result
+                    else:
+                        collections.return_value = result
+                    collect.main()
+                models.assert_called_once_with("gatilin")
+                datasets.assert_called_once_with("gatilin")
+                collections.assert_called_once_with("gatilin")
+                latest = json.loads((self.data_dir / "latest.json").read_text(encoding="utf-8"))
+                self.assertEqual(latest["models"], [example("gatilin/A")])
+                self.assertEqual(latest["datasets"], [dataset("gatilin/D")])
+                state = latest["collections"]
+                if isinstance(result, Exception):
+                    self.assertEqual(state, {**previous_state, "status": "stale", "error": "Collections offline"})
+                else:
+                    self.assertEqual(state["status"], "ok")
+                    self.assertEqual(state["items"], result)
+                    self.assertIsNone(state["error"])
+                    self.assertIsInstance(state["captured_at"], str)
+                previous_state = state
+
+    def test_main_first_collection_failure_still_saves_statistics(self):
+        with mock.patch("sys.argv", ["collect.py", "--author", "gatilin", "--data-dir", str(self.data_dir)]), \
+                mock.patch("scripts.collect.fetch_models", return_value=[example("gatilin/A")]), \
+                mock.patch("scripts.collect.fetch_datasets", return_value=[dataset("gatilin/D")]), \
+                mock.patch("scripts.collect.fetch_collections", side_effect=TimeoutError("Timed out")):
+            collect.main()
+        latest = json.loads((self.data_dir / "latest.json").read_text(encoding="utf-8"))
+        self.assertEqual(latest["collections"], collection_state(status="unavailable", error="Timed out"))
+        self.assertEqual(latest["models"], [example("gatilin/A")])
+        self.assertEqual(latest["datasets"], [dataset("gatilin/D")])
 
 
 class DatasetCollectorTests(unittest.TestCase):

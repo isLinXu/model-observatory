@@ -40,6 +40,13 @@ MO.data = (() => {
     modelSource: 'snapshot',
     modelsCapturedAt: null,
     modelRefreshError: null,
+    collections: null,
+    collectionSource: 'snapshot',
+    collectionRefreshError: null,
+    modelCollection: 'all',
+    modelSearch: '',
+    modelSort: 'last_30d',
+    modelOnlyAnomalies: false,
     status: 'loading'
   };
 
@@ -135,6 +142,91 @@ MO.data = (() => {
     return models;
   }
 
+  function normalizeCollection(item, author) {
+    if (!item || typeof item.slug !== 'string' || !item.slug.startsWith(`${author}/`) ||
+        !/^[\w-]+\/[\w.-]+$/.test(item.slug) || item.private || item.owner?.name !== author ||
+        typeof item.title !== 'string' || !Array.isArray(item.items)) {
+      throw new Error('HF 集合详情格式不完整');
+    }
+    const seen = new Set();
+    const items = [];
+    for (const entry of item.items) {
+      if (entry.private) continue;
+      const id = entry.type === 'collection' ? entry.slug : entry.id;
+      if (typeof id !== 'string' || typeof entry.type !== 'string') throw new Error('HF 集合成员格式不完整');
+      const key = `${entry.type}:${id}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      items.push({ id, type: entry.type, note: typeof entry.note?.text === 'string' ? entry.note.text : '' });
+    }
+    return {
+      slug: item.slug, title: item.title,
+      description: typeof item.description === 'string' ? item.description : '',
+      updated_at: typeof item.lastUpdated === 'string' ? item.lastUpdated : null,
+      items
+    };
+  }
+
+  async function refreshCollections() {
+    try {
+      const author = state.latest.author;
+      let url = `https://huggingface.co/api/collections?owner=${encodeURIComponent(author)}&limit=100`;
+      const visited = new Set();
+      const slugs = new Set();
+      const read = async target => {
+        const response = await fetch(target, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+        if (!response.ok) throw new Error(`HF 集合读取失败（HTTP ${response.status}）`);
+        return response;
+      };
+      while (url) {
+        if (visited.has(url)) throw new Error('HF 集合分页出现循环');
+        visited.add(url);
+        const response = await read(url);
+        const batch = await response.json();
+        if (!Array.isArray(batch)) throw new Error('HF 集合列表格式不完整');
+        for (const item of batch) {
+          if (item.private) continue;
+          if (item.owner?.name !== author || typeof item.slug !== 'string' ||
+              !item.slug.startsWith(`${author}/`) || !/^[\w-]+\/[\w.-]+$/.test(item.slug)) {
+            throw new Error('HF 集合地址无效');
+          }
+          slugs.add(item.slug);
+        }
+        const part = String(response.headers.get('Link') || '').split(',').find(value => /;\s*rel="?next"?/.test(value));
+        const target = part?.match(/<([^>]+)>/)?.[1];
+        const next = target ? new URL(target, url) : null;
+        if (next && (next.origin !== 'https://huggingface.co' || next.pathname !== '/api/collections')) {
+          throw new Error('HF 集合分页地址无效');
+        }
+        url = next?.href;
+      }
+      const items = [];
+      const queue = [...slugs];
+      // Collection listings contain previews, not complete membership.
+      for (let index = 0; index < queue.length; index += 4) {
+        const batch = await Promise.all(queue.slice(index, index + 4).map(async slug => {
+          const response = await read(`https://huggingface.co/api/collections/${slug}`);
+          const detail = normalizeCollection(await response.json(), author);
+          if (detail.slug !== slug) throw new Error('HF 集合详情与请求不一致');
+          return detail;
+        }));
+        items.push(...batch);
+      }
+      state.collections = {
+        status: 'ok', captured_at: new Date().toISOString(), error: null,
+        items: items.sort((a, b) => a.title.localeCompare(b.title))
+      };
+      state.collectionSource = 'live';
+      state.collectionRefreshError = null;
+      if (state.modelCollection !== 'all' && state.modelCollection !== 'unassigned' &&
+          !items.some(item => item.slug === state.modelCollection)) state.modelCollection = 'all';
+      return state.collections;
+    } catch (error) {
+      state.collectionRefreshError = error.message;
+      throw error;
+    }
+  }
+
   async function loadDownloads() {
     const [latest, history] = await Promise.all([
       getJSON('./data/latest.json', '下载数据'),
@@ -155,12 +247,18 @@ MO.data = (() => {
     state.modelSource = 'snapshot';
     state.modelsCapturedAt = null;
     state.modelRefreshError = null;
-    try {
-      await refreshLiveModels();
-    } catch (error) {
-      state.modelRefreshError = error.message;
-      console.warn('HF 实时模型读取失败，使用已发布快照：', error);
-    }
+    state.collections = latest.collections || null;
+    state.collectionSource = 'snapshot';
+    state.collectionRefreshError = null;
+    await Promise.all([
+      refreshLiveModels().catch(error => {
+        state.modelRefreshError = error.message;
+        console.warn('HF 实时模型读取失败，使用已发布快照：', error);
+      }),
+      refreshCollections().catch(error => {
+        console.warn('HF 实时集合读取失败，保留集合快照：', error);
+      })
+    ]);
   }
 
   async function loadScholar() {
@@ -259,11 +357,12 @@ MO.data = (() => {
     });
   }
 
-  function sumSeries(key, metric, range = 'all') {
+  function sumSeries(key, metric, range = 'all', ids = null) {
     const source = range === 'all' ? state.snapshots : state.snapshots.slice(-Number(range));
     return source.map(snapshot => {
       let sum = 0, known = 0;
-      Object.values(snapshot[key] || {}).forEach(point => {
+      Object.entries(snapshot[key] || {}).forEach(([id, point]) => {
+        if (ids && !ids.has(id)) return;
         const value = point[metric === 'all_time' ? 0 : 1];
         if (Number.isFinite(value)) { sum += value; known++; }
       });
@@ -288,10 +387,11 @@ MO.data = (() => {
   }
 
   /** Net change of a whole collection between two snapshots. */
-  function netChange(newer, older, key = 'models') {
+  function netChange(newer, older, key = 'models', ids = null) {
     if (!newer || !older) return null;
     let sum = 0, counted = 0, negative = 0;
     for (const id of Object.keys(newer[key] || {})) {
+      if (ids && !ids.has(id)) continue;
       const value = pairDelta(id, newer, older, key);
       if (value === null) continue;
       sum += value;
@@ -310,13 +410,55 @@ MO.data = (() => {
     return pairDelta(id, latest, baseline, key);
   }
 
+  function collectionsAvailable() {
+    return ['ok', 'stale'].includes(state.collections?.status);
+  }
+
+  function modelCollections(id) {
+    return (state.collections?.items || []).filter(collection =>
+      collection.items.some(item => item.type === 'model' && item.id === id));
+  }
+
+  function modelScope(collection = state.modelCollection) {
+    const models = state.latest?.models || [];
+    if (collection === 'all') return models;
+    if (!collectionsAvailable()) return [];
+    if (collection === 'unassigned') return models.filter(model => !modelCollections(model.id).length);
+    const group = state.collections.items.find(item => item.slug === collection);
+    const ids = new Set((group?.items || []).filter(item => item.type === 'model').map(item => item.id));
+    return models.filter(model => ids.has(model.id));
+  }
+
+  function modelScopeIds() {
+    return state.modelCollection === 'all' ? null : new Set(modelScope().map(model => model.id));
+  }
+
+  function collectionStats(collection) {
+    const models = modelScope(collection);
+    const total = metric => {
+      const known = models.filter(model => Number.isFinite(model[metric]));
+      return { value: known.length ? known.reduce((sum, model) => sum + model[metric], 0) : null, known: known.length };
+    };
+    return { count: models.length, all_time: total('all_time'), last_30d: total('last_30d') };
+  }
+
   function localModels() {
-    return (state.latest?.models || []).map(model => ({
+    return modelScope().map(model => ({
       ...model,
       d1: delta(model.id, 'prev'),
       d7: delta(model.id, 7),
       d30: delta(model.id, 30)
     }));
+  }
+
+  function filteredModels() {
+    const search = state.modelSearch.trim().toLowerCase();
+    const rows = localModels().filter(model =>
+      (!search || model.id.toLowerCase().includes(search)) && (!state.modelOnlyAnomalies || model.d1 < 0));
+    const sort = state.modelSort;
+    if (sort === 'name') rows.sort((a, b) => a.id.localeCompare(b.id));
+    else rows.sort((a, b) => ((b[sort] ?? -Infinity) - (a[sort] ?? -Infinity)) || a.id.localeCompare(b.id));
+    return rows;
   }
 
   function localDatasets() {
@@ -484,6 +626,13 @@ MO.data = (() => {
     notify,
     loadAll,
     refreshLiveModels,
+    refreshCollections,
+    collectionsAvailable,
+    modelCollections,
+    modelScope,
+    modelScopeIds,
+    collectionStats,
+    filteredModels,
     getJSON,
     getDateShift,
     modelSeries,

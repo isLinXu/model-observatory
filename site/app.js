@@ -36,10 +36,13 @@
 
   function exportModelCsv() {
     const header = ['model_id', 'downloads_all_time', 'downloads_rolling_30d', 'change_since_previous_snapshot',
-      'change_7d', 'change_30d', 'likes', 'pipeline', 'date_utc', 'huggingface_url'];
-    const rows = data.localModels().map(model => [
+      'change_7d', 'change_30d', 'likes', 'pipeline', 'date_utc', 'huggingface_url', 'collections', 'collection_slugs', 'collections_captured_at'];
+    const rows = data.filteredModels().map(model => [
       model.id, model.all_time, model.last_30d, model.d1, model.d7, model.d30, model.likes,
-      model.pipeline, data.state.latest.date, `https://huggingface.co/${model.id}`
+      model.pipeline, data.state.latest.date, `https://huggingface.co/${model.id}`,
+      data.modelCollections(model.id).map(item => item.title).join('; '),
+      data.modelCollections(model.id).map(item => item.slug).join('; '),
+      data.state.collections?.captured_at
     ]);
     download(`gatilin-models-${data.state.latest.date || 'latest'}.csv`,
       '\uFEFF' + [header, ...rows].map(row => row.map(csvEscape).join(',')).join('\r\n'),
@@ -123,11 +126,11 @@
   function closeDetail() {
     if (!data.state.model) return;
     data.state.model = null;
-    $('detailOverlay').classList.add('hidden');
-    $('detailOverlay').setAttribute('aria-hidden', 'true');
     document.querySelector('.shell').inert = false;
     document.body.style.overflow = '';
     if (detailTrigger instanceof HTMLElement) detailTrigger.focus();
+    $('detailOverlay').classList.add('hidden');
+    $('detailOverlay').setAttribute('aria-hidden', 'true');
     detailTrigger = null;
   }
 
@@ -163,7 +166,48 @@
     render.renderSocial();
   }
 
+  function renderModelScope() {
+    const ids = new Set(data.modelScope().map(model => model.id));
+    data.state.compare = data.state.compare.filter(id => ids.has(id));
+    render.renderCollections();
+    render.renderSummary();
+    render.renderOverall();
+    render.renderTop();
+    render.renderTable();
+    render.renderCompare();
+  }
+
+  function selectCollection(slug) {
+    data.state.modelCollection = slug;
+    renderModelScope();
+  }
+
+  async function refreshCollections() {
+    const button = $('collectionRefresh');
+    button.disabled = true;
+    button.textContent = '刷新中…';
+    try {
+      await data.refreshCollections();
+    } catch (error) {
+      render.showToast(`集合刷新失败：${error.message}。已保留上次数据。`);
+    } finally {
+      renderModelScope();
+      button.disabled = false;
+      button.textContent = '刷新集合';
+    }
+  }
+
   function bind() {
+    $('collectionFilter').addEventListener('change', event => selectCollection(event.target.value));
+    $('collectionReset').addEventListener('click', () => selectCollection('all'));
+    $('collectionRefresh').addEventListener('click', refreshCollections);
+    $('collectionCards').addEventListener('click', event => {
+      const button = event.target.closest('[data-collection]');
+      if (!button) return;
+      selectCollection(button.dataset.collection);
+      $('collectionFilter').focus({ preventScroll: true });
+      $('collectionScope').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+    });
     document.querySelectorAll('.segmented button, .range-controls button').forEach(button =>
       button.setAttribute('aria-pressed', String(button.classList.contains('active'))));
     document.querySelectorAll('[data-metric]').forEach(button => button.addEventListener('click', () => {
@@ -191,12 +235,26 @@
       render.renderDatasetChart();
     }));
 
-    $('modelSearch').addEventListener('input', render.renderTable);
-    $('sortModel').addEventListener('change', render.renderTable);
-    $('onlyAnomalies').addEventListener('change', render.renderTable);
+    $('modelSearch').addEventListener('input', event => {
+      data.state.modelSearch = event.target.value;
+      render.renderTable();
+    });
+    $('sortModel').addEventListener('change', event => {
+      data.state.modelSort = event.target.value;
+      render.renderTable();
+    });
+    $('onlyAnomalies').addEventListener('change', event => {
+      data.state.modelOnlyAnomalies = event.target.checked;
+      render.renderTable();
+    });
     $('modelRows').addEventListener('click', event => {
       const button = event.target.closest('button[data-detail]');
       if (button) openDetail(button.dataset.detail);
+      const collection = event.target.closest('[data-collection]');
+      if (collection) {
+        selectCollection(collection.dataset.collection);
+        $('modelSearch').focus({ preventScroll: true });
+      }
     });
     $('modelRows').addEventListener('change', event => {
       const box = event.target.closest('input[data-compare]');
@@ -301,6 +359,7 @@
   }
 
   function renderAll() {
+    render.renderCollections();
     render.renderSummary();
     render.renderOverall();
     render.renderTop();
