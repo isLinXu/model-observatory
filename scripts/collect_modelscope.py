@@ -293,6 +293,15 @@ def validate_history(history: Any, author: str) -> None:
                     or snapshot["date"] in days or not isinstance(snapshot.get("models"), dict)
                     or "followers" not in snapshot or not _counter(snapshot["followers"])):
                 raise ValueError
+            if ("profile_downloads" in snapshot) != ("profile_captured_at" in snapshot):
+                raise ValueError
+            if "profile_downloads" in snapshot:
+                downloads = snapshot["profile_downloads"]
+                capture = snapshot["profile_captured_at"]
+                if not _counter(downloads) or (downloads is not None and capture is None):
+                    raise ValueError
+                if capture is not None and _saved_time(capture) > _saved_capture(snapshot):
+                    raise ValueError
             days.add(snapshot["date"])
             for identity, counts in snapshot["models"].items():
                 model_id(identity, author)
@@ -365,13 +374,15 @@ def _not_older(history: dict, previous: dict | None, at: dt.datetime) -> None:
         raise ValueError("Cannot write ModelScope data older than the saved timestamp or UTC date")
 
 
-def update_history(history: dict, models: list[dict], followers: int | None, at: dt.datetime) -> dict:
+def update_history(history: dict, models: list[dict], profile: dict, at: dt.datetime) -> dict:
     validate_history(history, history.get("author"))
     _not_older(history, None, at)
     day = utc(at).date()
     snapshot = {"date": day.isoformat(), "captured_at": timestamp(at),
                 "models": {model["id"]: [model["downloads"], model["likes"]] for model in models},
-                "followers": followers}
+                "followers": profile["followers"],
+                "profile_downloads": number_or_none(profile["downloads"]) if profile["status"] == "ok" else None,
+                "profile_captured_at": profile["captured_at"] if profile["status"] == "ok" else None}
     # Keep 400 UTC calendar days including today, without inventing missing points.
     cutoff = (day - dt.timedelta(days=HISTORY_RETENTION_DAYS - 1)).isoformat()
     snapshots = [snap for snap in history["snapshots"] if cutoff <= snap["date"] < snapshot["date"]]
@@ -403,7 +414,7 @@ def save(data_dir: Path, author: str, models: list[dict] | None, profile: dict |
     else:
         if models is None or profile is None:
             raise ValueError("Successful ModelScope capture needs models and profile status")
-        history = update_history(history, models, profile["followers"], at)
+        history = update_history(history, models, profile, at)
         latest = {**_header(author), "date": utc(at).date().isoformat(),
                   "captured_at": timestamp(at), "status": "ok", "error": None,
                   "profile": profile, "models": models}

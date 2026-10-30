@@ -132,6 +132,14 @@
       <section id="modelscope" class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">MODELSCOPE / ISLINXU</div><h2>魔搭模型观测</h2><p>独立记录 ModelScope 公开模型，不与 Hugging Face 重复合计</p></div><div class="section-actions"><a class="button secondary" href="https://www.modelscope.cn/profile/isLinXu" target="_blank" rel="noopener noreferrer">魔搭主页 ↗</a><button class="button secondary" id="modelscopeRefresh">刷新实时清单</button><button class="button" id="modelscopeExport" disabled>导出筛选 CSV</button></div></div>
         <p id="modelscopeStatus" class="collection-note" role="status" aria-live="polite">正在读取 ModelScope 快照…</p>
+        <div class="modelscope-profile">
+          <div class="modelscope-profile-stats">
+            <div class="kpi accent-kpi"><div class="kpi-label">主页下载计数</div><div id="statModelscopeProfileDownloads" class="kpi-value">—</div><div id="statModelscopeProfileDownloadsSub" class="kpi-caption">公开主页 User.Downloads · 每日快照</div></div>
+            <div class="kpi"><div class="kpi-label">主页下载 · 相邻快照净变化</div><div id="statModelscopeProfileChange" class="kpi-value">—</div><div id="statModelscopeProfileChangeSub" class="kpi-caption">需最近两次快照均含主页下载计数</div></div>
+          </div>
+          <div class="panel"><div class="panel-head"><div><div class="panel-overline">PROFILE DOWNLOADS / DAILY SNAPSHOTS</div><h2>主页下载趋势</h2><p id="modelscopeProfileCapturedAt">等待主页采集</p></div></div><div id="modelscopeProfileChart" class="chart-area"></div><div class="chart-footer"><span id="modelscopeProfileChartNote" class="micro muted">等待首次主页下载快照</span></div></div>
+        </div>
+        <p class="collection-note">主页下载计数直接取自公开主页，与下方模型列表的下载计数之和独立观测；统计范围和时间窗口未明确，不互相替代或相加。净变化是两次快照的计数差，不代表独立日下载量；缺失记录不补零，下降保留为计数修正。刷新实时清单不会更新主页快照。</p>
         <div class="kpis">
           <div class="kpi"><div class="kpi-label">公开模型</div><div id="statModelscopeModels" class="kpi-value">—</div><div class="kpi-caption">官方 OpenAPI 可枚举模型</div></div>
           <div class="kpi"><div class="kpi-label">模型下载计数之和</div><div id="statModelscopeDownloads" class="kpi-value">—</div><div id="statModelscopeDownloadsSub" class="kpi-caption">仅 ModelScope downloads 字段</div></div>

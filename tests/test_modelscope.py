@@ -341,6 +341,24 @@ class ProfileTests(unittest.TestCase):
         self.assertIsNone(result["downloads"])
         self.assertIsNone(result["model_count"])
 
+    def test_profile_downloads_are_validated_and_stored_independently(self):
+        for value in (0, 538776, 2**53 - 1, None, True, False, -1, 1.2, 1.0, "538776",
+                      {}, [], float("inf"), float("nan"), 2**53):
+            with self.subTest(value=value):
+                payload = profile_payload()
+                payload["Data"]["User"]["Downloads"] = value
+                account = ms.fetch_profile(AUTHOR, at(), opener=opener_for(payload))
+                expected = value if type(value) is int and 0 <= value < 2**53 else None
+                self.assertEqual(account["status"], "ok")
+                self.assertEqual(account["downloads"], expected)
+                models = [ms.api_to_model(model(), AUTHOR)]
+                history = ms.update_history(ms.empty_history(AUTHOR, at()), models, account, at())
+                snapshot = history["snapshots"][0]
+                self.assertEqual(snapshot["profile_downloads"], expected)
+                self.assertEqual(snapshot["profile_captured_at"], ms.timestamp(at()))
+                self.assertEqual(snapshot["models"], {"isLinXu/model-0": [349, 2]})
+                self.assertEqual(snapshot["followers"], 13)
+
     def test_profile_failures_are_unavailable_and_sanitized(self):
         invalid = [None, [], {}, {"Code": 200, "Success": 1},
                    {"Code": "200", "Success": True}, {"Code": 500, "Success": True},
@@ -358,19 +376,34 @@ class ProfileTests(unittest.TestCase):
 class HistoryTests(unittest.TestCase):
     def test_compact_counters_null_zero_and_same_day_replace(self):
         models = [ms.api_to_model(model(downloads=0, likes=None), AUTHOR)]
-        history = ms.update_history(ms.empty_history(AUTHOR, at()), models, 0, at())
+        account = {**profile(), "followers": 0, "downloads": 0}
+        history = ms.update_history(ms.empty_history(AUTHOR, at()), models, account, at())
         self.assertEqual(history["snapshots"], [{"date": "2026-10-21", "captured_at": ms.timestamp(at()),
-                                               "models": {"isLinXu/model-0": [0, None]}, "followers": 0}])
+                                               "models": {"isLinXu/model-0": [0, None]}, "followers": 0,
+                                               "profile_downloads": 0, "profile_captured_at": ms.timestamp(at())}])
         later = at(hour=4)
-        history = ms.update_history(history, [], None, later)
+        account = {**profile(), "followers": 14, "downloads": 42, "captured_at": ms.timestamp(at(hour=3))}
+        history = ms.update_history(history, [ms.api_to_model(model(), AUTHOR)], account, later)
+        self.assertEqual(history["snapshots"], [{"date": "2026-10-21", "captured_at": ms.timestamp(later),
+                                               "models": {"isLinXu/model-0": [349, 2]}, "followers": 14,
+                                               "profile_downloads": 42, "profile_captured_at": account["captured_at"]}])
+        history = ms.update_history(history, [], ms.unavailable_profile(), at(hour=5))
         self.assertEqual(len(history["snapshots"]), 1)
         self.assertEqual(history["snapshots"][0]["models"], {})
         self.assertIsNone(history["snapshots"][0]["followers"])
-        self.assertEqual(history["updated_at"], ms.timestamp(later))
+        self.assertIsNone(history["snapshots"][0]["profile_downloads"])
+        self.assertIsNone(history["snapshots"][0]["profile_captured_at"])
+        self.assertEqual(history["updated_at"], ms.timestamp(at(hour=5)))
+
+    def test_unavailable_profile_ignores_leftover_downloads_and_capture(self):
+        account = {**profile(), "status": "unavailable"}
+        history = ms.update_history(ms.empty_history(AUTHOR, at()), [], account, at())
+        self.assertIsNone(history["snapshots"][0]["profile_downloads"])
+        self.assertIsNone(history["snapshots"][0]["profile_captured_at"])
 
     def test_utc_day_not_local_day(self):
         local = dt.datetime.fromisoformat("2026-10-22T01:00:00+08:00")
-        history = ms.update_history(ms.empty_history(AUTHOR, local), [], None, local)
+        history = ms.update_history(ms.empty_history(AUTHOR, local), [], ms.unavailable_profile(), local)
         self.assertEqual(history["snapshots"][0]["date"], "2026-10-21")
         self.assertEqual(history["snapshots"][0]["captured_at"], "2026-10-21T17:00:00Z")
         with self.assertRaises(ValueError):
@@ -381,25 +414,25 @@ class HistoryTests(unittest.TestCase):
         start = today - dt.timedelta(days=405)
         history = ms.empty_history(AUTHOR, start)
         for offset in range(406):
-            history = ms.update_history(history, [], None, start + dt.timedelta(days=offset))
+            history = ms.update_history(history, [], ms.unavailable_profile(), start + dt.timedelta(days=offset))
         self.assertEqual(len(history["snapshots"]), 400)
         self.assertEqual(history["snapshots"][0]["date"], (today.date() - dt.timedelta(days=399)).isoformat())
         self.assertEqual(history["snapshots"][-1]["date"], today.date().isoformat())
 
     def test_history_rejects_older_day_or_same_day_timestamp(self):
-        history = ms.update_history(ms.empty_history(AUTHOR, at()), [], None, at())
+        history = ms.update_history(ms.empty_history(AUTHOR, at()), [], ms.unavailable_profile(), at())
         for earlier in (at("2026-10-20"), at(hour=1)):
             with self.subTest(earlier=earlier), self.assertRaisesRegex(ValueError, "older"):
-                ms.update_history(history, [], None, earlier)
+                ms.update_history(history, [], ms.unavailable_profile(), earlier)
 
     def test_history_checks_every_snapshot_and_updated_at(self):
-        history = ms.update_history(ms.empty_history(AUTHOR, at()), [], None, at())
+        history = ms.update_history(ms.empty_history(AUTHOR, at()), [], ms.unavailable_profile(), at())
         history["updated_at"] = ms.timestamp(at(hour=4))
         with self.assertRaisesRegex(ValueError, "older"):
-            ms.update_history(history, [], None, at(hour=3))
+            ms.update_history(history, [], ms.unavailable_profile(), at(hour=3))
         history["snapshots"].append({"date": "2026-10-20", "captured_at": ms.timestamp(at("2026-10-20")),
                                      "models": {}, "followers": None})
-        result = ms.update_history(history, [], None, at("2026-10-22"))
+        result = ms.update_history(history, [], ms.unavailable_profile(), at("2026-10-22"))
         self.assertEqual([s["date"] for s in result["snapshots"]], ["2026-10-20", "2026-10-21", "2026-10-22"])
 
 
@@ -441,6 +474,35 @@ class StorageTests(unittest.TestCase):
         snapshot = self.history()["snapshots"][0]
         self.assertEqual(len(snapshot["models"]), 309)
         self.assertEqual(snapshot["followers"], 13)
+        self.assertEqual(snapshot["profile_downloads"], 538776)
+        self.assertEqual(snapshot["profile_captured_at"], latest["profile"]["captured_at"])
+        self.assertEqual(sum(counts[0] for counts in snapshot["models"].values()), 309 * 349)
+        self.assertEqual(self.history()["schema_version"], 1)
+
+    def test_legacy_history_is_preserved_without_backfill(self):
+        self.seed(at("2026-10-20"))
+        legacy = self.history()
+        del legacy["snapshots"][0]["profile_downloads"]
+        del legacy["snapshots"][0]["profile_captured_at"]
+        original = copy.deepcopy(legacy)
+        ms.validate_history(legacy, AUTHOR)
+        self.assertEqual(legacy, original)
+        self.history_path.write_text(json.dumps(legacy, indent=4))
+        before = self.history_path.read_bytes()
+        self.assertEqual(ms.load_history(self.history_path, AUTHOR, at()), original)
+        self.assertEqual(self.history_path.read_bytes(), before)
+        account = {**profile(), "downloads": 600000, "captured_at": at(hour=1).isoformat()}
+        self.assertEqual(ms.save(self.data_dir, AUTHOR, [ms.api_to_model(model(), AUTHOR)], account, at()), "ok")
+        history = self.history()
+        self.assertEqual(history["schema_version"], 1)
+        self.assertEqual(len(history["snapshots"]), 2)
+        self.assertEqual(history["snapshots"][0], original["snapshots"][0])
+        snapshot = history["snapshots"][1]
+        self.assertEqual(snapshot["profile_downloads"], 600000)
+        self.assertEqual(snapshot["profile_captured_at"], account["captured_at"])
+        self.assertEqual(snapshot["captured_at"], ms.timestamp(at()))
+        self.assertEqual(snapshot["models"], {"isLinXu/model-0": [349, 2]})
+        self.assertEqual(snapshot["followers"], 13)
 
     def test_profile_transport_failure_preserves_good_models(self):
         self.seed(at("2026-10-20"))
@@ -453,6 +515,12 @@ class StorageTests(unittest.TestCase):
         self.assertNotIn("secret", self.latest_path.read_text())
         self.assertEqual(len(self.history()["snapshots"]), 2)
         self.assertIsNone(self.history()["snapshots"][-1]["followers"])
+        self.assertEqual(self.history()["snapshots"][0]["profile_downloads"], 538776)
+        self.assertEqual(self.history()["snapshots"][0]["profile_captured_at"], ms.timestamp(at("2026-10-20")))
+        self.assertIsNone(self.history()["snapshots"][-1]["profile_downloads"])
+        self.assertIsNone(self.history()["snapshots"][-1]["profile_captured_at"])
+        self.assertIsNone(self.latest()["profile"]["downloads"])
+        self.assertIsNone(self.latest()["profile"]["captured_at"])
 
     def test_profile_and_models_share_overall_deadline_and_opener(self):
         opener = Mock()
@@ -469,9 +537,11 @@ class StorageTests(unittest.TestCase):
         previous = self.latest()
         history_bytes = self.history_path.read_bytes()
         opener = Mock(open=Mock(side_effect=[Response(pages(51)[0]), OSError("secret")]))
-        with patch.object(ms, "anonymous_opener", return_value=opener):
+        with patch.object(ms, "anonymous_opener", return_value=opener), \
+                patch.object(ms, "atomic_json_write", wraps=ms.atomic_json_write) as write:
             self.assertEqual(ms.collect(self.data_dir, AUTHOR, at()), "stale")
         latest = self.latest()
+        write.assert_called_once_with(self.latest_path, latest)
         self.assertEqual(latest["status"], "stale")
         for key in ("models", "captured_at", "date", "profile"):
             self.assertEqual(latest[key], previous[key])
@@ -578,6 +648,36 @@ class StorageTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     ms.collect(self.data_dir, AUTHOR, at("2026-10-22"))
                 self.assertEqual(self.history_path.read_bytes(), before)
+
+    def test_invalid_profile_history_fields_block_all_writes(self):
+        self.seed()
+        original = self.history()
+        original["updated_at"] = ms.timestamp(at(hour=4))
+        latest_bytes = self.latest_path.read_bytes()
+        fields = [{"profile_downloads": value} for value in (None, 0)]
+        fields.extend({"profile_captured_at": value} for value in (None, ms.timestamp(at())))
+        fields.extend({"profile_downloads": value, "profile_captured_at": ms.timestamp(at())}
+                      for value in (True, False, -1, 1.5, 1.0, "0", [], {}, float("inf"), float("nan"), 2**53))
+        fields.extend({"profile_downloads": value, "profile_captured_at": None} for value in (0, 538776))
+        fields.extend({"profile_downloads": value, "profile_captured_at": capture}
+                      for value in (None, 0)
+                      for capture in (True, 0, [], {}, "", "invalid", "2026-02-30T00:00:00Z",
+                                      "2026-10-21T01:00:00", "2026-10-21T01:00:00+01:00",
+                                      ms.timestamp(at(hour=3))))
+        for values in fields:
+            for error in (None, "ModelScope collection failed."):
+                with self.subTest(values=values, error=error):
+                    history = copy.deepcopy(original)
+                    snapshot = history["snapshots"][0]
+                    del snapshot["profile_downloads"]
+                    del snapshot["profile_captured_at"]
+                    snapshot.update(values)
+                    self.history_path.write_text(json.dumps(history))
+                    before = self.history_path.read_bytes()
+                    with self.assertRaisesRegex(ValueError, "incompatible"):
+                        ms.save(self.data_dir, AUTHOR, [], profile(), at("2026-10-22"), error=error)
+                    self.assertEqual(self.history_path.read_bytes(), before)
+                    self.assertEqual(self.latest_path.read_bytes(), latest_bytes)
 
     def test_incompatible_latest_is_never_reused_as_stale(self):
         self.seed()

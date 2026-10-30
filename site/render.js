@@ -118,6 +118,35 @@ MO.render = (() => {
       : ' · 至少两日快照后显示下载计数净变化');
   }
 
+  function renderModelScopeProfile() {
+    const latest = data.state.modelscope || {}, profile = latest.profile;
+    const downloads = profile?.status === 'ok' ? profile.downloads : null;
+    $('statModelscopeProfileDownloads').textContent = countCN(downloads);
+    $('statModelscopeProfileDownloads').title = fmt(downloads);
+    $('statModelscopeProfileDownloadsSub').textContent = Number.isFinite(downloads)
+      ? `精确值 ${fmt(downloads)} · 公开主页 User.Downloads`
+      : '未采集到有效主页下载计数，不以模型计数替代';
+    $('modelscopeProfileCapturedAt').textContent = profile?.status === 'ok'
+      ? `主页采集于 ${timestamp(profile.captured_at)} UTC${latest.status === 'stale' ? ' · 保留上次快照' : ''}`
+      : '主页采集暂不可用；已有历史记录仍保留';
+    const delta = data.modelscopeProfileDelta();
+    $('statModelscopeProfileChange').textContent = signedCN(delta?.value);
+    $('statModelscopeProfileChange').title = signed(delta?.value);
+    $('statModelscopeProfileChange').classList.toggle('neg', Boolean(delta?.value < 0));
+    $('statModelscopeProfileChange').classList.toggle('pos', Boolean(delta?.value > 0));
+    $('statModelscopeProfileChangeSub').textContent = delta
+      ? `${delta.from} → ${delta.to} · 精确差值 ${signed(delta.value)}`
+      : '需最近两次快照均含主页下载计数；缺失时不跨记录比较';
+    const points = data.modelscopeProfileSeries();
+    charts.line($('modelscopeProfileChart'), [{ name: '主页下载计数', points, color: 'var(--chart-2)' }], {
+      area: true, label: 'ModelScope 主页下载计数历史', yFormatter: countCN,
+      emptyText: '尚无主页下载历史；从首次成功记录开始积累，旧快照不回填、不补零。'
+    });
+    $('modelscopeProfileChartNote').textContent = points.length
+      ? `${points.length} 个有效主页快照 · ${points[0].date} → ${points.at(-1).date} · 缺失记录不补零`
+      : '主页下载历史尚未开始；模型历史不作为替代';
+  }
+
   function renderModelScopeBoard() {
     const state = data.state, latest = state.modelscope || {}, totals = data.modelscopeTotals();
     const available = ['ok', 'stale'].includes(latest.status);
@@ -143,6 +172,7 @@ MO.render = (() => {
     const tasks = [...new Set((latest.models || []).flatMap(model => model.tasks))].sort();
     $('modelscopeTask').innerHTML = '<option value="all">全部任务类型</option>' + tasks.map(task => `<option value="${esc(task)}">${esc(task)}</option>`).join('');
     $('modelscopeTask').value = state.modelscopeTask;
+    renderModelScopeProfile();
     renderModelScopeChart();
     renderModelScopeTable();
   }

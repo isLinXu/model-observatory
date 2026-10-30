@@ -453,6 +453,18 @@ MO.data = (() => {
     });
   }
 
+  function modelscopeProfileSeries() {
+    return state.modelscopeSnapshots.flatMap(snapshot => msCount(snapshot.profile_downloads) === null
+      ? [] : [{ date: snapshot.date, value: snapshot.profile_downloads }]);
+  }
+
+  function modelscopeProfileDelta() {
+    const [older, newer] = state.modelscopeSnapshots.slice(-2);
+    const before = msCount(older?.profile_downloads), after = msCount(newer?.profile_downloads);
+    if (before === null || after === null) return null;
+    return { value: after - before, from: older.date, to: newer.date };
+  }
+
   function modelscopeDelta(id = null) {
     const [older, newer] = state.modelscopeSnapshots.slice(-2);
     if (!older || !newer) return null;
@@ -789,6 +801,8 @@ MO.data = (() => {
     modelscopeModels,
     modelscopeTotals,
     modelscopeSeries,
-    modelscopeDelta
+    modelscopeDelta,
+    modelscopeProfileSeries,
+    modelscopeProfileDelta
   };
 })();

@@ -1286,7 +1286,7 @@ test('ModelScope table and CSV share search/task/sort while pagination shows 20 
   assert.equal(view.element('modelscopeChartReset').disabled, true);
   await view.element('modelscopeRefresh').events.click();
   assert.equal(refreshCalls, 2);
-  assert.match(toasts.at(-1), /历史曲线和主页关注者仍来自每日快照/);
+  assert.match(toasts.at(-1), /主页下载、关注者及历史曲线仍来自每日快照/);
 });
 
 test('ModelScope board escapes names and tasks and labels saved/live/unavailable counters without invented metrics', () => {
@@ -1341,4 +1341,132 @@ test('ModelScope board escapes names and tasks and labels saved/live/unavailable
   assert.match(view.element('modelscopeChartNote').textContent, /至少两日快照/);
   assert.equal(charts.at(-1)[1][0].points.length, 0);
   assert.match(charts.at(-1)[2].emptyText, /不补造历史数据/);
+});
+
+test('ModelScope profile history skips unknown counters and never mixes model sums or table scopes', () => {
+  const data = loadData();
+  seedModelScope(data);
+  data.state.modelscopeSnapshots = [
+    { date: '2026-10-25', models: { 'isLinXu/a': [9000000, 1] } },
+    { date: '2026-10-26', profile_downloads: 0 },
+    { date: '2026-10-27', profile_downloads: null },
+    { date: '2026-10-28', profile_downloads: '123' },
+    { date: '2026-10-29', profile_downloads: 1020243 },
+    { date: '2026-10-30', profile_downloads: 1020223 }
+  ];
+  data.state.modelscopeSearch = 'no matches';
+  data.state.modelscopeTask = 'unknown';
+  data.state.modelscopeModel = 'isLinXu/a';
+  data.state.modelscopeMetric = 'likes';
+  const before = plain(data.state.modelscopeSnapshots);
+  assert.deepEqual(plain(data.modelscopeProfileSeries()), [
+    { date: '2026-10-26', value: 0 },
+    { date: '2026-10-29', value: 1020243 },
+    { date: '2026-10-30', value: 1020223 }
+  ]);
+  assert.deepEqual(plain(data.modelscopeProfileDelta()), { value: -20, from: '2026-10-29', to: '2026-10-30' });
+  assert.deepEqual(plain(data.state.modelscopeSnapshots), before);
+  for (const value of [undefined, null, '12', -1, true, NaN, Infinity, Number.MAX_SAFE_INTEGER + 1]) {
+    data.state.modelscopeSnapshots.at(-1).profile_downloads = value;
+    assert.equal(data.modelscopeProfileDelta(), null, 'never fall back to an earlier valid pair');
+    assert.equal(data.modelscopeProfileSeries().at(-1).date, '2026-10-29');
+  }
+  data.state.modelscopeSnapshots = [
+    { date: '2026-10-20', profile_downloads: 0 },
+    { date: '2026-10-30', profile_downloads: 0 }
+  ];
+  assert.deepEqual(plain(data.modelscopeProfileDelta()), { value: 0, from: '2026-10-20', to: '2026-10-30' });
+  data.state.modelscopeSnapshots[0].profile_downloads = null;
+  assert.equal(data.modelscopeProfileDelta(), null);
+  data.state.modelscopeSnapshots = [{ date: '2026-10-30', profile_downloads: 0 }];
+  assert.equal(data.modelscopeProfileDelta(), null);
+  data.state.modelscopeSnapshots = [];
+  assert.equal(data.modelscopeProfileDelta(), null);
+  assert.deepEqual(plain(data.modelscopeProfileSeries()), []);
+});
+
+test('ModelScope load and live refresh preserve profile download timestamps without backfilling old snapshots', async () => {
+  const payloads = publishedPayloads();
+  const capture = '2026-10-30T02:23:00Z';
+  payloads['./data/modelscope.json'] = modelscopeSnapshot(undefined, {
+    profile: { status: 'ok', downloads: 1020243, followers: 13, captured_at: capture }
+  });
+  payloads['./data/modelscope_history.json'] = modelscopeHistory([
+    { date: '2026-10-28', models: { 'isLinXu/saved': [999, 2] } },
+    { date: '2026-10-30', models: { 'isLinXu/saved': [1000, 3] }, profile_downloads: 1020243, profile_captured_at: capture }
+  ]);
+  const published = publishedFetch(payloads);
+  const data = loadData((url, options) => url.startsWith('https://www.modelscope.cn/openapi/')
+    ? jsonResponse(modelscopePage(1, 1)) : published(url, options));
+  await data.loadAll();
+  const profile = data.state.modelscope.profile, history = data.state.modelscopeSnapshots;
+  const before = plain(history);
+  assert.deepEqual(plain(data.modelscopeProfileSeries()), [{ date: '2026-10-30', value: 1020243 }]);
+  assert.equal(data.modelscopeProfileDelta(), null);
+  assert.equal(Object.hasOwn(history[0], 'profile_downloads'), false);
+  await data.refreshModelScope();
+  assert.equal(data.state.modelscope.profile, profile);
+  assert.equal(data.state.modelscope.profile.captured_at, capture);
+  assert.equal(data.state.modelscopeSnapshots, history);
+  assert.deepEqual(plain(history), before);
+  assert.equal(data.modelscopeProfileSeries()[0].value, 1020243);
+  assert.equal(data.modelscopeTotals().downloads.value, 0);
+});
+
+test('ModelScope profile cards and chart show independent exact counts, timestamps, zero and unavailable states', () => {
+  const data = loadData();
+  seedModelScope(data);
+  data.state.modelscope.profile = { status: 'ok', downloads: 1020243, followers: 13, captured_at: '2026-10-30T02:23:00Z' };
+  data.state.modelscopeSnapshots = [
+    { date: '2026-10-29', models: { 'isLinXu/saved': [8, 0] }, profile_downloads: 1000000 },
+    { date: '2026-10-30', models: { 'isLinXu/saved': [10, 2] }, profile_downloads: 1020243 }
+  ];
+  const view = loadModelView(data), charts = [], tones = new Set();
+  view.context.MO.charts.line = (...args) => charts.push(args);
+  view.element('statModelscopeProfileChange').classList = { toggle(name, on) { if (on) tones.add(name); else tones.delete(name); } };
+  view.render.renderModelScopeBoard();
+  assert.equal(view.element('statModelscopeProfileDownloads').textContent, '102.02万');
+  assert.equal(view.element('statModelscopeProfileDownloads').title, '1,020,243');
+  assert.match(view.element('statModelscopeProfileDownloadsSub').textContent, /1,020,243.*User.Downloads/);
+  assert.equal(view.element('statModelscopeProfileChange').title, '+20,243');
+  assert.deepEqual([...tones], ['pos']);
+  assert.match(view.element('statModelscopeProfileChangeSub').textContent, /2026-10-29 → 2026-10-30/);
+  assert.match(view.element('modelscopeProfileCapturedAt').textContent, /2026-10-30 02:23 UTC/);
+  assert.equal(view.element('statModelscopeDownloads').textContent, '10');
+  const profileChart = charts.find(call => call[0] === view.element('modelscopeProfileChart'));
+  assert.deepEqual(plain(profileChart[1][0].points), [
+    { date: '2026-10-29', value: 1000000 }, { date: '2026-10-30', value: 1020243 }
+  ]);
+  assert.match(profileChart[2].label, /主页下载/);
+  assert.match(view.element('modelscopeProfileChartNote').textContent, /2 个有效主页快照/);
+  data.state.modelscopeSource = 'live';
+  data.state.modelscope.captured_at = '2026-11-01T00:00:00Z';
+  data.state.modelscopeSearch = 'no matches';
+  data.state.modelscopeMetric = 'likes';
+  view.render.renderModelScopeBoard();
+  assert.equal(view.element('statModelscopeProfileDownloads').title, '1,020,243');
+  assert.match(view.element('modelscopeProfileCapturedAt').textContent, /2026-10-30 02:23 UTC/);
+  data.state.modelscope.profile.downloads = 0;
+  data.state.modelscopeSnapshots.at(-1).profile_downloads = 0;
+  view.render.renderModelScopeBoard();
+  assert.equal(view.element('statModelscopeProfileDownloads').textContent, '0');
+  assert.equal(view.element('statModelscopeProfileChange').title, '-1,000,000');
+  assert.deepEqual([...tones], ['neg']);
+  data.state.modelscope.status = 'stale';
+  view.render.renderModelScopeBoard();
+  assert.match(view.element('modelscopeProfileCapturedAt').textContent, /保留上次快照/);
+  data.state.modelscope.profile = { status: 'unavailable', downloads: null, captured_at: null };
+  data.state.modelscopeSnapshots.at(-1).profile_downloads = null;
+  view.render.renderModelScopeBoard();
+  assert.equal(view.element('statModelscopeProfileDownloads').textContent, '—');
+  assert.equal(view.element('statModelscopeProfileChange').textContent, '—');
+  assert.equal(tones.size, 0);
+  assert.match(view.element('modelscopeProfileCapturedAt').textContent, /暂不可用.*历史记录仍保留/);
+  assert.match(view.element('statModelscopeProfileChangeSub').textContent, /不跨记录比较/);
+  assert.equal(view.element('statModelscopeDownloads').textContent, '10');
+  data.state.modelscopeSnapshots = [{ date: '2026-10-28', models: { 'isLinXu/saved': [10, 2] } }];
+  view.render.renderModelScopeBoard();
+  const lastProfileChart = charts.filter(call => call[0] === view.element('modelscopeProfileChart')).at(-1);
+  assert.equal(lastProfileChart[1][0].points.length, 0);
+  assert.match(lastProfileChart[2].emptyText, /旧快照不回填、不补零/);
 });

@@ -67,7 +67,7 @@
     button.textContent = '读取公开清单…';
     try {
       await data.refreshModelScope();
-      if (manual) render.showToast('ModelScope 公开清单已刷新；历史曲线和主页关注者仍来自每日快照。');
+      if (manual) render.showToast('ModelScope 公开清单已刷新；主页下载、关注者及历史曲线仍来自每日快照。');
     } catch (error) {
       if (manual) render.showToast(`ModelScope 刷新失败：${error.message}。保留上次数据。`);
     } finally {

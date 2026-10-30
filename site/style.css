@@ -552,6 +552,9 @@ select { height: 40px; background: var(--input-bg); border: 1px solid var(--inpu
 .collection-card-foot > span { color: var(--muted-2); font-size: 10px; }
 .collection-card-foot button { flex: none; }
 .collection-note { margin: 0 0 18px; color: var(--muted); font-size: 12px; line-height: 1.8; }
+.modelscope-profile { display: grid; grid-template-columns: minmax(230px, .85fr) minmax(0, 2fr); gap: var(--gap); margin-bottom: 18px; }
+.modelscope-profile-stats { display: grid; gap: var(--gap); min-width: 0; }
+.modelscope-profile .kpi-caption { overflow-wrap: anywhere; }
 .modelscope-method { margin-top: 18px; }
 .modelscope-table td:first-child { min-width: 230px; max-width: 350px; white-space: normal; overflow-wrap: anywhere; }
 .modelscope-table .model-link { white-space: normal; text-align: left; }
@@ -685,6 +688,8 @@ select { height: 40px; background: var(--input-bg); border: 1px solid var(--inpu
 
 @media (max-width: 960px) {
   .dashboard-grid { grid-template-columns: 1fr; }
+  .modelscope-profile { grid-template-columns: 1fr; }
+  .modelscope-profile-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .top-models { display: grid; grid-template-columns: 1fr 1fr; column-gap: 20px; min-height: 180px; }
   .top-item { margin-bottom: 14px; }
   .kpis { grid-template-columns: repeat(2, minmax(0, 1fr)); }
