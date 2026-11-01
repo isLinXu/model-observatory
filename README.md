@@ -1,8 +1,8 @@
 # Model Observatory · @gatilin
 
-一个**直接托管到 GitHub Pages** 的 Hugging Face 模型与数据集下载统计看板，并附带类 Google Scholar 的公开学术档案板块、社交平台粉丝数板块、GitHub 账号/仓库看板、ModelScope 模型计数板块与顶会投稿截止看板。静态前端，无后端服务器和前端密钥；页面打开时会通过 Hugging Face 公共 API 自动分页读取最新公开模型清单，新上传模型无需等待每日采集即可出现；GitHub Actions 每日自动抓取你的 **全部公开模型与数据集**、**公开 Google Scholar 档案**、**各平台公开粉丝数**、**GitHub 账号与公开仓库**、**ModelScope 公开模型计数**与**顶会截止时间目录**并提交历史 JSON，同时重新部署网站。
+一个**直接托管到 GitHub Pages** 的 Hugging Face 模型与数据集下载统计看板，并附带类 Google Scholar 的公开学术档案板块、社交平台粉丝数板块、GitHub 账号/仓库看板、ModelScope 模型计数板块、顶会投稿截止看板与 GitHub 星星墙。静态前端，无后端服务器和前端密钥；页面打开时会通过 Hugging Face 公共 API 自动分页读取最新公开模型清单，新上传模型无需等待每日采集即可出现；GitHub Actions 每日自动抓取你的 **全部公开模型与数据集**、**公开 Google Scholar 档案**、**各平台公开粉丝数**、**GitHub 账号与公开仓库**、**ModelScope 公开模型计数**、**顶会截止时间目录**与**全部公开 star 的仓库**并提交历史 JSON，同时重新部署网站。
 
-支持：模型排行、单模型详情、总体趋势、最近 30 天活跃下载、历史累计、相邻快照净变化、7/30 日净变化、统计下调异常标记、3 模型对比、搜索和 CSV / JSON 导出；数据集板块与模型完全同口径；学术主页展示引用总数、h-index、i10-index、逐年引用分布、每日引用快照与论文列表；社交媒体板块展示各平台粉丝数、平台筛选、时间范围筛选与卡片/表格双视图；GitHub 看板展示粉丝历史趋势、增长量与增长率，以及仓库的名称 / Star / Fork / 语言 / 最近更新时间，支持搜索、排序、语言筛选、**仅自有 / 含 Fork 口径切换**、分页与一键跳转，并可导出 CSV；ModelScope 看板展示匿名公开接口可见的模型下载计数、点赞与逐日快照趋势；**顶会投稿截止看板**把 CCF-Deadlines 目录展开成截止时间线，可按领域 / CCF 等级 / 截止类型 / 时间窗口筛选、倒计时、分页与导出 CSV。界面支持**明暗双主题**，默认跟随系统偏好。首次采集仅有当天数据，不伪造历史走势。
+支持：模型排行、单模型详情、总体趋势、最近 30 天活跃下载、历史累计、相邻快照净变化、7/30 日净变、统计下调异常标记、3 模型对比、搜索和 CSV / JSON 导出；数据集板块与模型完全同口径；学术主页展示引用总数、h-index、i10-index、逐年引用分布、每日引用快照与论文列表；社交媒体板块展示各平台粉丝数、平台筛选、时间范围筛选与卡片/表格双视图；GitHub 看板展示粉丝历史趋势、增长量与增长率，以及仓库的名称 / Star / Fork / 语言 / 最近更新时间，支持搜索、排序、语言筛选、**仅自有 / 含 Fork 口径切换**、分页与一键跳转，并可导出 CSV；ModelScope 看板展示匿名公开接口可见的模型下载计数、点赞与逐日快照趋势；**顶会投稿截止看板**把 CCF-Deadlines 目录展开成截止时间线，可按领域 / CCF 等级 / 截止类型 / 时间窗口筛选、倒计时、分页与导出 CSV；**星星墙**把全部 star 的仓库画成一格一仓库的方块墙，配聚类关系图、图例与明细清单，可按聚类 / 语言 / 主题 / 状态筛选、排序、分页与导出 CSV。界面支持**明暗双主题**，默认跟随系统偏好。首次采集仅有当天数据，不伪造历史走势。
 
 **所有实体都带 `url` 字段**：模型、数据集、论文、仓库、项目与会议届次在列表中点击名称即可在新标签页打开原始页面；链接缺失时优雅降级为纯文本，不产生死链。
 
@@ -53,6 +53,8 @@ Hugging Face API 读取 @gatilin 全部公开模型与数据集
                 +
 抓取 CCF-Deadlines 会议目录并把截止时间归一为 UTC（失败不影响其余流程）
                 +
+分页读取账号全部公开 star 的仓库并聚合为聚类图（需要仓库令牌，失败不影响其余流程）
+                +
 索引 templates/ 下的 Skill 与 Prompt 模版（只读仓库，不访问网络）
                 ↓
 更新 data/latest.json、data/history.json、
@@ -61,6 +63,7 @@ data/social.json、data/social_history.json、
 data/github.json、data/github_history.json、
 data/modelscope.json、data/modelscope_history.json、
 data/conferences.json、
+data/stars.json、data/stars_repos.json、data/stars_history.json、
 data/templates.json、data/templates_history.json
                 ↓
 自动提交历史快照到 main
@@ -348,6 +351,65 @@ python scripts/build.py && python scripts/serve.py --port 8080
 
 口径提醒：同一会议的多轮次与多类截止**不能相加**为「投稿次数」；倒计时以浏览器当前时间对比快照中的 UTC 时刻，快照本身是每日一份；目录由社区维护，可能与官网不同步，**投稿前以会议官网为准**。第三方的会议名、地点、备注都是不可信文本，渲染时统一转义，导出时对以 `=`、`+`、`-`、`@` 开头的单元格加前置单引号，避免被电子表格当作公式执行。
 
+## GitHub 星星墙与聚类知识图谱：数据来源与口径
+
+「星星墙」栏目把 `isLinXu` 的公开 star 列表画成**一格一仓库**的方块墙，并用语言 / 主题 / 账户三类聚类节点及其共现关系构成知识图谱，由 `scripts/collect_starred.py` 采集。一次运行产出三个文件，浏览器按需下载：
+
+| 文件 | 内容 | 页面何时读取 |
+| --- | --- | --- |
+| `data/stars.json` | 聚合快照：计数、聚类节点、共现边、与上次采集的差异 | 首屏，与其它看板一起 |
+| `data/stars_repos.json` | 每仓库一行的明细（10 个紧凑字段），全站最大的单个文件 | **进入本节视口才拉取**，另留手动加载 / 重试按钮 |
+| `data/stars_history.json` | 逐日的 star 总数与结构计数 | 页面不请求，供离线分析 |
+
+拆成两份的原因是墙、清单与 CSV 需要逐仓库数据，而 KPI、聚类下拉与关系图只需要聚合结果，首屏因此不必下载最大的文件。明细读取失败时看板会明说「指标与图谱仍来自快照」，而不是把两个来源混成一个数字。
+
+### 只用仓库令牌，不读 starred_at
+
+- 一次采集＝每 100 个 star 一次请求（页数上限 80 页，即 8,000 个仓库）。匿名 REST 只有 60 次/小时，而同一次工作流里 GitHub 仓库看板已消耗了部分额度，所以这一步显式注入 workflow 自带的 `secrets.GITHUB_TOKEN`（认证后 5,000 次/小时）。
+- **不需要、也不会请求任何个人 PAT**：`starred_at`（哪个仓库是哪天 star 的）只有账户自身的 OAuth 令牌才返回。本站只读公开元数据，所以墙上没有「star 日期」这一列，页面写的是「取消 star 会体现在次日快照中」。
+- 没有令牌时采集器直接发布 `status: unavailable` 并说明原因。发布出去的三个文件里不会出现令牌、URL 或响应原文：失败原因统一成 5 条固定文案（`token` / `count` / `empty` / `pages` / `schema`），其余异常只归为「无法访问 GitHub API」或「GitHub 返回 HTTP 状态码」，回归测试对此有断言。
+- 解析出的仓库数与 GitHub 在 `Link` 头里公布的分页总数比对，偏差超过 `max(10, 1%)` 就判定列表在翻页期间变了样，保留上次快照并标记 `stale`，不发布半个列表。
+
+### 一个仓库只归入一个聚类
+
+明细行按 **语言 → 足够热门的主题 → 足够热门的账户 → `lang:未知`** 的顺序取第一个可用节点（`primary_node`），因此：
+
+- 各聚类的**仓库数可以相加**，相加等于 star 仓库总数；
+- 节点的「出现次数」（`appears`，同一仓库会在多个维度上出现）**不能相加**；
+- 节点规模有上限：语言全收录（名称最长 40 字符），主题取前 120 个且至少 8 个仓库，账户取前 60 个且至少 3 个仓库；每个节点另附最多 8 个代表仓库；共现边要求两端至少有 5 个共同仓库，最多发布 600 条。
+
+图谱要在一屏内可读，前端再按每环节点预算取前 10 个语言 / 22 个主题 / 10 个账户，连线最多画 120 条，并在图注里如实说明「多少个较小聚类未绘出、多少条关系因另一端未入选而省略」。
+
+### 明细行的字段压缩
+
+`stars_repos.json` 每行是 `{n, l, t, s, d, p, f, r, o, c}`：仓库名、语言、主题（最多 6 个）、star 数、描述（截断 120 字符）、最近推送日期、是否 fork、是否归档、所有者是否组织、采集端分配的聚类 ID。`null` 与 `0` 严格区分：star 数未知显示 `—`；`o: null` 表示 GitHub 未给出 `owner.type`，不冒充「个人」。聚类 ID 由采集端下发而不是前端重算，避免两处阈值走偏。仓库链接由前端按名称拼成 `https://github.com/<owner>/<repo>`，明细里不重复存 url。
+
+### 采集失败时的行为
+
+| 情况 | 行为 |
+| --- | --- |
+| 未配置令牌 | 直接发布 `unavailable` 空壳并写入固定原因，即使本地已有快照也不复用——墙与图谱没有可核对的来源 |
+| 401 / 403 / 429 / 网络与超时 / 单页格式异常 | 保留上次快照，`status` 置 `stale`（没有历史时同样写 `unavailable` 空壳），原因写入 `error` |
+| 结构非法、空列表、超出页数上限、总数与实际解析数量不符 | 整次采集判定失败（同上），**不做部分写入** |
+| 单条记录名称 / 日期 / 链接非法、语言或描述超长、含控制字符、`owner.login` 与仓库标识不一致 | 跳过或截断问题字段并记入 `warnings`（去重、上限 100 条 + 一条「更多告警已省略」哨兵），其余正常发布 |
+| 采集时间早于已有快照 | 拒绝写入，防止旧数据覆盖新数据 |
+| 快照缺失、`schema_version` 或 `source.id` 不认识 | 前端仅本栏目降级为「star 数据暂不可用」，其它板块照常加载 |
+| 明细读取失败（404 / 超时 / 行格式不完整） | 墙、清单与 CSV 显示失败原因并提供重试按钮，KPI 与关系图继续由快照供数 |
+
+`captured_at` 只在成功时更新，`last_attempt_at` 每次运行都更新，看板据此区分「数据变旧」与「采集一直没跑成」，并单独显示「最近读取快照」的时间——页面上的刷新按钮只读线上已发布的 JSON，不触发采集。工作流另有一步报告三个文件的字节数，`stars.json` 超 150 KB 或 `stars_repos.json` 超 3 MB 时发出 warning，提示去收紧聚类预算或给墙加分页。
+
+### 看板功能
+
+- **KPI**：star 仓库总数、90 天内有推送的占比、聚类数、归档 + fork 数四项全部来自聚合快照，明细加载与否都不会改变；副标题给出语言 / 主题 / 所有者数量与特殊状态明细。
+- **星星墙**：一个 SVG、一格一仓库、行优先密排；格子大小是 star 数的对数映射，颜色按聚类分段（图例给出名称与数量），悬停读出仓库名 / star / 语言 / 归属聚类，点击格子或图例即按该聚类筛选，再点一次取消。明细尚未加载时如实写「滚动到本节会自动读取，也可以手动加载」。
+- **聚类关系图**：内环语言、中环主题、外环账户；节点大小随归属仓库数，连线粗细与亮度随共同 star 的仓库数，点击节点同样落到筛选；图注说明被每节预算挡在外面的聚类数与省略的关系数。
+- **明细清单**：每页 24 条、7 列（仓库 / 归属聚类 / 语言 / 主题 / star / 最近推送 / 状态标记），聚类与主题 chip 可点选；搜索覆盖仓库名、描述与主题，另可按语言、主题、状态（90 天内有推送 / 已归档 / fork / 无描述）筛选，按 star、最近推送或仓库名排序。
+- **CSV 导出**：导出当前筛选结果而不是当前页，17 列同时给出 `cluster_id` / `cluster_type` / `cluster_label` 与快照、明细两个采集时间。
+- **两个手动按钮**：「刷新已发布快照」只重读 `data/stars.json`，「加载 / 重新加载 / 重试 star 明细」强制重读 `data/stars_repos.json`；两者都不触发采集，采集时间一律以文件里的 `captured_at` 为准。
+
+口径提醒：star 数是仓库当前的公开计数，与「谁 star 了本账号」无关；`counts.total` 是 star 的仓库数，而账号主页的 `public_repos` 是**拥有**的仓库数，两者不可互换；墙上格子的大小只是 star 数的对数映射，不构成第三种指标。第三方文本（仓库名、描述、主题）渲染时统一转义，链接只接受 `https://github.com/<owner>/<repo>` 形态，CSV 导出对以 `=`、`+`、`-`、`@` 开头的单元格加前置单引号。
+
+
 ## 历史快照的保留策略
 
 每日快照会随时间线性增长，若不做处理，`data/history.json`（139 个模型 × 每日）一年后可达数 MB，且首屏每次都要全量下载。因此采集器在写入时做**分级留存**：
@@ -360,6 +422,8 @@ python scripts/build.py && python scripts/serve.py --port 8080
 | `data/modelscope_history.json` | 保留最近 400 天 | 不做周聚合：ModelScope 计数按快照整条存储，漏采的日期不补点 |
 | `data/templates_history.json` | 保留最近 1100 天 | 每天只有几个整数 |
 | `data/conferences.json` | 只保留当前快照（约 1.4 MB） | 截止时间不是可累加指标，逐日历史没有意义，变化量由 `changes` 差异代替 |
+| `data/stars.json` / `data/stars_repos.json` | 只保留当前快照 | 墙需要的是「此刻 star 了哪些仓库」，逐日重复整份明细只会拖慢首屏；变化量同样由 `changes` 差异给出 |
+| `data/stars_history.json` | 保留最近 1100 天 | 每天只有 star 总数与几个结构计数，体积可忽略；页面本身不请求它 |
 
 周桶以该周**最后一天**为日期戳，并丢弃跨越保留边界的桶，保证日期序列严格递增且不与日粒度段重叠。历史文件的读取端无需改动——旧快照与周桶都是相同的 `{id: [累计, 滚动30天]}` 结构。
 
@@ -376,6 +440,7 @@ python scripts/build.py && python scripts/serve.py --port 8080
 | 项目 | `data/github.json` → `projects.items[]` | `url` | GitHub Projects 页面地址 | 可选，缺失为 `null` |
 | 模版 | `data/templates.json` → `templates[]` | `url` | 仓库内 Markdown 源文件地址 | 必填，由 `path` 生成 |
 | 会议届次 | `data/conferences.json` → `conferences[].editions[]` | `url` | 会议官网页面（`https?` 且长度 ≤2048 才保留） | 可选，缺失为 `null` |
+| star 的仓库 | **不存 url** | — | 前端按明细的 `n` 拼成 `https://github.com/<owner>/<repo>` | 名称已在采集端按同一形态校验，因此链接必然有效 |
 
 约定细节：
 
@@ -418,6 +483,9 @@ python scripts/collect_templates.py
 # 顶会截止时间：匿名读取 ccfddl.com 的聚合 JSON，访问网络但不需要凭据
 python scripts/collect_conferences.py
 
+# 星星墙：分页读取账号全部公开 star；每 100 个仓库一次请求，匿名额度不够，需要仓库令牌
+GITHUB_TOKEN=$GITHUB_TOKEN python scripts/collect_starred.py --login isLinXu
+
 # 构建静态站点并启动本地预览
 python scripts/build.py
 python scripts/serve.py --port 8080
@@ -442,7 +510,7 @@ PYTHONPATH=. python -m unittest discover -s tests
 node --test tests/test_frontend.js
 ```
 
-Python 套件覆盖数据集转换、历史迁移、url 字段生成、Scholar 解析、社交配置校验、各平台降级路径与小红书状态解析、GitHub 仓库转换与降级逻辑，以及会议目录的时区归一（`AoE` / `PT` / 固定偏移）、TBD 与「无法解析」的区分、逐条校验与告警上限、差异计算和失败保旧快照。Node.js 套件覆盖社交净增基线、缺失平台处理、趋势范围、辅助数据加载隔离，以及顶会看板的窗口筛选与排序、统计口径、来源校验降级、倒计时渲染转义和 CSV 公式防护；全部离线运行，不访问网络。
+Python 套件覆盖数据集转换、历史迁移、url 字段生成、Scholar 解析、社交配置校验、各平台降级路径与小红书状态解析、GitHub 仓库转换与降级逻辑、会议目录的时区归一（`AoE` / `PT` / 固定偏移）、TBD 与「无法解析」的区分、逐条校验与告警上限、差异计算和失败保旧快照，以及 star 列表的分页聚合、单仓库唯一聚类归属、共现权重与页数上限；Node.js 套件覆盖社交净增基线、缺失平台处理、趋势范围、辅助数据加载隔离，顶会看板的窗口筛选与排序、统计口径、来源校验降级、倒计时渲染转义和 CSV 公式防护，以及星星墙的**首屏不下载明细**、明细单飞与强制重试、快照校验降级、墙的一聚类一段、图环节点预算、渲染转义与 CSV 公式防护；全部离线运行，不访问网络。
 
 `data/latest.json` 保存最新模型与数据集清单及对应数值，`data/history.json` 保存逐日快照。历史格式：
 
@@ -539,6 +607,7 @@ scripts/collect_github.py      # GitHub 账号指标、公开仓库分页与 Pro
 scripts/collect_modelscope.py  # ModelScope 匿名 OpenAPI 模型计数与逐日快照
 scripts/collect_templates.py   # 索引 templates/ 下的 Skill 与 Prompt 模版（只读本地）
 scripts/collect_conferences.py # 抓取 CCF-Deadlines 目录并把截止时间归一为 UTC
+scripts/collect_starred.py     # 分页读取账号全部公开 star，聚合为聚类图与仓库明细
 scripts/build.py              # 组装纯静态站点
 scripts/serve.py              # 本地预览用多线程静态服务器
 templates/skills/<slug>.md    # Skill 定义（frontmatter + 正文）
@@ -567,12 +636,16 @@ data/modelscope_history.json  # 逐日 ModelScope 计数快照
 data/templates.json           # 最新模版索引（含完整正文）
 data/templates_history.json   # 逐日模版数量快照
 data/conferences.json         # 当前会议目录（含归一化后的 UTC 截止时间，无历史文件）
+data/stars.json               # star 聚合快照（计数、聚类节点、共现边、差异），首屏读取
+data/stars_repos.json         # 一格一仓库的明细，进入星星墙视口才读取
+data/stars_history.json       # 逐日 star 总数与结构计数
 tests/test_collect.py         # 离线测试（数据集 + url 字段 + 档案解析）
 tests/test_social.py          # 离线测试（社交配置、降级、小红书解析）
 tests/test_github.py          # 离线测试（仓库转换、历史、降级）
 tests/test_modelscope.py      # 离线测试（OpenAPI 转换、身份校验、分页与降级）
 tests/test_templates.py       # 离线测试（frontmatter 解析、标签归一、索引与降级）
 tests/test_conferences.py     # 离线测试（时区归一、事件展开、差异比对、失败保旧快照）
+tests/test_starred.py         # 离线测试（star 分页聚合、聚类归属、共现与告警、失败保旧快照）
 tests/test_frontend.js        # 前端派生指标与辅助数据加载回归测试
 tests/fixtures/               # 离线测试用的真实页面片段
 ```
@@ -591,6 +664,6 @@ tests/fixtures/               # 离线测试用的真实页面片段
 - 学术档案依赖 Google Scholar 的公开页面：若被验证码拦截，采集会跳过并保留上一次成功的快照，网站仍可正常展示下载统计。不要提高抓取频率，工作流每日一次即可。
 - 知乎与小红书需要登录态，请把 Cookie 存在**仓库 Secret**（`ZHIHU_COOKIE` / `XIAOHONGSHU_COOKIE`）而不是提交进代码库。Cookie 会过期，属于正常现象：过期后该平台显示为「暂不可用」并保留上次数据，其它平台不受影响。
 - 社交平台的粉丝数会随平台自身的风控与统计口径变化，与下载统计一样，负向跳变会被保留并标记为待核查，而不是被静默抹平。
-- GitHub 匿名 REST 有 60 次/小时的 IP 限速。仓库数量多时（>1000）建议配置 `GITHUB_TOKEN`；触发限速时采集器会自动退避重试，仍失败则保留上次快照并在页面提示。
+- GitHub 匿名 REST 有 60 次/小时的 IP 限速。仓库数量多时（>1000）建议配置 `GITHUB_TOKEN`；触发限速时采集器会自动退避重试，仍失败则保留上次快照并在页面提示。星星墙采集是例外：一次运行需要几十个分页请求，**必须**依赖工作流自带的 `secrets.GITHUB_TOKEN`（无需任何个人 PAT），本地手动运行时也要为该次命令导出 `GITHUB_TOKEN`，否则只发布 `unavailable` 快照。
 
 **官方文档**：[HF Hub HfApi.list_models](https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api) · [GitHub Pages 自定义 Actions](https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages)
