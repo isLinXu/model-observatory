@@ -2459,7 +2459,10 @@ test('the star board separates snapshot metrics from detail rows and escapes eve
   const data = loadData(undefined, { Date: clock.Date });
   data.state.stars = starSnapshot([
     starCluster('lang:Python', 'language', 'Python', 2),
-    starCluster('topic:llm', 'topic', '<i>LLM</i>', 1)
+    starCluster('topic:llm', 'topic', '<i>LLM</i>', 1),
+    // The collector also publishes nodes that a repository never lands on as its
+    // primary cluster; drawing or counting them would restate the KPI.
+    starCluster('owner:nobody', 'owner', 'nobody', 0)
   ], { edges: [{ a: 'lang:Python', b: 'topic:llm', w: 1 }] });
   data.state.starDetail = starDetail([
     starRow('a/fresh', { s: 500 }),
@@ -2498,6 +2501,13 @@ test('the star board separates snapshot metrics from detail rows and escapes eve
     total: '3', sub: '1 种语言 · 1 个主题 · 2 个所有者', active: '66.7%',
     activeSub: '90 天内有推送 2 / 3 个仓库', clusters: '2', special: '0'
   });
+
+  // A node that owns no repository is not a filter choice, and the board states
+  // one cluster count wherever it appears rather than 2 in one line and 3 in another.
+  const clusterOptions = view.element('starCluster').innerHTML;
+  assert.doesNotMatch(clusterOptions, /owner:nobody/);
+  assert.match(clusterOptions, /value="topic:llm"/);
+  assert.doesNotMatch(view.element('starDetailNote').textContent, /3 个聚类节点/);
 
   const wall = view.chartCalls.filter(call => call.name === 'starWall').at(-1);
   assert.equal(wall.node, view.element('starWall'));

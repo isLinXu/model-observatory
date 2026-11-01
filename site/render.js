@@ -383,7 +383,7 @@ MO.render = (() => {
       : detailStatus === 'loading' ? '正在读取 star 明细…'
         : detailStatus === 'error' ? `${state.starDetailError}；指标与图谱仍来自快照。`
           : 'star 明细尚未加载：滚动到本节会自动读取，也可以手动加载。') +
-      `${detailStatus === 'ready' ? ` · 墙、清单与 CSV 来自明细，KPI 与关系图来自 ${fmt((snapshot.clusters || []).length)} 个聚类节点的快照` : ''}`;
+      `${detailStatus === 'ready' ? ` · 墙、清单与 CSV 来自明细，KPI 与关系图来自 ${fmt(stats.clusters)} 个聚类节点的快照` : ''}`;
     $('starDetailNote').classList.toggle('neg', detailStatus === 'error');
     $('starSnapshotCheckedAt').textContent = `${state.starSnapshotCheckedAt
       ? `最近成功读取快照 ${timestamp(state.starSnapshotCheckedAt)} UTC` : '尚未成功读取快照'} · 采集由每日工作流完成`;
