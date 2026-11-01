@@ -83,6 +83,35 @@ jobs:
         continue-on-error: true
         run: python scripts/collect_modelscope.py --author isLinXu
 
+      # One request per 100 starred repositories, so this crawl needs the
+      # repository token: the anonymous budget is 60 requests per hour and the
+      # GitHub collector above already spends part of it in the same run.
+      # Without a token the collector publishes an "unavailable" snapshot.
+      - name: Capture starred repository graph
+        continue-on-error: true
+        env:
+          GITHUB_LOGIN: isLinXu
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/collect_starred.py --login "$GITHUB_LOGIN" --data-dir data
+
+      # The star detail file is fetched lazily by the wall and is also kept in
+      # git history, so growth is reported instead of silently accepted.
+      - name: Report star snapshot sizes
+        shell: bash
+        run: |
+          for name in stars stars_repos stars_history; do
+            file="data/${name}.json"
+            if [ -f "$file" ]; then
+              echo "${name}: $(wc -c <"$file") bytes"
+            fi
+          done
+          if [ -f data/stars.json ] && [ "$(wc -c <data/stars.json)" -gt 153600 ]; then
+            echo "::warning::data/stars.json is over 150 KB; review the cluster budgets in scripts/collect_starred.py"
+          fi
+          if [ -f data/stars_repos.json ] && [ "$(wc -c <data/stars_repos.json)" -gt 3145728 ]; then
+            echo "::warning::data/stars_repos.json is over 3 MB; the star wall needs paging or a slimmer row"
+          fi
+
       # The conference feed is third-party data: a downtime or format change
       # must not block the download boards. The collector keeps the last good
       # snapshot and marks it stale, so failures stay visible on the site.
@@ -105,7 +134,8 @@ jobs:
           # the files that exist; the build treats the same files as optional.
           for snapshot in latest history scholar scholar_history social social_history \
                           github github_history templates templates_history \
-                          modelscope modelscope_history conferences; do
+                          modelscope modelscope_history conferences \
+                          stars stars_repos stars_history; do
             [ -f "data/${snapshot}.json" ] && git add "data/${snapshot}.json"
           done
           if ! git diff --cached --quiet; then

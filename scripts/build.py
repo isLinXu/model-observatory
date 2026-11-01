@@ -22,11 +22,12 @@ def build():
             raise FileNotFoundError(f"{src} missing: run python scripts/collect.py first")
         shutil.copy2(src, data_dir / filename)
     # Secondary panels (academic, social, GitHub, templates, ModelScope,
-    # conferences) are optional: the site degrades gracefully when any of
-    # them is absent.
+    # conferences, stars) are optional: the site degrades gracefully when any
+    # of them is absent.
     for filename in ["scholar.json", "scholar_history.json", "social.json", "social_history.json",
                      "github.json", "github_history.json", "templates.json", "templates_history.json",
-                     "modelscope.json", "modelscope_history.json", "conferences.json"]:
+                     "modelscope.json", "modelscope_history.json", "conferences.json",
+                     "stars.json", "stars_repos.json", "stars_history.json"]:
         src = ROOT / "data" / filename
         if src.is_file():
             shutil.copy2(src, data_dir / filename)
