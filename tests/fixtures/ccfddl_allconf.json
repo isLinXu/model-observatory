@@ -1,0 +1,187 @@
+[
+  {
+    "conference_key": "AI/cvpr",
+    "title": "CVPR",
+    "description": "IEEE/CVF Conference on Computer Vision and Pattern Recognition",
+    "sub": "AI",
+    "rank": { "ccf": "A", "core": "A*", "thcpl": "A" },
+    "dblp": "cvpr",
+    "confs": [
+      {
+        "year": 2026,
+        "id": "cvpr26",
+        "link": "https://cvpr.thecvf.com/Conferences/2026",
+        "timeline": [
+          {
+            "abstract_deadline": "2025-11-07 23:59:59",
+            "deadline": "2025-11-13 23:59:59",
+            "comment": "Main track"
+          },
+          {
+            "deadline": "TBD",
+            "comment": "Second round"
+          }
+        ],
+        "timezone": "AoE",
+        "date": "June 2026",
+        "place": "Seattle, USA",
+        "opening": "2026-06-01 08:00:00",
+        "opening_is_derived": true
+      },
+      {
+        "year": 2027,
+        "id": "cvpr27",
+        "link": "https://cvpr.thecvf.com/Conferences/2027",
+        "timeline": [
+          {
+            "abstract_deadline": "2026-11-06 23:59:59",
+            "deadline": "2026-11-13 23:59:59",
+            "comment": "Main track"
+          }
+        ],
+        "timezone": "PT",
+        "date": "June 2027",
+        "place": "TBD"
+      }
+    ]
+  },
+  {
+    "conference_key": "AI/aaai",
+    "title": "AAAI",
+    "description": "AAAI Conference on Artificial Intelligence",
+    "sub": "AI",
+    "rank": { "ccf": "A", "core": "A*", "thcpl": "A" },
+    "dblp": "aaai",
+    "confs": [
+      {
+        "year": 2026,
+        "id": "aaai26",
+        "link": "https://aaai.org/conference/aaai/aaai-26/",
+        "timeline": [
+          {
+            "abstract_deadline": "2026-08-01 23:59:59",
+            "deadline": "2026-08-15 23:59:59",
+            "comment": "Regular"
+          },
+          {
+            "deadline": "2026-09-15 23:59:59",
+            "comment": "Fast track"
+          }
+        ],
+        "timezone": "UTC-12",
+        "date": "February 2026",
+        "place": "Philadelphia, USA"
+      }
+    ]
+  },
+  {
+    "conference_key": "SC/sec",
+    "title": "SEC",
+    "description": "ACM Conference on Security",
+    "sub": "SC",
+    "rank": { "ccf": "A", "core": "A", "thcpl": null },
+    "dblp": "sec",
+    "confs": [
+      {
+        "year": 2027,
+        "id": "sec27",
+        "link": "https://example.org/sec-2027",
+        "timeline": [
+          {
+            "abstract_deadline": "2027-01-08 23:59:59",
+            "deadline": "2027-01-15 23:59:59",
+            "comment": "Cycle 1"
+          }
+        ],
+        "timezone": "UTC+8",
+        "date": "June 2027",
+        "place": "Singapore"
+      }
+    ]
+  },
+  {
+    "conference_key": "SE/sec",
+    "title": "SEC",
+    "description": "Duplicate title, different identity",
+    "sub": "SE",
+    "rank": { "ccf": "B", "core": null, "thcpl": null },
+    "dblp": "sec-se",
+    "confs": [
+      {
+        "year": 2027,
+        "id": "sec'27",
+        "link": "http://example.org/sec-se-2027",
+        "timeline": [
+          {
+            "deadline": "2026-12-01 23:59:59",
+            "comment": "Cycle 2"
+          }
+        ],
+        "timezone": "UTC-5",
+        "date": "December 2027",
+        "place": "Virtual"
+      }
+    ]
+  },
+  {
+    "conference_key": "SC/ih&mmsec",
+    "title": "IH&MMSec",
+    "description": "Information Hiding and Multimedia Security",
+    "sub": "SC",
+    "rank": { "ccf": "C", "core": "B", "thcpl": null },
+    "dblp": "ihmmsec",
+    "confs": [
+      {
+        "year": 2027,
+        "id": "ihmmsec27",
+        "link": "javascript:alert(1)",
+        "timeline": [
+          {
+            "deadline": "2027-02-01 23:59:59",
+            "comment": "Main"
+          },
+          {
+            "deadline": "TBD",
+            "comment": "Second"
+          },
+          {
+            "abstract_deadline": "not-a-date",
+            "comment": "Broken"
+          }
+        ],
+        "timezone": "Mars/Olympus",
+        "date": "June 2027",
+        "place": null
+      }
+    ]
+  },
+  {
+    "conference_key": "DB/vldb",
+    "title": "VLDB",
+    "description": "International Conference on Very Large Data Bases",
+    "sub": "DB",
+    "rank": { "ccf": "A", "core": "A*", "thcpl": "A" },
+    "dblp": "vldb",
+    "confs": [
+      {
+        "year": 2026,
+        "id": "vldb26",
+        "link": "https://vldb.org/2026/",
+        "timeline": [
+          {
+            "deadline": "2026-10-15 23:59:59",
+            "comment": "Research track"
+          },
+          {
+            "rebuttal_deadline": "2026-12-01 23:59:59",
+            "decision_deadline": "2027-01-15 23:59:59",
+            "comment": "Review cycle"
+          }
+        ],
+        "timezone": "UTC",
+        "date": "August 2026",
+        "place": "TBD"
+      }
+    ]
+  }
+]
