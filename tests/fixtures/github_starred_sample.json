@@ -1,0 +1,462 @@
+[
+ {
+  "archived": true,
+  "description": "Unofficial source-oriented reconstruction and extension of Grok Bot 0.18.0 for macOS",
+  "fork": false,
+  "full_name": "b-nnett/grok-bot-0.18-reconstructed",
+  "html_url": "https://github.com/b-nnett/grok-bot-0.18-reconstructed",
+  "language": "TypeScript",
+  "owner": {
+   "login": "b-nnett",
+   "type": "User"
+  },
+  "pushed_at": "2026-08-23T20:53:35Z",
+  "stargazers_count": 3544,
+  "topics": []
+ },
+ {
+  "archived": false,
+  "description": "Cross-Architecture Merging for Large Language Models",
+  "fork": false,
+  "full_name": "chenhangcuisg-code/Cross-Architecture-Merging-for-Large-Language-Models",
+  "html_url": "https://github.com/chenhangcuisg-code/Cross-Architecture-Merging-for-Large-Language-Models",
+  "language": "Python",
+  "owner": {
+   "login": "chenhangcuisg-code",
+   "type": "User"
+  },
+  "pushed_at": "2026-05-26T09:23:16Z",
+  "stargazers_count": 8,
+  "topics": []
+ },
+ {
+  "archived": false,
+  "description": "Low-level unprivileged sandboxing tool used by Flatpak and similar projects",
+  "fork": false,
+  "full_name": "containers/bubblewrap",
+  "html_url": "https://github.com/containers/bubblewrap",
+  "language": "C",
+  "owner": {
+   "login": "containers",
+   "type": "Organization"
+  },
+  "pushed_at": "2026-10-14T12:26:14Z",
+  "stargazers_count": 9317,
+  "topics": [
+   "linux-containers",
+   "user-namespaces"
+  ]
+ },
+ {
+  "archived": false,
+  "description": "Towards a More Autonomous Agent System",
+  "fork": false,
+  "full_name": "deepseek-ai/dsh-superagent-prototype",
+  "html_url": "https://github.com/deepseek-ai/dsh-superagent-prototype",
+  "language": "TypeScript",
+  "owner": {
+   "login": "deepseek-ai",
+   "type": "Organization"
+  },
+  "pushed_at": "2026-10-31T12:05:51Z",
+  "stargazers_count": 3586,
+  "topics": []
+ },
+ {
+  "archived": false,
+  "description": "vMLX - Use MLX models easily - JANGQ (GGUF for MLX) - Not dependant on mlx_vlm",
+  "fork": false,
+  "full_name": "jjang-ai/vmlx",
+  "html_url": "https://github.com/jjang-ai/vmlx",
+  "language": "Python",
+  "owner": {
+   "login": "jjang-ai",
+   "type": "User"
+  },
+  "pushed_at": "2026-10-31T23:32:13Z",
+  "stargazers_count": 906,
+  "topics": [
+   "anthropic-api",
+   "kvcache-compression",
+   "kvcache-optimization",
+   "kvcache-reuse",
+   "llm",
+   "lmstudio",
+   "macbook",
+   "mcp-server",
+   "mlx",
+   "mlxllm",
+   "mlxstudio",
+   "omlx",
+   "omlx-alternative",
+   "openai-api",
+   "openclaw",
+   "openclaw-agent",
+   "persistent-memory",
+   "prefix-cache",
+   "vmlx"
+  ]
+ },
+ {
+  "archived": false,
+  "description": "Agent skills that give coding agents taste: art direction, reference images and a browser check instead of generic AI pages",
+  "fork": false,
+  "full_name": "Leonxlnx/taste-skill",
+  "html_url": "https://github.com/Leonxlnx/taste-skill",
+  "language": "JavaScript",
+  "owner": {
+   "login": "Leonxlnx",
+   "type": "User"
+  },
+  "pushed_at": "2026-10-31T07:59:58Z",
+  "stargazers_count": 107159,
+  "topics": [
+   "agent-skills",
+   "ai-agents",
+   "anti-slop",
+   "claude-code",
+   "codex",
+   "cursor",
+   "design-system",
+   "frontend",
+   "landing-page",
+   "ui-design",
+   "web-design"
+  ]
+ },
+ {
+  "archived": false,
+  "description": "Code for the paper \"Open-Source Image Editing Models Are Zero-Shot Vision Learners\".",
+  "fork": false,
+  "full_name": "liuwei1206/zeroshot-VL",
+  "html_url": "https://github.com/liuwei1206/zeroshot-VL",
+  "language": "Python",
+  "owner": {
+   "login": "liuwei1206",
+   "type": "User"
+  },
+  "pushed_at": "2026-05-07T23:54:52Z",
+  "stargazers_count": 15,
+  "topics": []
+ },
+ {
+  "archived": false,
+  "description": "Reverse engineer anything with agents, from app behavior down to native binaries.",
+  "fork": false,
+  "full_name": "morluto/rea",
+  "html_url": "https://github.com/morluto/rea",
+  "language": "TypeScript",
+  "owner": {
+   "login": "morluto",
+   "type": "User"
+  },
+  "pushed_at": "2026-11-01T04:47:20Z",
+  "stargazers_count": 416025,
+  "topics": [
+   "agent-skills",
+   "ai",
+   "android",
+   "claude-code",
+   "cli",
+   "cpp",
+   "dsh-plugin",
+   "html",
+   "java",
+   "javascript",
+   "linux",
+   "mcp",
+   "nodejs",
+   "python",
+   "rea",
+   "react",
+   "rust",
+   "security",
+   "touhou",
+   "typescript"
+  ]
+ },
+ {
+  "archived": false,
+  "description": "本地优先的跨平台 Claude Code / AI Agent 桌面工作台：多 Agent 协作、Git Worktree、代码 Diff、技能市场、多模型、Computer Use、桌面宠物；支持微信、飞书、钉钉及 H5 等远程访问。 | Local-first Claude Code / AI Agent desktop workspace: multi-agent teams, Git worktrees, diffs, skills marketplace, multi-model, Computer Use, task-aware desktop pets; remote via WeChat, Feishu, DingTalk, Telegram, WhatsApp & H5.",
+  "fork": false,
+  "full_name": "NanmiCoder/cc-haha",
+  "html_url": "https://github.com/NanmiCoder/cc-haha",
+  "language": "TypeScript",
+  "owner": {
+   "login": "NanmiCoder",
+   "type": "User"
+  },
+  "pushed_at": "2026-11-01T03:39:26Z",
+  "stargazers_count": 15252,
+  "topics": [
+   "agent",
+   "ai",
+   "ai-agent",
+   "anthropic",
+   "claude",
+   "claude-code",
+   "coding-agent",
+   "computer-use",
+   "desktop-app",
+   "electron",
+   "llm",
+   "mcp",
+   "react",
+   "typescript"
+  ]
+ },
+ {
+  "archived": false,
+  "description": "nanoMuse: an open-source personal agent for every device you own. One agent with a name and a look of its own that does things, keeps working while the app is closed, remembers you, and asks before anything you cannot undo. On Android, iPhone and iPad, Windows / macOS / Linux and in the browser; your phone's screen and your computer as its hands.",
+  "fork": false,
+  "full_name": "nano-muse/nanoMuse",
+  "html_url": "https://github.com/nano-muse/nanoMuse",
+  "language": "Swift",
+  "owner": {
+   "login": "nano-muse",
+   "type": "Organization"
+  },
+  "pushed_at": "2026-10-31T12:30:13Z",
+  "stargazers_count": 2956,
+  "topics": [
+   "agent-skills",
+   "ai-agent",
+   "android",
+   "computer-use",
+   "cross-device",
+   "desktop-app",
+   "gui-agent",
+   "ios",
+   "linux",
+   "llm",
+   "mcp",
+   "meta-muse",
+   "mobile-agent",
+   "muse",
+   "nanomuse",
+   "openminis",
+   "openmuse",
+   "personal-agent"
+  ]
+ },
+ {
+  "archived": false,
+  "description": "Qwen3.8-Flash-Next on any consumer hardware: one-click install for Windows / Linux. Strata inference engine, OpenAI/Anthropic API on localhost, optional image input.",
+  "fork": false,
+  "full_name": "Niko1221/Strata",
+  "html_url": "https://github.com/Niko1221/Strata",
+  "language": "C++",
+  "owner": {
+   "login": "Niko1221",
+   "type": "User"
+  },
+  "pushed_at": "2026-10-31T07:39:18Z",
+  "stargazers_count": 37172,
+  "topics": []
+ },
+ {
+  "archived": false,
+  "description": null,
+  "fork": false,
+  "full_name": "NVlabs/EGM",
+  "html_url": "https://github.com/NVlabs/EGM",
+  "language": "Python",
+  "owner": {
+   "login": "NVlabs",
+   "type": "Organization"
+  },
+  "pushed_at": "2026-04-11T01:33:27Z",
+  "stargazers_count": 15,
+  "topics": []
+ },
+ {
+  "archived": false,
+  "description": "[CVPR 2026 Best Paper Finalist & NeurIPS 2026]",
+  "fork": false,
+  "full_name": "NVlabs/PixelDiT",
+  "html_url": "https://github.com/NVlabs/PixelDiT",
+  "language": "Python",
+  "owner": {
+   "login": "NVlabs",
+   "type": "Organization"
+  },
+  "pushed_at": "2026-10-16T04:33:41Z",
+  "stargazers_count": 1006,
+  "topics": []
+ },
+ {
+  "archived": false,
+  "description": "🔥🔥 Awesome Jev:  open-source models, projects, benchmarks, and independent evaluations for Jev and System One models.",
+  "fork": false,
+  "full_name": "OmniJev/awesome-jev-gallery",
+  "html_url": "https://github.com/OmniJev/awesome-jev-gallery",
+  "language": "Python",
+  "owner": {
+   "login": "OmniJev",
+   "type": "Organization"
+  },
+  "pushed_at": "2026-10-31T09:42:46Z",
+  "stargazers_count": 482,
+  "topics": [
+   "awesome",
+   "awesome-jev",
+   "awesome-list",
+   "calibrated-probabilities",
+   "calibration",
+   "decision-models",
+   "jev",
+   "jev-ai",
+   "llm",
+   "llm-evaluation",
+   "rlcd",
+   "structured-outputs",
+   "system-one",
+   "system-one-models",
+   "typed-decisions",
+   "typesafe",
+   "typesafe-ai",
+   "zero-shot-classification"
+  ]
+ },
+ {
+  "archived": false,
+  "description": "A Unified Framework for Efficient RSI Research",
+  "fork": false,
+  "full_name": "RUC-NLPIR/FlashRSI",
+  "html_url": "https://github.com/RUC-NLPIR/FlashRSI",
+  "language": "Python",
+  "owner": {
+   "login": "RUC-NLPIR",
+   "type": "Organization"
+  },
+  "pushed_at": "2026-10-31T17:09:03Z",
+  "stargazers_count": 106,
+  "topics": [
+   "agent",
+   "recursive-self-improvement"
+  ]
+ },
+ {
+  "archived": false,
+  "description": "Orca is the place for working with a fleet of agents (e.g. Grok Bot, Claude Code). Run any coding agent with your own subscription. Available on desktop, mobile and remote runtime.",
+  "fork": false,
+  "full_name": "stablyai/orca",
+  "html_url": "https://github.com/stablyai/orca",
+  "language": "TypeScript",
+  "owner": {
+   "login": "stablyai",
+   "type": "Organization"
+  },
+  "pushed_at": "2026-11-01T05:04:12Z",
+  "stargazers_count": 111845,
+  "topics": [
+   "ade",
+   "agent-ide",
+   "ai-agents",
+   "automation",
+   "bot",
+   "claude-code",
+   "codex",
+   "ghostty",
+   "grok-bot",
+   "hermes-agent",
+   "mobile-app",
+   "muse",
+   "openclaw",
+   "opencode",
+   "orchestration",
+   "pi",
+   "runtime",
+   "terminal",
+   "worktrees",
+   "yc-backed"
+  ]
+ },
+ {
+  "archived": false,
+  "description": "用PyTRIO做模型训练案例、RL训练框架设计",
+  "fork": false,
+  "full_name": "SwanHubX/triotune",
+  "html_url": "https://github.com/SwanHubX/triotune",
+  "language": "Python",
+  "owner": {
+   "login": "SwanHubX",
+   "type": "Organization"
+  },
+  "pushed_at": "2026-10-30T11:09:20Z",
+  "stargazers_count": 9,
+  "topics": []
+ },
+ {
+  "archived": false,
+  "description": "Open, lightweight multimodal decision models for text, images, and video. Train and run them yourself.",
+  "fork": false,
+  "full_name": "Valen-Team/Valen",
+  "html_url": "https://github.com/Valen-Team/Valen",
+  "language": "Python",
+  "owner": {
+   "login": "Valen-Team",
+   "type": "Organization"
+  },
+  "pushed_at": "2026-10-29T08:55:22Z",
+  "stargazers_count": 896,
+  "topics": [
+   "decision-model",
+   "jev",
+   "system-one",
+   "typed-decisions"
+  ]
+ },
+ {
+  "archived": false,
+  "description": "Vision-OPD is a regional-to-global on-policy self-distillation framework that transfers a model's own privileged crop-conditioned perception to its full-image policy, enabling fine-grained visual understanding in a single forward pass without external teachers, labels, or verifiers.",
+  "fork": false,
+  "full_name": "VisionOPD/Vision-OPD",
+  "html_url": "https://github.com/VisionOPD/Vision-OPD",
+  "language": "Python",
+  "owner": {
+   "login": "VisionOPD",
+   "type": "Organization"
+  },
+  "pushed_at": "2026-09-27T14:13:20Z",
+  "stargazers_count": 344,
+  "topics": []
+ },
+ {
+  "archived": false,
+  "description": "ReaLVR: Grounding latent visual reasoning in visual evidence. Training and evaluation code.",
+  "fork": false,
+  "full_name": "xixiaouab/ReaLVR-code",
+  "html_url": "https://github.com/xixiaouab/ReaLVR-code",
+  "language": "Python",
+  "owner": {
+   "login": "xixiaouab",
+   "type": "User"
+  },
+  "pushed_at": "2026-10-01T22:27:36Z",
+  "stargazers_count": 50,
+  "topics": []
+ },
+ {
+  "archived": false,
+  "description": "Every agent's model. One place. Codex on DeepSeek, Claude Code on Kimi, from the menu bar.",
+  "fork": false,
+  "full_name": "yetone/magpie",
+  "html_url": "https://github.com/yetone/magpie",
+  "language": "Go",
+  "owner": {
+   "login": "yetone",
+   "type": "User"
+  },
+  "pushed_at": "2026-11-01T04:59:50Z",
+  "stargazers_count": 27085,
+  "topics": [
+   "claude-code",
+   "codex",
+   "deepseek",
+   "gemini-cli",
+   "llm",
+   "macos"
+  ]
+ }
+]
