@@ -83,6 +83,13 @@ jobs:
         continue-on-error: true
         run: python scripts/collect_modelscope.py --author isLinXu
 
+      # The conference feed is third-party data: a downtime or format change
+      # must not block the download boards. The collector keeps the last good
+      # snapshot and marks it stale, so failures stay visible on the site.
+      - name: Capture conference deadline feed
+        continue-on-error: true
+        run: python scripts/collect_conferences.py --data-dir data
+
       # The template library is read from the working tree, so this step never
       # fails because of the network. A missing templates/ directory is
       # reported in the payload while the previous index is preserved.
@@ -94,7 +101,13 @@ jobs:
         run: |
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git add data/latest.json data/history.json data/scholar.json data/scholar_history.json data/social.json data/social_history.json data/github.json data/github_history.json data/templates.json data/templates_history.json data/modelscope.json data/modelscope_history.json
+          # Optional collectors may be missing on the first run, so stage only
+          # the files that exist; the build treats the same files as optional.
+          for snapshot in latest history scholar scholar_history social social_history \
+                          github github_history templates templates_history \
+                          modelscope modelscope_history conferences; do
+            [ -f "data/${snapshot}.json" ] && git add "data/${snapshot}.json"
+          done
           if ! git diff --cached --quiet; then
             git commit -m "data: update Hugging Face downloads [skip ci]"
             # A user may push templates while the run is in flight, so the
