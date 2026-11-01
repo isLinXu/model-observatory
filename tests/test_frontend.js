@@ -4,8 +4,8 @@ const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
 
-function loadData(fetch) {
-  const context = { console: { ...console, warn() {} }, fetch, URL, AbortSignal };
+function loadData(fetch, globals = {}) {
+  const context = { console: { ...console, warn() {} }, fetch, URL, AbortSignal, ...globals };
   context.window = context;
   vm.createContext(context);
   const filename = path.join(__dirname, '..', 'site', 'data.js');
@@ -186,6 +186,18 @@ function deferred() {
 }
 
 const nextTurn = () => new Promise(resolve => setImmediate(resolve));
+
+function testClock(iso = '2026-10-30T12:00:00.000Z') {
+  let now = Date.parse(iso);
+  return {
+    Date: class extends Date {
+      constructor(...args) { super(...(args.length ? args : [now])); }
+      static now() { return now; }
+    },
+    advance(milliseconds) { now += milliseconds; },
+    iso() { return new Date(now).toISOString(); }
+  };
+}
 
 test('collections paginate previews, fetch each unique detail once, and cap concurrency at four', async () => {
   const secondPage = `${collectionListUrl}&cursor=next`;
@@ -477,14 +489,18 @@ test('scoped history sums and deltas use current membership, retaining negative 
 
 // Minimal DOM and download sink: run the actual renderer and app event bindings,
 // while leaving unrelated panels, chart drawing, and boot-time networking out.
-function loadModelView(data) {
+function loadModelView(data, globals = {}) {
   const elements = new Map();
   const element = id => {
     if (!elements.has(id)) elements.set(id, {
-      innerHTML: '', textContent: '', value: '', events: {},
+      innerHTML: '', textContent: '', value: '', events: {}, attributes: {}, disabled: false,
+      dataset: {},
       classList: { add() {}, remove() {}, toggle() {} },
       addEventListener(type, listener) { this.events[type] = listener; },
-      setAttribute() {}, click() {}, remove() {}
+      setAttribute(name, value) { this.attributes[name] = String(value); },
+      getAttribute(name) { return this.attributes[name] ?? null; },
+      removeAttribute(name) { delete this.attributes[name]; },
+      click() {}, remove() {}
     });
     return elements.get(id);
   };
@@ -498,7 +514,8 @@ function loadModelView(data) {
     },
     Blob,
     URL: { createObjectURL(blob) { blobs.push(blob); return 'blob:local-test'; }, revokeObjectURL() {} },
-    setTimeout(callback) { callback(); }
+    setTimeout(callback) { callback(); },
+    ...globals
   };
   context.window = context;
   vm.createContext(context);
@@ -653,7 +670,8 @@ function publishedPayloads(collections) {
     './data/github.json': { account: {}, repositories: [] },
     './data/github_history.json': { snapshots: [] },
     './data/modelscope.json': modelscopeSnapshot(),
-    './data/modelscope_history.json': modelscopeHistory()
+    './data/modelscope_history.json': modelscopeHistory(),
+    './data/conferences.json': conferencePayload([conference('Keep', [conferenceEvent('AI/keep:keep26:paper:1')])])
   };
 }
 
@@ -681,7 +699,7 @@ test('loadAll tolerates collection failure and preserves published membership th
       });
       data.state.modelCollection = hasFallback ? 'gatilin/saved' : 'unassigned';
       await data.loadAll();
-      assert.equal(requested.length, 12);
+      assert.equal(requested.length, 13);
       assert.equal(data.state.status, 'ready');
       assert.equal(data.state.modelSource, 'live');
       assert.equal(data.state.modelRefreshError, null);
@@ -749,10 +767,192 @@ function seedModelScope(data) {
     { date: '2026-10-19', models: { 'isLinXu/saved': [12, 1] } },
     { date: '2026-10-20', models: { 'isLinXu/saved': [10, 2] } }
   ];
+  data.state.modelscopeSnapshotCapturedAt = data.state.modelscope.captured_at;
+  data.state.modelscopeSnapshotCheckedAt = '2026-10-21T03:04:05.000Z';
   data.state.latest = { models: [{ id: 'gatilin/published', all_time: 42 }], datasets: [] };
   data.state.snapshots = [{ date: '2026-10-20', models: { 'gatilin/published': [42, 3] } }];
   return data.state.modelscope;
 }
+
+const modelscopeLatestPath = './data/modelscope.json';
+const modelscopeHistoryPath = './data/modelscope_history.json';
+
+function retainedModelScopeState(data) {
+  return Object.fromEntries([
+    'modelscope', 'modelscopeSnapshots', 'modelscopeSource', 'modelscopeSnapshotCapturedAt',
+    'modelscopeSnapshotCheckedAt', 'modelscopeModel', 'modelscopeTask', 'modelscopeSearch',
+    'modelscopeSort', 'modelscopeMetric', 'modelscopePage'
+  ].map(key => [key, data.state[key]]));
+}
+
+test('ModelScope snapshot refresh commits a validated pair only after history is ready, with one 20-second budget', async () => {
+  const clock = testClock(), historyReady = deferred(), requested = [], budgets = [];
+  const latest = modelscopeSnapshot([modelscopeModel('zero', { downloads: 0, likes: 0 })], {
+    captured_at: '2026-10-29T02:23:00Z', date: '2026-10-29',
+    profile: { status: 'ok', downloads: 0, followers: 0, captured_at: '2026-10-28T02:24:00Z' }
+  });
+  const history = modelscopeHistory([
+    { date: '2026-10-29', models: { 'isLinXu/zero': [0, 0] }, profile_downloads: 0, profile_captured_at: latest.profile.captured_at },
+    { date: '2026-10-28', models: { 'isLinXu/zero': [null, 0] } }
+  ]);
+  const historyBefore = plain(history);
+  const data = loadData(async (url, options) => {
+    requested.push({ url, options });
+    assert.ok([modelscopeLatestPath, modelscopeHistoryPath].includes(url), 'snapshot refresh only reads local published JSON');
+    if (url === modelscopeLatestPath) return jsonResponse(latest);
+    return { ...jsonResponse(history), json: async () => { await historyReady.promise; return history; } };
+  }, {
+    Date: clock.Date,
+    AbortSignal: { timeout(milliseconds) { budgets.push(milliseconds); return new AbortController().signal; } }
+  });
+  const previous = seedModelScope(data), previousHistory = data.state.modelscopeSnapshots;
+  const hf = data.state.latest, hfHistory = data.state.snapshots;
+  Object.assign(data.state, {
+    modelscopeModel: 'isLinXu/saved', modelscopeTask: 'removed-task', modelscopeSearch: '  zero  ',
+    modelscopeSort: 'likes', modelscopeMetric: 'likes', modelscopePage: 3,
+    modelscopeSnapshotRefreshError: 'old snapshot failure', modelscopeRefreshError: 'old live failure'
+  });
+  const before = retainedModelScopeState(data), contents = plain(before);
+  const refreshing = data.refreshModelScopeSnapshot();
+  await nextTurn();
+  assert.deepEqual(requested.map(call => call.url).sort(), [modelscopeLatestPath, modelscopeHistoryPath].sort());
+  assert.deepEqual(budgets, [20000]);
+  assert.equal(requested[0].options.signal, requested[1].options.signal);
+  for (const { options } of requested) {
+    assert.equal(options.cache, 'no-store');
+    assert.ok(options.signal instanceof AbortSignal);
+    assert.equal(options.signal.aborted, false);
+    assert.ok(!options.method || options.method === 'GET');
+    assert.equal(options.body, undefined);
+  }
+  for (const [key, value] of Object.entries(before)) assert.equal(data.state[key], value, `${key} remains unchanged while JSON is pending`);
+  assert.deepEqual(plain(before), contents);
+  clock.advance(1500);
+  historyReady.resolve();
+  const result = await refreshing;
+  assert.equal(result, latest);
+  assert.equal(data.state.modelscope, latest);
+  assert.notEqual(result, previous);
+  assert.notEqual(data.state.modelscopeSnapshots, previousHistory);
+  assert.notEqual(data.state.modelscopeSnapshots, history.snapshots);
+  assert.deepEqual(plain(data.state.modelscopeSnapshots), [...historyBefore.snapshots].reverse());
+  assert.deepEqual(plain(history), historyBefore, 'sorting never mutates the response history');
+  assert.equal(data.state.modelscopeSource, 'snapshot');
+  assert.equal(data.state.modelscopeSnapshotCapturedAt, latest.captured_at);
+  assert.equal(data.state.modelscopeSnapshotCheckedAt, clock.iso(), 'check time is successful retrieval time, not request start or capture');
+  assert.notEqual(data.state.modelscopeSnapshotCheckedAt, latest.captured_at);
+  assert.equal(data.state.modelscope.profile.captured_at, '2026-10-28T02:24:00Z');
+  assert.equal(data.state.modelscopeSnapshotRefreshError, null);
+  assert.equal(data.state.modelscopeRefreshError, null);
+  assert.equal(data.state.modelscopeModel, 'all');
+  assert.equal(data.state.modelscopeTask, 'all');
+  assert.deepEqual([
+    data.state.modelscopeSearch, data.state.modelscopeSort, data.state.modelscopeMetric, data.state.modelscopePage
+  ], ['  zero  ', 'likes', 'likes', 3]);
+  assert.deepEqual(plain(data.modelscopeTotals()), { count: 1, downloads: { value: 0, known: 1 }, likes: { value: 0, known: 1 } });
+  assert.equal(data.state.modelscope.profile.downloads, 0);
+  assert.equal(data.state.modelscope.profile.followers, 0);
+  assert.equal(data.state.latest, hf);
+  assert.equal(data.state.snapshots, hfHistory);
+
+  data.state.modelscopeModel = 'isLinXu/zero';
+  data.state.modelscopeTask = 'text-generation';
+  const captures = [latest.captured_at, latest.profile.captured_at, data.state.modelscopeSnapshots[1].profile_captured_at];
+  clock.advance(300000);
+  await data.refreshModelScopeSnapshot();
+  assert.equal(requested.length, 4, 'reading the same deployment still fetches both files');
+  assert.deepEqual(budgets, [20000, 20000]);
+  assert.equal(data.state.modelscopeSnapshotCheckedAt, clock.iso());
+  assert.equal(data.state.modelscopeSnapshotCapturedAt, captures[0]);
+  assert.deepEqual([latest.captured_at, latest.profile.captured_at, data.state.modelscopeSnapshots[1].profile_captured_at], captures);
+  assert.equal(data.state.modelscopeModel, 'isLinXu/zero');
+  assert.equal(data.state.modelscopeTask, 'text-generation');
+});
+
+test('ModelScope snapshot failures preserve exact prior objects and timestamps, including after manual live query, then recover', async t => {
+  const failJson = () => ({ ...jsonResponse(null), json: async () => { throw new SyntaxError('invalid JSON'); } });
+  const cases = [
+    ['latest HTTP failure', modelscopeLatestPath, () => jsonResponse({}, { status: 503 }), /503/],
+    ['history HTTP failure', modelscopeHistoryPath, () => jsonResponse({}, { status: 404 }), /404/],
+    ['latest invalid JSON', modelscopeLatestPath, failJson, /invalid JSON/],
+    ['history invalid JSON', modelscopeHistoryPath, failJson, /invalid JSON/],
+    ['latest network failure', modelscopeLatestPath, () => { throw new Error('offline'); }, /offline/],
+    ['history timeout', modelscopeHistoryPath, () => { throw new DOMException('request timed out', 'TimeoutError'); }, /超时|timed out/],
+    ['latest schema failure', modelscopeLatestPath, () => jsonResponse(modelscopeSnapshot([], { schema_version: 2 })), /不兼容/],
+    ['history schema failure', modelscopeHistoryPath, () => jsonResponse({ ...modelscopeHistory(), author: 'other' }), /不兼容/],
+    ['history cannot be sorted', modelscopeHistoryPath, () => jsonResponse(modelscopeHistory([
+      { date: '2026-10-29', models: {} }, { date: null, models: {} }
+    ])), /./]
+  ];
+  for (const [name, failedUrl, fail, expected] of cases) for (const live of [false, true]) {
+    await t.test(`${name}, retaining ${live ? 'live' : 'snapshot'} data`, async () => {
+      const clock = testClock();
+      const latest = modelscopeSnapshot([modelscopeModel('replacement')], { captured_at: '2026-10-29T03:04:00Z' });
+      const history = modelscopeHistory([{ date: '2026-10-29', models: { 'isLinXu/replacement': [10, 2] } }]);
+      let failing = true;
+      const data = loadData(async url => {
+        if (url.startsWith('https://www.modelscope.cn/')) return jsonResponse(modelscopePage(1, 1));
+        assert.ok([modelscopeLatestPath, modelscopeHistoryPath].includes(url));
+        if (failing && url === failedUrl) return fail();
+        return jsonResponse(url === modelscopeLatestPath ? latest : history);
+      }, { Date: clock.Date });
+      seedModelScope(data);
+      if (live) await data.refreshModelScope();
+      Object.assign(data.state, {
+        modelscopeModel: live ? 'isLinXu/model-0' : 'isLinXu/saved', modelscopeTask: 'text-generation',
+        modelscopeSearch: 'keep this search', modelscopeSort: 'name', modelscopeMetric: 'likes', modelscopePage: 2,
+        modelscopeRefreshError: 'earlier live failure'
+      });
+      const before = retainedModelScopeState(data), contents = plain(before);
+      await assert.rejects(data.refreshModelScopeSnapshot(), expected);
+      await nextTurn();
+      for (const [key, value] of Object.entries(before)) assert.equal(data.state[key], value, `${key} survives a failed pair`);
+      assert.deepEqual(plain(before), contents, 'failed replacement never mutates prior model/profile/history objects');
+      assert.match(data.state.modelscopeSnapshotRefreshError, expected);
+      assert.equal(data.state.modelscopeRefreshError, 'earlier live failure');
+      failing = false;
+      clock.advance(60000);
+      assert.equal(await data.refreshModelScopeSnapshot(), latest);
+      assert.equal(data.state.modelscope, latest);
+      assert.deepEqual(plain(data.state.modelscopeSnapshots), history.snapshots);
+      assert.equal(data.state.modelscopeSource, 'snapshot');
+      assert.equal(data.state.modelscopeSnapshotCapturedAt, latest.captured_at);
+      assert.equal(data.state.modelscopeSnapshotCheckedAt, clock.iso());
+      assert.equal(data.state.modelscopeSnapshotRefreshError, null);
+      assert.equal(data.state.modelscopeRefreshError, null);
+      assert.equal(data.state.modelscopeModel, 'all');
+      assert.equal(data.state.modelscopeTask, 'text-generation');
+      assert.deepEqual([data.state.modelscopeSearch, data.state.modelscopeSort, data.state.modelscopeMetric], ['keep this search', 'name', 'likes']);
+    });
+  }
+});
+
+test('ModelScope stale, unavailable and undated snapshots are successful reads, never new captures', async t => {
+  for (const [status, captured] of [['stale', '2026-10-20T01:02:03Z'], ['unavailable', null], ['ok', null]]) {
+    await t.test(`${status}, capture ${captured}`, async () => {
+      const clock = testClock();
+      const latest = modelscopeSnapshot(status === 'unavailable' ? [] : undefined, {
+        status, captured_at: captured, error: status === 'ok' ? null : 'backend unavailable'
+      });
+      const data = loadData(async url => jsonResponse(url === modelscopeLatestPath ? latest : modelscopeHistory()), { Date: clock.Date });
+      seedModelScope(data);
+      data.state.modelscopeSnapshotRefreshError = 'previous read failed';
+      data.state.modelscopeRefreshError = 'previous live query failed';
+      assert.equal(await data.refreshModelScopeSnapshot(), latest);
+      assert.equal(data.state.modelscope.status, status);
+      assert.equal(data.state.modelscope.error, latest.error, 'a successful read does not hide a backend collection failure');
+      assert.equal(data.state.modelscopeSnapshotCapturedAt, captured);
+      assert.equal(data.state.modelscopeSnapshotCheckedAt, clock.iso());
+      assert.equal(data.state.modelscopeSnapshotRefreshError, null);
+      assert.equal(data.state.modelscopeRefreshError, null);
+      clock.advance(60000);
+      await data.refreshModelScopeSnapshot();
+      assert.equal(data.state.modelscopeSnapshotCapturedAt, captured);
+      assert.equal(latest.captured_at, captured);
+      assert.equal(data.state.modelscopeSnapshotCheckedAt, clock.iso());
+    });
+  }
+});
 
 function assertModelScopeRequest(url, options, page) {
   assert.equal(url, `https://www.modelscope.cn/openapi/v1/models?owner=isLinXu&page_number=${page}&page_size=50`);
@@ -784,6 +984,8 @@ test('ModelScope refresh uses anonymous official OpenAPI and atomically replaces
   data.state.modelscopeModel = 'isLinXu/saved';
   data.state.modelscopeTask = 'removed-task';
   data.state.modelscopeRefreshError = 'old error';
+  data.state.modelscopeSnapshotRefreshError = 'previous snapshot read failed';
+  const snapshotCapture = data.state.modelscopeSnapshotCapturedAt, snapshotCheck = data.state.modelscopeSnapshotCheckedAt;
   const refreshing = data.refreshModelScope();
   await reachedLastPage.promise;
   assert.equal(data.state.modelscope, previous, 'no partial inventory is published while another page is pending');
@@ -810,6 +1012,9 @@ test('ModelScope refresh uses anonymous official OpenAPI and atomically replaces
   assert.equal(data.state.modelscopeTask, 'all');
   assert.equal(data.state.modelscopeSnapshots, snapshots);
   assert.deepEqual(plain(snapshots), savedHistory, 'live refresh never appends or overwrites daily history');
+  assert.equal(data.state.modelscopeSnapshotCapturedAt, snapshotCapture);
+  assert.equal(data.state.modelscopeSnapshotCheckedAt, snapshotCheck);
+  assert.equal(data.state.modelscopeSnapshotRefreshError, 'previous snapshot read failed');
   assert.equal(data.state.latest, hf);
   assert.equal(data.state.snapshots, hfSnapshots);
 });
@@ -948,6 +1153,24 @@ test('ModelScope rejects oversized totals and short first pages immediately, eve
   });
 });
 
+test('ModelScope manual live errors explain network uncertainty and timeouts without changing snapshot state', async t => {
+  for (const [name, error, expected] of [
+    ['network', new TypeError('Failed to fetch'), /网络或跨域限制/],
+    ['timeout', new DOMException('The operation was aborted due to timeout', 'TimeoutError'), /超时/]
+  ]) await t.test(name, async () => {
+    const data = loadData(async () => { throw error; }, { TypeError });
+    seedModelScope(data);
+    data.state.modelscopeSnapshotRefreshError = 'snapshot unavailable';
+    const before = retainedModelScopeState(data), contents = plain(before);
+    await assert.rejects(data.refreshModelScope());
+    for (const [key, value] of Object.entries(before)) assert.equal(data.state[key], value);
+    assert.deepEqual(plain(before), contents);
+    assert.equal(data.state.modelscopeSnapshotRefreshError, 'snapshot unavailable');
+    assert.match(data.state.modelscopeRefreshError, expected);
+    assert.doesNotMatch(data.state.modelscopeRefreshError, /已确认.*跨域|确定.*CORS|CORS.*已阻止/i);
+  });
+});
+
 function publishedFetch(payloads, requested = []) {
   return async url => {
     requested.push(url);
@@ -973,7 +1196,7 @@ test('loadAll loads both optional ModelScope files with the versioned author/sou
     const beforeHistory = plain(history);
     const data = loadData(publishedFetch(payloads, requested));
     await data.loadAll();
-    assert.equal(requested.length, 12);
+    assert.equal(requested.length, 13);
     assert.equal(requested.filter(url => url === './data/modelscope.json').length, 1);
     assert.equal(requested.filter(url => url === './data/modelscope_history.json').length, 1);
     assert.equal(data.state.modelscope, latest);
@@ -1013,10 +1236,35 @@ test('missing or incompatible ModelScope snapshots fail independently of HF and 
     assert.equal(data.state.modelscope.models.length, 0);
     assert.equal(data.state.modelscopeSnapshots.length, 0, 'never expose a half-loaded ModelScope latest/history pair');
     assert.match(data.state.modelscope.error, expected);
+    assert.match(data.state.modelscopeSnapshotRefreshError, expected);
+    assert.equal(data.state.modelscopeSnapshotCapturedAt, null);
+    assert.equal(data.state.modelscopeSnapshotCheckedAt, null);
     assert.deepEqual(idsOf(data.state.latest.models), ['gatilin/live']);
     assert.equal(data.state.scholar, payloads['./data/scholar.json']);
     assert.equal(data.state.social, payloads['./data/social.json']);
     assert.equal(data.state.github, payloads['./data/github.json']);
+  });
+});
+
+test('loadAll catches later snapshot read failures without replacing an existing snapshot or live ModelScope board', async t => {
+  for (const live of [false, true]) await t.test(live ? 'live board' : 'snapshot board', async () => {
+    const payloads = publishedPayloads(), fetchPublished = publishedFetch(payloads);
+    let failing = false;
+    const data = loadData(async (url, options) => {
+      if (url.startsWith('https://www.modelscope.cn/openapi/')) return jsonResponse(modelscopePage(1, 1));
+      if (failing && url === modelscopeHistoryPath) return jsonResponse({}, { status: 503 });
+      return fetchPublished(url, options);
+    });
+    await data.loadAll();
+    if (live) await data.refreshModelScope();
+    const before = retainedModelScopeState(data), contents = plain(before);
+    failing = true;
+    await data.loadAll();
+    for (const [key, value] of Object.entries(before)) assert.equal(data.state[key], value);
+    assert.deepEqual(plain(before), contents);
+    assert.match(data.state.modelscopeSnapshotRefreshError, /503/);
+    assert.equal(data.state.status, 'ready');
+    assert.equal(data.state.social, payloads['./data/social.json']);
   });
 });
 
@@ -1162,10 +1410,11 @@ test('ModelScope table and CSV share search/task/sort while pagination shows 20 
     { date: '2026-10-20', models: Object.fromEntries(models.map(model => [model.id, [5, 2]])) }
   ];
   const original = plain(models), booted = deferred();
-  let filterCalls = 0, refreshCalls = 0;
+  let filterCalls = 0, liveCalls = 0, snapshotCalls = 0;
   const viewData = {
     ...data, loadAll: async () => {},
-    refreshModelScope: async () => { refreshCalls++; },
+    refreshModelScope: async () => { liveCalls++; },
+    refreshModelScopeSnapshot: async () => { snapshotCalls++; return data.state.modelscope; },
     modelscopeModels() { filterCalls++; return data.modelscopeModels(); }
   };
   const view = loadModelView(viewData), charts = [], toasts = [];
@@ -1177,9 +1426,11 @@ test('ModelScope table and CSV share search/task/sort while pagination shows 20 
   view.run('app.js');
   await booted.promise;
   await nextTurn();
-  assert.equal(refreshCalls, 1, 'app boot starts an automatic ModelScope refresh');
-  assert.deepEqual(toasts, [], 'automatic refresh is silent');
+  assert.equal(liveCalls, 0, 'app boot never starts an external live query');
+  assert.equal(snapshotCalls, 0, 'app boot uses the snapshot already loaded by loadAll');
+  assert.deepEqual(toasts, []);
   assert.equal(view.element('modelscopeRefresh').disabled, false);
+  assert.equal(view.element('modelscopeLiveRefresh').disabled, false);
   const change = (id, type, target = {}) => view.element(id).events[type]({ target });
   const parseCsv = text => text.replace(/^\uFEFF/, '').split('\r\n').map(row =>
     Array.from(row.matchAll(/"((?:[^"]|"")*)"/g), match => match[1].replace(/""/g, '"')));
@@ -1285,8 +1536,15 @@ test('ModelScope table and CSV share search/task/sort while pagination shows 20 
   assert.equal(data.state.modelscopeModel, 'all');
   assert.equal(view.element('modelscopeChartReset').disabled, true);
   await view.element('modelscopeRefresh').events.click();
-  assert.equal(refreshCalls, 2);
-  assert.match(toasts.at(-1), /主页下载、关注者及历史曲线仍来自每日快照/);
+  assert.equal(snapshotCalls, 1);
+  assert.equal(liveCalls, 0);
+  assert.match(toasts.at(-1), /已发布快照.*不会触发后台采集/);
+  assert.equal(view.element('modelscopeRefresh').disabled, false);
+  assert.equal(view.element('modelscopeLiveRefresh').disabled, false);
+  await view.element('modelscopeLiveRefresh').events.click();
+  assert.equal(liveCalls, 1);
+  assert.equal(snapshotCalls, 1);
+  assert.match(toasts.at(-1), /仅更新模型清单.*主页下载、关注者及历史曲线仍来自每日快照/);
 });
 
 test('ModelScope board escapes names and tasks and labels saved/live/unavailable counters without invented metrics', () => {
@@ -1325,7 +1583,8 @@ test('ModelScope board escapes names and tasks and labels saved/live/unavailable
   data.state.modelscopeRefreshError = 'offline';
   view.render.renderModelScopeBoard();
   assert.equal(view.element('modelscopeExport').disabled, false);
-  assert.match(view.element('modelscopeStatus').textContent, /刷新失败，保留上次数据/);
+  assert.match(view.element('modelscopeStatus').textContent, /后台采集失败，保留上次快照/);
+  assert.match(view.element('modelscopeStatus').textContent, /实时查询失败，保留上次数据：offline/);
   assert.equal(view.element('modelscopeStatus').title, 'offline');
   data.state.modelscopeSource = 'live';
   view.render.renderModelScopeBoard();
@@ -1469,4 +1728,422 @@ test('ModelScope profile cards and chart show independent exact counts, timestam
   const lastProfileChart = charts.filter(call => call[0] === view.element('modelscopeProfileChart')).at(-1);
   assert.equal(lastProfileChart[1][0].points.length, 0);
   assert.match(lastProfileChart[2].emptyText, /旧快照不回填、不补零/);
+});
+
+test('ModelScope refresh buttons serialize snapshot and live work and restore labels after failures', async () => {
+  const data = loadData(() => { throw new Error('button tests must never make network requests'); });
+  seedModelScope(data);
+  const pending = deferred(), booted = deferred();
+  let snapshotCalls = 0, liveCalls = 0, snapshotFailure = null;
+  const viewData = {
+    ...data, loadAll: async () => {},
+    refreshModelScopeSnapshot: async () => {
+      snapshotCalls++;
+      await pending.promise;
+      if (snapshotFailure) throw snapshotFailure;
+      return data.state.modelscope;
+    },
+    refreshModelScope: async () => { liveCalls++; },
+    modelscopeModels: data.modelscopeModels
+  };
+  const view = loadModelView(viewData), toasts = [];
+  view.context.MO.charts.line = () => {};
+  view.context.MO.theme = { init() {} };
+  view.context.MO.templates = { init: async () => { booted.resolve(); } };
+  view.context.MO.render = Object.fromEntries(Object.entries(view.render).map(([name, render]) =>
+    [name, name.startsWith('renderModelScope') ? render : name === 'showToast' ? message => toasts.push(message) : () => {}]));
+  view.run('app.js');
+  await booted.promise;
+  await nextTurn();
+  const snapshotButton = view.element('modelscopeRefresh'), liveButton = view.element('modelscopeLiveRefresh');
+  const clicking = snapshotButton.events.click();
+  await nextTurn();
+  assert.equal(snapshotCalls, 1);
+  assert.equal(snapshotButton.disabled, true);
+  assert.equal(liveButton.disabled, true);
+  assert.equal(snapshotButton.getAttribute('aria-busy'), 'true');
+  assert.equal(snapshotButton.textContent, '读取已发布快照…');
+  liveButton.events.click();
+  snapshotButton.events.click();
+  await nextTurn();
+  assert.deepEqual([snapshotCalls, liveCalls], [1, 0], 'once one refresh is running, both entries stay idle');
+  pending.resolve();
+  await clicking;
+  assert.equal(snapshotButton.disabled, false);
+  assert.equal(liveButton.disabled, false);
+  assert.equal(snapshotButton.getAttribute('aria-busy'), 'false');
+  assert.equal(snapshotButton.textContent, '刷新已发布快照');
+  assert.equal(liveButton.textContent, '尝试实时查询');
+  assert.match(toasts.at(-1), /已发布快照.*不会触发后台采集/);
+  snapshotFailure = new Error('HTTP 503');
+  await snapshotButton.events.click();
+  assert.match(toasts.at(-1), /快照读取失败：HTTP 503。保留上次数据/);
+  assert.equal(snapshotButton.disabled, false);
+  assert.equal(liveButton.disabled, false);
+  await liveButton.events.click();
+  assert.equal(liveCalls, 1);
+  assert.match(toasts.at(-1), /仅更新模型清单.*主页下载、关注者及历史曲线仍来自每日快照/);
+});
+
+test('ModelScope status separates capture, read, backend and live failures and flags stale data', () => {
+  const clock = testClock('2026-10-23T00:00:00.000Z');
+  const data = loadData();
+  seedModelScope(data);
+  data.state.modelscopeSnapshotCapturedAt = '2026-10-20T01:02:03Z';
+  data.state.modelscopeSnapshotCheckedAt = '2026-10-22T23:00:00.000Z';
+  data.state.modelscope.status = 'stale';
+  data.state.modelscope.error = 'upstream unavailable';
+  data.state.modelscopeSnapshotStatus = 'stale';
+  data.state.modelscopeSnapshotError = 'upstream unavailable';
+  data.state.modelscopeSnapshotRefreshError = 'snapshot HTTP 503';
+  data.state.modelscopeRefreshError = 'live network';
+  const view = loadModelView(data), charts = [];
+  view.context.Date = clock.Date;
+  view.context.MO.charts.line = (...args) => charts.push(args);
+  view.render.renderModelScopeBoard();
+  const status = view.element('modelscopeStatus').textContent;
+  assert.match(status, /^已发布 OpenAPI 快照 · 最近成功采集 2026-10-20 01:02 UTC/);
+  assert.match(status, /后台采集失败，保留上次快照：upstream unavailable/);
+  assert.match(status, /快照读取失败，保留上次数据：snapshot HTTP 503/);
+  assert.match(status, /实时查询失败，保留上次数据：live network/);
+  assert.equal(view.element('modelscopeStatus').title, 'snapshot HTTP 503\nlive network\nupstream unavailable');
+  assert.match(view.element('modelscopeFreshness').textContent, /模型快照：距今 2 天 · 超过 48 小时未更新/);
+  assert.match(view.element('modelscopeFreshness').textContent, /主页：距今 4 天 · 超过 48 小时未更新/);
+  assert.match(view.element('modelscopeSnapshotCheckedAt').textContent, /最近成功读取快照 2026-10-22 23:00 UTC · 读取不代表重新采集/);
+
+  data.state.modelscope.status = 'ok';
+  data.state.modelscope.error = null;
+  data.state.modelscope.captured_at = '2026-10-22T23:30:00Z';
+  data.state.modelscopeSnapshotStatus = 'ok';
+  data.state.modelscopeSnapshotError = null;
+  data.state.modelscopeSnapshotCapturedAt = '2026-10-22T23:30:00Z';
+  data.state.modelscopeSnapshotRefreshError = null;
+  data.state.modelscopeRefreshError = null;
+  data.state.modelscope.profile.captured_at = '2026-10-22T23:00:00Z';
+  view.render.renderModelScopeBoard();
+  assert.match(view.element('modelscopeFreshness').textContent, /模型快照：距今不足 1 小时/);
+  assert.doesNotMatch(view.element('modelscopeFreshness').textContent, /超过 48 小时/);
+
+  data.state.modelscopeSource = 'live';
+  data.state.modelscope.captured_at = '2026-10-23T00:00:00Z';
+  data.state.modelscopeSnapshotCapturedAt = '2026-10-18T00:00:00Z';
+  data.state.modelscope.profile.captured_at = '2026-10-17T00:00:00Z';
+  view.render.renderModelScopeBoard();
+  assert.match(view.element('modelscopeStatus').textContent, /OpenAPI 实时清单 · 实时查询成功于 2026-10-23 00:00 UTC · 后台最近成功采集 2026-10-18 00:00 UTC/);
+  assert.match(view.element('modelscopeProfileCapturedAt').textContent, /主页采集于 2026-10-17 00:00 UTC/);
+  assert.match(view.element('modelscopeFreshness').textContent, /主页：距今 6 天 · 超过 48 小时未更新/);
+
+  data.state.modelscope.captured_at = null;
+  data.state.modelscopeSnapshotCapturedAt = null;
+  data.state.modelscope.profile.captured_at = null;
+  view.render.renderModelScopeBoard();
+  assert.match(view.element('modelscopeStatus').textContent, /后台最近成功采集 采集时间未知/);
+  assert.match(view.element('modelscopeFreshness').textContent, /模型快照：采集时间未知/);
+  assert.match(view.element('modelscopeProfileCapturedAt').textContent, /主页采集于 — UTC/);
+});
+
+// --- Conference deadline board --------------------------------------------
+
+const CONF_NOW = Date.parse('2026-10-30T12:00:00.000Z');
+
+function conferenceEvent(id, extra = {}) {
+  return {
+    id, kind: 'paper', round: 1, year: 2026, comment: '', source_local: '2026-12-01 23:59:59',
+    timezone: 'UTC-12', utc: '2026-12-02T11:59:59Z', offset_minutes: -720, time_status: 'ok', tbd: false, ...extra
+  };
+}
+
+function conferenceEdition(key, events, extra = {}) {
+  return {
+    id: `${key}26`, year: 2026, url: `https://example.com/${key}`, date: 'December 2026',
+    place: 'Nowhere', timezone: 'UTC-12', events, ...extra
+  };
+}
+
+function conference(title, events, extra = {}) {
+  const key = (extra.key || `AI/${title}`).toLowerCase();
+  return {
+    key, title, description: '', area: 'AI', rank: { ccf: 'A' },
+    editions: [conferenceEdition(key.split('/')[1], events)], ...extra
+  };
+}
+
+function conferencePayload(conferences = [], extra = {}) {
+  const events = conferences.flatMap(item => item.editions.flatMap(edition => edition.events));
+  const editions = conferences.reduce((sum, item) => sum + item.editions.length, 0);
+  const paper_events = events.filter(event => event.kind === 'paper').length;
+  const tbd = events.filter(event => event.tbd).length;
+  return {
+    schema_version: 1, source: { id: 'ccfddl', name: 'CCF-Deadlines' }, status: 'ok', error: null,
+    captured_at: '2026-10-30T02:23:00Z', source_updated_at: '2026-10-29T03:56:43Z',
+    counts: { conferences: conferences.length, editions, events: events.length, paper_events, tbd },
+    warnings: [], changes: { status: 'compared', added: 1, updated: 0, removed: 0, previous_captured_at: '2026-10-29T02:20:00Z' },
+    conferences, ...extra
+  };
+}
+
+function seedConferences(data, conferences) {
+  data.state.conferences = conferencePayload(conferences);
+  return data.state.conferences;
+}
+
+const confTitles = data => Array.from(data.conferenceRows(CONF_NOW), row => row.title);
+
+test('conference windows keep future deadlines, order them, and separate pending and past', () => {
+  const data = loadData();
+  seedConferences(data, [
+    conference('Soon', [conferenceEvent('AI/soon:soon26:paper:1', { utc: '2026-11-05T12:00:00Z' })]),
+    conference('Later', [conferenceEvent('AI/later:later26:paper:1', { utc: '2027-01-05T00:00:00Z' })]),
+    conference('Far', [conferenceEvent('AI/far:far26:paper:1', { utc: '2027-03-01T00:00:00Z' })]),
+    conference('Gone', [conferenceEvent('AI/gone:gone26:paper:1', { utc: '2026-09-01T00:00:00Z' })]),
+    conference('Recent', [conferenceEvent('AI/recent:recent26:paper:1', { utc: '2026-10-01T00:00:00Z' })]),
+    conference('Pending', [conferenceEvent('AI/pending:pending26:paper:1', { utc: null, source_local: 'TBD', tbd: true })])
+  ]);
+  data.state.conferenceWindow = '90';
+  assert.deepEqual(confTitles(data), ['Soon', 'Later']);
+  data.state.conferenceWindow = '365';
+  assert.deepEqual(confTitles(data), ['Soon', 'Later', 'Far']);
+  data.state.conferenceWindow = 'open';
+  assert.deepEqual(confTitles(data), ['Soon', 'Later', 'Far']);
+  data.state.conferenceWindow = 'past';
+  assert.deepEqual(confTitles(data), ['Recent', 'Gone']);
+  data.state.conferenceWindow = 'tbd';
+  assert.deepEqual(confTitles(data), ['Pending']);
+});
+
+test('conference filters combine area, rank, stage and search', () => {
+  const data = loadData();
+  seedConferences(data, [
+    conference('Alpha', [
+      conferenceEvent('AI/alpha:alpha26:abstract:1', { kind: 'abstract', utc: '2026-11-01T00:00:00Z' }),
+      conferenceEvent('AI/alpha:alpha26:paper:1', { utc: '2026-11-02T00:00:00Z' })
+    ]),
+    conference('Beta', [conferenceEvent('DB/beta:beta26:paper:1', { utc: '2026-11-03T00:00:00Z' })],
+      { key: 'DB/beta', area: 'DB', rank: { ccf: 'B' } }),
+    conference('Gamma', [conferenceEvent('AI/gamma:gamma26:paper:1', { utc: '2026-11-04T00:00:00Z' })], { rank: {} })
+  ]);
+  assert.deepEqual(confTitles(data), ['Alpha', 'Beta', 'Gamma']);
+  data.state.conferenceArea = 'DB';
+  assert.deepEqual(confTitles(data), ['Beta']);
+  data.state.conferenceArea = 'all';
+  data.state.conferenceRank = 'A';
+  assert.deepEqual(confTitles(data), ['Alpha']);
+  data.state.conferenceRank = '';
+  assert.deepEqual(confTitles(data), ['Gamma']);
+  data.state.conferenceRank = 'all';
+  data.state.conferenceKind = 'abstract';
+  assert.deepEqual(confTitles(data), ['Alpha']);
+  data.state.conferenceKind = 'all';
+  data.state.conferenceSearch = '  GAMMA ';
+  assert.deepEqual(confTitles(data), ['Gamma']);
+  data.state.conferenceSearch = '';
+  data.state.conferenceWindow = 'open';
+  data.state.conferencePage = 99;
+  assert.equal(data.conferenceRows(CONF_NOW).length, 4);
+  assert.equal(data.conferencePage(CONF_NOW).length, 4);
+  assert.equal(data.conferencePageCount(), 1);
+});
+
+test('conference stats count paper deadlines and pick the nearest instant of any stage', () => {
+  const data = loadData();
+  seedConferences(data, [
+    conference('Abstract', [conferenceEvent('AI/abstract:abstract26:abstract:1',
+      { kind: 'abstract', utc: '2026-11-01T00:00:00Z' })]),
+    conference('Paper', [conferenceEvent('AI/paper:paper26:paper:1', { utc: '2026-11-20T00:00:00Z' })]),
+    conference('Quarter', [conferenceEvent('AI/quarter:quarter26:paper:1', { utc: '2027-01-10T00:00:00Z' })]),
+    conference('Overdue', [conferenceEvent('AI/overdue:overdue26:paper:1', { utc: '2026-10-01T00:00:00Z' })]),
+    conference('Pending', [conferenceEvent('AI/pending:pending26:paper:1', { utc: null, tbd: true })])
+  ]);
+  assert.deepEqual({ ...data.conferenceStats(CONF_NOW), next: data.conferenceStats(CONF_NOW).next.id },
+    { events: 5, tbd: 1, paper30: 1, paper90: 2, next: 'AI/abstract:abstract26:abstract:1' });
+  // Filters must not change the headline numbers.
+  data.state.conferenceKind = 'all';
+  data.state.conferenceSearch = 'Paper';
+  assert.equal(data.conferenceStats(CONF_NOW).paper90, 2);
+});
+
+test('conference loading validates the source, keeps the last snapshot, and degrades alone', async () => {
+  let payload = conferencePayload([conference('Keep', [conferenceEvent('AI/keep:keep26:paper:1')])]);
+  const data = loadData(async url => {
+    assert.equal(url, './data/conferences.json');
+    return jsonResponse(payload);
+  });
+  await data.loadConferences();
+  const first = data.state.conferences;
+  assert.equal(data.state.conferenceRefreshError, null);
+  assert.match(data.state.conferenceSnapshotCheckedAt, /^\d{4}-\d{2}-\d{2}T/);
+  payload = { ...payload, source: { id: 'somewhere-else' } };
+  await assert.rejects(data.refreshConferenceSnapshot(), /格式或数据来源不兼容/);
+  assert.equal(data.state.conferences, first, 'a rejected payload must not replace the good snapshot');
+  assert.match(data.state.conferenceRefreshError, /格式或数据来源不兼容/);
+  payload = { ...first, schema_version: 2 };
+  await assert.rejects(data.refreshConferenceSnapshot(), /格式或数据来源不兼容/);
+
+  const offline = loadData(async () => jsonResponse({}, { status: 404 }));
+  await offline.loadConferences();
+  assert.equal(offline.state.conferences.status, 'unavailable');
+  assert.deepEqual(Array.from(offline.conferenceRows(CONF_NOW)), []);
+  assert.equal(offline.conferenceStats(CONF_NOW).events, 0);
+});
+
+test('the conference board escapes third-party text, counts down, and explains stale data', () => {
+  const clock = testClock('2026-10-30T12:00:00.000Z');
+  const data = loadData(undefined, { Date: clock.Date });
+  seedConferences(data, [
+    conference('<img src=x>', [conferenceEvent('AI/evil:evil26:paper:1', { utc: '2026-11-02T05:00:00Z' })],
+      { key: 'AI/evil', place: null }),
+    conference('Pending', [conferenceEvent('AI/pending:pending26:paper:1',
+      { utc: null, tbd: true, source_local: 'TBD', timezone: '', offset_minutes: null })]),
+    conference('Unparsed', [conferenceEvent('AI/unparsed:unparsed26:paper:1',
+      { utc: null, time_status: 'unknown_timezone', source_local: '2026-12-01 23:59:59', timezone: 'Mars/Olympus', offset_minutes: null })])
+  ]);
+  const view = loadModelView(data);
+  view.context.Date = clock.Date;
+  view.render.renderConferences();
+
+  assert.match(view.element('conferenceStatus').textContent,
+    /^CCF-Deadlines 快照 · 3 个会议 · 3 个时间节点（论文 3）· 源数据更新于 2026-10-29 03:56 UTC/);
+  assert.match(view.element('conferenceStatus').textContent, /新增 1 · 更新 0 · 移除 0（对比 2026-10-29 02:20 UTC）/);
+  assert.match(view.element('conferenceFreshness').textContent, /快照采集于 2026-10-30 02:23 UTC · 距今/);
+  assert.equal(view.element('conferenceCountBadge').textContent, '3');
+  assert.equal(view.element('statNextDeadline').textContent, '2 天 17 小时');
+  assert.equal(view.element('statNextDeadline').className, 'kpi-value urgent');
+  assert.match(view.element('statNextDeadlineSub').textContent, /<img src=x> 2026 · 论文截止 · 2026-11-02 05:00 UTC/);
+
+  const upcoming = view.element('conferenceUpcoming').innerHTML;
+  assert.ok(!upcoming.includes('<img src=x>'), 'source titles must be escaped before insertion');
+  assert.ok(upcoming.includes('&lt;img src=x&gt;'));
+  assert.match(upcoming, /conf-item urgent/);
+  assert.doesNotMatch(upcoming, /conf-item unknown/);
+  assert.match(view.element('conferenceUpcomingNote').textContent, /未来 90 天/);
+  assert.equal(view.element('conferencePagination').hidden, true);
+  assert.match(view.element('conferenceTableCount').textContent, /1 \/ 3 EVENTS · 未来 90 天/);
+  assert.match(view.element('conferenceRows').innerHTML, /2 天 17 小时/);
+
+  // Events that never resolve to an instant stay reachable in their own window.
+  data.state.conferenceWindow = 'tbd';
+  view.render.renderConferenceTable();
+  const unresolved = view.element('conferenceRows').innerHTML;
+  assert.match(unresolved, /日期待定/);
+  assert.match(unresolved, /Mars\/Olympus · 时区无法解析/);
+  assert.match(unresolved, /conf-row unknown/);
+  assert.match(view.element('conferenceTableCount').textContent, /2 \/ 3 EVENTS · 待定或无法解析/);
+});
+
+test('the conference board reports a missing snapshot without touching other panels', () => {
+  const data = loadData();
+  data.state.conferences = { status: 'unavailable', source: { id: 'ccfddl', name: 'CCF-Deadlines' }, conferences: [], error: 'HTTP 503' };
+  data.state.conferenceRefreshError = '读取会议快照超时，请稍后重试';
+  const view = loadModelView(data);
+  view.render.renderConferences();
+  assert.match(view.element('conferenceStatus').textContent, /会议数据暂不可用，其他看板不受影响/);
+  assert.match(view.element('conferenceStatus').textContent, /快照读取失败，保留上次数据：读取会议快照超时/);
+  assert.equal(view.element('conferenceExport').disabled, true);
+  assert.equal(view.element('statNextDeadline').textContent, '—');
+  assert.match(view.element('conferenceUpcoming').innerHTML, /当前筛选没有匹配的时间节点/);
+  assert.match(view.element('conferenceRows').innerHTML, /等待会议数据|没有匹配的时间节点/);
+});
+
+test('conference refresh re-reads the published snapshot without touching the collector', async () => {
+  const payloads = {
+    ...publishedPayloads(),
+    './data/conferences.json': conferencePayload([conference('Saved', [conferenceEvent('AI/saved:saved26:paper:1')])])
+  };
+  const requested = [];
+  const data = loadData(async url => {
+    requested.push(url);
+    return jsonResponse(payloads[url], { status: Object.hasOwn(payloads, url) ? 200 : 404 });
+  });
+  await data.refreshConferenceSnapshot();
+  assert.equal(requested.filter(url => url === './data/conferences.json').length, 1);
+  assert.deepEqual(requested.filter(url => !url.startsWith('./data/')), [], 'the board must not call the third-party feed');
+  assert.deepEqual(Array.from(data.conferenceRows(CONF_NOW), row => row.title), ['Saved']);
+  assert.equal(data.conferenceStats(CONF_NOW).events, 1);
+});
+
+test('conference filters, paging, reset, refresh and CSV stay on the published snapshot', async () => {
+  const clock = testClock('2026-10-30T12:00:00.000Z');
+  const data = loadData(undefined, { Date: clock.Date });
+  const many = Array.from({ length: 25 }, (_, index) => conferenceEvent(
+    `AI/many:many26:paper:${index + 1}`, { utc: `2026-11-${String(index + 1).padStart(2, '0')}T12:00:00Z` }));
+  seedConferences(data, [
+    conference('=danger', [conferenceEvent('AI/danger:danger26:paper:1', { utc: '2026-11-01T00:00:00Z' })],
+      { key: 'AI/danger' }),
+    conference('Many', many),
+    conference('Gone', [conferenceEvent('AI/gone:gone26:paper:1', { utc: '2026-01-01T00:00:00Z' })]),
+    conference('Pending', [conferenceEvent('AI/pending:pending26:paper:1', { utc: null, tbd: true, source_local: 'TBD' })])
+  ]);
+  data.state.latest = { models: [] };
+  const booted = deferred();
+  let snapshotCalls = 0, snapshotFailure = null;
+  const viewData = {
+    ...data, loadAll: async () => {},
+    refreshConferenceSnapshot: async () => {
+      snapshotCalls++;
+      if (snapshotFailure) throw snapshotFailure;
+      return data.state.conferences;
+    }
+  };
+  const view = loadModelView(viewData), toasts = [];
+  view.context.Date = clock.Date;
+  view.context.MO.theme = { init() {} };
+  view.context.MO.templates = { init: async () => { booted.resolve(); } };
+  view.context.MO.render = Object.fromEntries(Object.entries(view.render).map(([name, render]) =>
+    [name, name.startsWith('renderConference') ? render : name === 'showToast' ? message => toasts.push(message) : () => {}]));
+  view.run('app.js');
+  await booted.promise;
+  assert.equal(snapshotCalls, 0, 'boot must not re-read the snapshot the page already loaded');
+
+  const change = (id, value) => view.element(id).events[
+    id === 'conferenceSearch' ? 'input' : 'change']({ target: { value } });
+  assert.match(view.element('conferenceTableCount').textContent, /^26 \/ 28 EVENTS · 未来 90 天$/);
+  assert.equal(view.element('conferencePagination').hidden, false);
+  assert.equal(view.element('conferencePageInfo').textContent, '1 / 2');
+  view.element('conferenceNext').events.click();
+  assert.equal(data.state.conferencePage, 2);
+  assert.match(view.element('conferencePageInfo').textContent, /^2 \/ 2$/);
+
+  change('conferenceSearch', 'many');
+  assert.equal(data.state.conferencePage, 1, 'a new filter returns to the first page');
+  assert.match(view.element('conferenceTableCount').textContent, /^25 \/ 28 EVENTS/);
+  change('conferenceSearch', '');
+  change('conferenceWindow', 'tbd');
+  assert.match(view.element('conferenceRows').innerHTML, /日期待定/);
+  change('conferenceKind', 'decision');
+  assert.match(view.element('conferenceRows').innerHTML, /没有匹配的时间节点/);
+
+  view.element('conferenceFilterReset').events.click();
+  assert.equal(data.state.conferenceKind, 'paper');
+  assert.equal(data.state.conferenceWindow, '90');
+  assert.equal(data.state.conferenceSearch, '');
+  assert.equal(view.element('conferenceKind').value, 'paper');
+  assert.equal(view.element('conferenceWindow').value, '90');
+  assert.match(view.element('conferenceStatus').textContent, /^CCF-Deadlines 快照/);
+
+  await view.element('conferenceRefresh').events.click();
+  assert.equal(snapshotCalls, 1);
+  assert.equal(view.element('conferenceRefresh').disabled, false);
+  assert.equal(view.element('conferenceRefresh').getAttribute('aria-busy'), 'false');
+  assert.equal(view.element('conferenceRefresh').textContent, '刷新已发布快照');
+  assert.match(toasts.at(-1), /已读取会议快照.*不会触发后台采集/);
+  snapshotFailure = new Error('HTTP 503');
+  await view.element('conferenceRefresh').events.click();
+  assert.match(toasts.at(-1), /会议快照读取失败：HTTP 503。保留上次数据/);
+  assert.equal(view.element('conferenceRefresh').disabled, false);
+
+  const parseCsv = text => text.replace(/^﻿/, '').split('\r\n').map(row =>
+    Array.from(row.matchAll(/"((?:[^"]|"")*)"/g), match => match[1].replace(/""/g, '"')));
+  view.element('conferenceExport').onclick();
+  assert.equal(view.blobs.at(-1).type, 'text/csv;charset=utf-8');
+  const [header, ...rows] = parseCsv(await view.blobs.at(-1).text());
+  assert.deepEqual(header, ['event_id', 'conference', 'conference_key', 'area', 'ccf', 'core', 'edition', 'year',
+    'kind', 'round', 'comment', 'deadline_utc', 'utc_offset_minutes', 'timezone_label', 'source_local',
+    'time_status', 'date_tbd', 'event_date', 'place', 'url', 'snapshot_captured_at', 'source_updated_at']);
+  assert.equal(rows.length, 26, 'CSV exports every filter match, not only the visible page');
+  assert.deepEqual(rows.map(row => row[0]), Array.from(data.conferenceRows(CONF_NOW), row => row.id));
+  assert.equal(rows[0][1], "'=danger", 'formula-leading source text is neutralised');
+  assert.equal(rows[0][11], '2026-11-01T00:00:00Z');
+  assert.equal(rows[0][12], '-720');
+  assert.equal(rows[0][16], 'false');
+  assert.equal(rows.at(-1)[11], '2026-11-25T12:00:00Z');
 });

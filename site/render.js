@@ -7,7 +7,8 @@ window.MO = window.MO || {};
 MO.render = (() => {
   'use strict';
 
-  const { esc, fmt, compact, countCN, signed, signedCN, tone, dayLabel, timestamp, ageInDays } = MO.format;
+  const { esc, fmt, compact, countCN, signed, signedCN, tone, dayLabel, timestamp, ageInDays,
+    countdown, deadlineTone, offsetLabel } = MO.format;
   const charts = MO.charts;
   const data = MO.data;
 
@@ -126,9 +127,10 @@ MO.render = (() => {
     $('statModelscopeProfileDownloadsSub').textContent = Number.isFinite(downloads)
       ? `精确值 ${fmt(downloads)} · 公开主页 User.Downloads`
       : '未采集到有效主页下载计数，不以模型计数替代';
+    const previousCapture = data.state.modelscopeSnapshots.findLast(snapshot => snapshot.profile_captured_at && Number.isFinite(snapshot.profile_downloads))?.profile_captured_at;
     $('modelscopeProfileCapturedAt').textContent = profile?.status === 'ok'
       ? `主页采集于 ${timestamp(profile.captured_at)} UTC${latest.status === 'stale' ? ' · 保留上次快照' : ''}`
-      : '主页采集暂不可用；已有历史记录仍保留';
+      : `主页采集暂不可用；已有历史记录仍保留${previousCapture ? ` · 最近有效记录 ${timestamp(previousCapture)} UTC` : ''}`;
     const delta = data.modelscopeProfileDelta();
     $('statModelscopeProfileChange').textContent = signedCN(delta?.value);
     $('statModelscopeProfileChange').title = signed(delta?.value);
@@ -147,6 +149,13 @@ MO.render = (() => {
       : '主页下载历史尚未开始；模型历史不作为替代';
   }
 
+  function snapshotFreshness(capture) {
+    const age = ageInDays(capture);
+    if (age === null) return { text: '采集时间未知', overdue: false };
+    const elapsed = age < 1 / 24 ? '距今不足 1 小时' : age < 2 ? `距今 ${Math.floor(age * 24)} 小时` : `距今 ${Math.floor(age)} 天`;
+    return { text: `${elapsed}${age >= 2 ? ' · 超过 48 小时未更新，请检查后台采集与部署' : ''}`, overdue: age >= 2 };
+  }
+
   function renderModelScopeBoard() {
     const state = data.state, latest = state.modelscope || {}, totals = data.modelscopeTotals();
     const available = ['ok', 'stale'].includes(latest.status);
@@ -162,12 +171,29 @@ MO.render = (() => {
     $('modelscopeProfileNote').textContent = profile?.status === 'ok'
       ? `公开主页显示 ${fmt(profile.model_count)} 个模型（含预发布），主页下载计数 ${fmt(profile.downloads)}；与本看板 OpenAPI 清单和计数不混用。主页指标采集于 ${timestamp(profile.captured_at)} UTC。`
       : '公开主页辅助指标暂不可用；不影响 OpenAPI 模型观测。';
-    const error = state.modelscopeRefreshError || latest.error;
-    $('modelscopeStatus').textContent = available
-      ? `${state.modelscopeSource === 'live' ? 'OpenAPI 实时清单' : '已发布 OpenAPI 快照'} · ${timestamp(latest.captured_at)} UTC${error ? ' · 刷新失败，保留上次数据' : ''}`
-      : 'ModelScope 数据暂不可用，其他看板不受影响。';
-    $('modelscopeStatus').title = error || '';
-    $('modelscopeStatus').classList.toggle('neg', Boolean(error));
+    const live = state.modelscopeSource === 'live';
+    const capture = live ? state.modelscopeSnapshotCapturedAt : latest.captured_at;
+    const savedStatus = live ? state.modelscopeSnapshotStatus : latest.status;
+    const savedError = live ? state.modelscopeSnapshotError : latest.error;
+    const captureLabel = value => Number.isFinite(Date.parse(value)) ? `${timestamp(value)} UTC` : '采集时间未知';
+    const status = [available
+      ? live ? `OpenAPI 实时清单 · 实时查询成功于 ${captureLabel(latest.captured_at)} · 后台最近成功采集 ${captureLabel(capture)}`
+        : `已发布 OpenAPI 快照 · 最近成功采集 ${captureLabel(capture)}`
+      : 'ModelScope 数据暂不可用，其他看板不受影响。'];
+    if (savedStatus === 'stale' || savedError) status.push(`后台采集失败，保留上次快照${savedError ? `：${savedError}` : ''}`);
+    if (state.modelscopeSnapshotRefreshError) status.push(`快照读取失败，保留上次数据：${state.modelscopeSnapshotRefreshError}`);
+    if (state.modelscopeRefreshError) status.push(`实时查询失败，保留上次数据：${state.modelscopeRefreshError}`);
+    $('modelscopeStatus').textContent = status.join(' · ');
+    $('modelscopeStatus').title = [state.modelscopeSnapshotRefreshError, state.modelscopeRefreshError, savedError].filter(Boolean).join('\n');
+    $('modelscopeStatus').classList.toggle('neg', !available || status.length > 1);
+    const modelAge = snapshotFreshness(capture);
+    const profileCapture = profile?.status === 'ok' ? profile.captured_at
+      : state.modelscopeSnapshots.findLast(snapshot => snapshot.profile_captured_at && Number.isFinite(snapshot.profile_downloads))?.profile_captured_at;
+    const profileAge = snapshotFreshness(profileCapture);
+    $('modelscopeFreshness').textContent = `模型快照：${modelAge.text}；主页${profile?.status === 'ok' ? '' : '最近有效历史'}：${profileAge.text}。`;
+    $('modelscopeFreshness').classList.toggle('neg', modelAge.overdue || profileAge.overdue);
+    $('modelscopeSnapshotCheckedAt').textContent = `${state.modelscopeSnapshotCheckedAt
+      ? `最近成功读取快照 ${timestamp(state.modelscopeSnapshotCheckedAt)} UTC` : '尚未成功读取快照'} · 读取不代表重新采集`;
     $('modelscopeExport').disabled = !available;
     const tasks = [...new Set((latest.models || []).flatMap(model => model.tasks))].sort();
     $('modelscopeTask').innerHTML = '<option value="all">全部任务类型</option>' + tasks.map(task => `<option value="${esc(task)}">${esc(task)}</option>`).join('');
@@ -175,6 +201,148 @@ MO.render = (() => {
     renderModelScopeProfile();
     renderModelScopeChart();
     renderModelScopeTable();
+  }
+
+  // --- Conference deadlines -------------------------------------------------
+
+  const DEADLINE_KIND_LABELS = { abstract: '摘要截止', paper: '论文截止', rebuttal: 'Rebuttal', decision: '录用通知' };
+  const WINDOW_LABELS = { 30: '未来 30 天', 90: '未来 90 天', 180: '未来 180 天', 365: '未来 365 天', open: '全部未截止', tbd: '待定或无法解析', past: '已截止' };
+  const TIME_STATUS_LABELS = { unknown_timezone: '时区无法解析', invalid_time: '时间无法解析' };
+
+  const kindLabel = row => DEADLINE_KIND_LABELS[row.kind] || row.kind || '未标注环节';
+
+  /** Only a resolvable UTC instant gets a countdown; anything else says why. */
+  function deadlineCountdown(row) {
+    if (row.tbd) return '日期待定';
+    if (!row.utc) return TIME_STATUS_LABELS[row.time_status] || '缺少可用时间';
+    return countdown(row.utc);
+  }
+
+  function deadlineChips(row) {
+    return `<span class="chip tiny conf-area">${esc(row.area || '未分类')}</span>` +
+      (row.ccf ? `<span class="chip tiny ccf-${esc(String(row.ccf).toLowerCase())}">CCF ${esc(row.ccf)}</span>` : '') +
+      (row.core ? `<span class="chip tiny">CORE ${esc(row.core)}</span>` : '');
+  }
+
+  function renderConferenceStatus() {
+    const state = data.state, payload = state.conferences;
+    const available = payload && ['ok', 'stale'].includes(payload.status);
+    const counts = payload?.counts || {};
+    const changes = payload?.changes;
+    const lines = [available
+      ? `${payload.source?.name || 'CCF-Deadlines'} 快照 · ${fmt(counts.conferences)} 个会议 · ${fmt(counts.events)} 个时间节点（论文 ${fmt(counts.paper_events)}）· 源数据更新于 ${timestamp(payload.source_updated_at)} UTC`
+      : '会议数据暂不可用，其他看板不受影响。'];
+    if (changes?.status === 'compared') {
+      lines.push(`较上次采集 新增 ${fmt(changes.added)} · 更新 ${fmt(changes.updated)} · 移除 ${fmt(changes.removed)}` +
+        `（对比 ${changes.previous_captured_at ? `${timestamp(changes.previous_captured_at)} UTC` : '—'}）`);
+    } else if (changes?.status === 'initial') lines.push('首次采集，后续每日快照开始对比变化');
+    if (payload?.status === 'stale' || payload?.error) lines.push(`后台采集失败，保留上次快照${payload.error ? `：${payload.error}` : ''}`);
+    if (state.conferenceRefreshError) lines.push(`快照读取失败，保留上次数据：${state.conferenceRefreshError}`);
+    if (available && (payload.warnings || []).length) lines.push(`${fmt(payload.warnings.length)} 条源记录有异常，已按原始标注保留`);
+    $('conferenceStatus').textContent = lines.join(' · ');
+    $('conferenceStatus').title = [payload?.error, state.conferenceRefreshError].filter(Boolean).join('\n');
+    $('conferenceStatus').classList.toggle('neg', !available || lines.length > 1);
+    const age = snapshotFreshness(payload?.captured_at);
+    $('conferenceFreshness').textContent = `${available ? `快照采集于 ${timestamp(payload.captured_at)} UTC · ` : ''}${age.text}` +
+      `${state.conferenceSnapshotCheckedAt ? ` · 最近读取 ${timestamp(state.conferenceSnapshotCheckedAt)} UTC（读取不触发采集）` : ''}`;
+    $('conferenceFreshness').classList.toggle('neg', age.overdue && Boolean(available));
+    $('conferenceExport').disabled = !available;
+    $('conferenceFilterReset').disabled = state.conferenceArea === 'all' && state.conferenceRank === 'all' &&
+      state.conferenceKind === 'paper' && state.conferenceWindow === '90' && !state.conferenceSearch;
+  }
+
+  function renderConferenceSummary() {
+    const stats = data.conferenceStats();
+    const next = stats.next;
+    $('conferenceCountBadge').textContent = fmt(stats.events);
+    $('statConferenceEvents').textContent = fmt(stats.events);
+    $('statConferenceEventsSub').textContent = `${fmt(stats.tbd)} 个节点尚未公布日期 · 来自每日快照`;
+    $('statPaper30').textContent = fmt(stats.paper30);
+    $('statPaper30Sub').textContent = stats.paper30 ? `未来 90 天共 ${fmt(stats.paper90)} 个论文截止` : '未来 30 天暂无论文截止';
+    $('statPaper90').textContent = fmt(stats.paper90);
+    const value = $('statNextDeadline');
+    value.textContent = next ? countdown(next.utc) : '—';
+    value.className = 'kpi-value ' + (next ? deadlineTone(next.utc) : '');
+    $('statNextDeadlineSub').textContent = next
+      ? [`${next.title}${next.year ? ` ${next.year}` : ''}`, kindLabel(next), `${timestamp(next.utc)} UTC`].join(' · ')
+      : '快照中没有未到期的时间节点';
+    $('statNextDeadline').title = next ? `${next.key} · ${next.edition}` : '';
+  }
+
+  function renderConferenceUpcoming() {
+    const rows = data.conferenceRows().slice(0, 6);
+    $('conferenceUpcomingNote').textContent = `${WINDOW_LABELS[data.state.conferenceWindow] || '当前筛选'} · 按剩余时间排序`;
+    if (!rows.length) {
+      $('conferenceUpcoming').innerHTML = '<div class="chart-empty">当前筛选没有匹配的时间节点。放宽窗口、换领域，或先清空搜索。</div>';
+      return;
+    }
+    $('conferenceUpcoming').innerHTML = rows.map(row => {
+      const tone = row.tbd || !row.utc ? 'unknown' : deadlineTone(row.utc);
+      const label = `${row.title}${row.year ? ` ${row.year}` : ''}`;
+      return `<div class="conf-item ${tone}">` +
+        `<div class="conf-when"><strong>${esc(deadlineCountdown(row))}</strong>` +
+        `<small>${row.utc ? `${esc(timestamp(row.utc))} UTC` : esc(row.source_local || '源数据未给出时间')}</small></div>` +
+        `<div class="conf-body"><div class="conf-name">` +
+        (row.url ? `<a href="${esc(row.url)}" target="_blank" rel="noopener noreferrer">${esc(label)} ↗</a>` : `<span>${esc(label)}</span>`) +
+        deadlineChips(row) + `</div>` +
+        `<div class="conf-meta">${esc(kindLabel(row))}${row.round > 1 ? ` · 第 ${esc(row.round)} 轮` : ''}` +
+        `${row.comment ? ` · ${esc(row.comment)}` : ''} · ${esc(row.timezone || '时区未标注')}` +
+        `${row.offset_minutes !== null ? ` (${esc(offsetLabel(row.offset_minutes))})` : ''}</div>` +
+        `<div class="conf-meta conf-place">${esc([row.date, row.place].filter(Boolean).join(' · ') || '会议日期与地点待定')}</div>` +
+        `</div></div>`;
+    }).join('');
+  }
+
+  function renderConferenceTable() {
+    const state = data.state;
+    const rows = data.conferenceRows();
+    const pages = data.conferencePageCount();
+    state.conferencePage = Math.min(Math.max(1, state.conferencePage), pages);
+    $('conferenceTableCount').textContent =
+      `${fmt(rows.length)} / ${fmt(data.conferenceEvents().length)} EVENTS · ${WINDOW_LABELS[state.conferenceWindow] || ''}`;
+    const offset = (state.conferencePage - 1) * 20;
+    $('conferenceRows').innerHTML = rows.length ? rows.slice(offset, offset + 20).map(row => {
+      const tone = row.tbd || !row.utc ? 'unknown' : deadlineTone(row.utc);
+      return `<tr class="conf-row ${tone}">` +
+        `<td>${row.url ? `<a class="model-link" href="${esc(row.url)}" target="_blank" rel="noopener noreferrer">${esc(row.title)} ↗</a>` : `<span class="model-title">${esc(row.title)}</span>`}` +
+        `<div class="micro muted">${esc(row.key)} · ${esc(row.edition)}</div></td>` +
+        `<td>${deadlineChips(row)}</td>` +
+        `<td>${esc(kindLabel(row))}${row.round > 1 ? ` · 第 ${esc(row.round)} 轮` : ''}` +
+        `${row.comment ? `<div class="micro muted">${esc(row.comment)}</div>` : ''}</td>` +
+        `<td class="align-right conf-utc">${row.utc ? `${esc(timestamp(row.utc))}<div class="micro muted">${esc(offsetLabel(row.offset_minutes))}</div>` : '<span class="muted">—</span>'}</td>` +
+        `<td>${esc(row.source_local || '—')}<div class="micro muted">${esc(row.timezone || '时区未标注')}` +
+        `${TIME_STATUS_LABELS[row.time_status] ? ` · ${esc(TIME_STATUS_LABELS[row.time_status])}` : ''}</div></td>` +
+        `<td class="align-right conf-left">${esc(deadlineCountdown(row))}</td>` +
+        `<td class="micro">${esc([row.date, row.place].filter(Boolean).join(' · ') || '待定')}</td></tr>`;
+    }).join('') : '<tr><td colspan="7" class="no-rows">当前筛选没有匹配的时间节点</td></tr>';
+    $('conferencePageInfo').textContent = `${state.conferencePage} / ${pages}`;
+    $('conferencePrev').disabled = state.conferencePage === 1;
+    $('conferenceNext').disabled = state.conferencePage === pages;
+    $('conferencePagination').hidden = rows.length <= 20;
+  }
+
+  function renderConferences() {
+    const state = data.state;
+    const select = $('conferenceArea');
+
+    // Only rebuild the area list when the snapshot changes, so the open
+    // dropdown is not thrown away on every re-render.
+    const areas = data.conferenceAreas();
+    const signature = ['all', ...areas].join('|');
+    if (select.dataset.signature !== signature) {
+      select.dataset.signature = signature;
+      select.innerHTML = '<option value="all">全部领域</option>' +
+        areas.map(area => `<option value="${esc(area)}">${esc(area)}</option>`).join('');
+      if (!areas.includes(state.conferenceArea)) state.conferenceArea = 'all';
+    }
+    select.value = state.conferenceArea;
+    $('conferenceRank').value = state.conferenceRank;
+    $('conferenceKind').value = state.conferenceKind;
+    $('conferenceWindow').value = state.conferenceWindow;
+    renderConferenceStatus();
+    renderConferenceSummary();
+    renderConferenceUpcoming();
+    renderConferenceTable();
   }
 
   // --- Models ---------------------------------------------------------------
@@ -866,6 +1034,11 @@ MO.render = (() => {
     renderCollections,
     renderModelScopeBoard,
     renderModelScopeTable,
+    renderConferences,
+    renderConferenceStatus,
+    renderConferenceSummary,
+    renderConferenceUpcoming,
+    renderConferenceTable,
     renderModelScopeChart,
     renderSummary,
     renderOverall,

@@ -61,19 +61,74 @@
     download(`isLinXu-modelscope-${latest.date || 'latest'}.csv`, '\uFEFF' + content, 'text/csv;charset=utf-8');
   }
 
-  async function refreshModelScope(manual = true) {
-    const button = $('modelscopeRefresh');
-    button.disabled = true;
-    button.textContent = '读取公开清单…';
+  async function refreshModelScope(live = false) {
+    const snapshotButton = $('modelscopeRefresh'), liveButton = $('modelscopeLiveRefresh');
+    if (snapshotButton.disabled || liveButton.disabled) return;
+    const button = live ? liveButton : snapshotButton;
+    snapshotButton.disabled = liveButton.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = live ? '查询实时清单…' : '读取已发布快照…';
     try {
-      await data.refreshModelScope();
-      if (manual) render.showToast('ModelScope 公开清单已刷新；主页下载、关注者及历史曲线仍来自每日快照。');
+      if (live) {
+        await data.refreshModelScope();
+        render.showToast('实时查询成功；仅更新模型清单，主页下载、关注者及历史曲线仍来自每日快照。');
+      } else {
+        const latest = await data.refreshModelScopeSnapshot();
+        render.showToast(latest.status === 'ok'
+          ? '已读取已发布快照；采集时间以页面标注为准，不会触发后台采集。'
+          : '已读取已发布快照，但后台尚无新的成功采集；不会触发后台采集。');
+      }
     } catch (error) {
-      if (manual) render.showToast(`ModelScope 刷新失败：${error.message}。保留上次数据。`);
+      render.showToast(`${live ? '实时查询' : '快照读取'}失败：${error.message}。保留上次数据。`);
     } finally {
+      snapshotButton.disabled = liveButton.disabled = false;
+      button.setAttribute('aria-busy', 'false');
+      snapshotButton.textContent = '刷新已发布快照';
+      liveButton.textContent = '尝试实时查询';
       render.renderModelScopeBoard();
+    }
+  }
+
+  /** Third-party text can start with a formula marker, so guard CSV cells. */
+  function csvCell(value) {
+    return typeof value === 'string' && /^[=+\-@\t\r\n]/.test(value) ? `'${value}` : value;
+  }
+
+  function exportConferenceCsv() {
+    const payload = data.state.conferences || {};
+    const header = ['event_id', 'conference', 'conference_key', 'area', 'ccf', 'core', 'edition', 'year',
+      'kind', 'round', 'comment', 'deadline_utc', 'utc_offset_minutes', 'timezone_label', 'source_local',
+      'time_status', 'date_tbd', 'event_date', 'place', 'url', 'snapshot_captured_at', 'source_updated_at'];
+    const rows = data.conferenceRows().map(row => [
+      row.id, row.title, row.key, row.area, row.ccf, row.core, row.edition, row.year, row.kind, row.round,
+      row.comment, row.utc, row.offset_minutes, row.timezone, row.source_local, row.time_status, row.tbd,
+      row.date, row.place, row.url, payload.captured_at, payload.source_updated_at
+    ]);
+    const date = String(payload.captured_at || '').slice(0, 10) || 'latest';
+    download(`conference-deadlines-${date}.csv`,
+      '\uFEFF' + [header, ...rows].map(row => row.map(value => csvEscape(csvCell(value))).join(',')).join('\r\n'),
+      'text/csv;charset=utf-8');
+  }
+
+  /** Re-read the published conference snapshot; collection stays in the daily workflow. */
+  async function refreshConferences() {
+    const button = $('conferenceRefresh');
+    if (button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = '读取已发布快照…';
+    try {
+      const payload = await data.refreshConferenceSnapshot();
+      render.showToast(payload.status === 'ok'
+        ? '已读取会议快照；采集时间以页面标注为准，不会触发后台采集。'
+        : '已读取会议快照，但后台最近一次采集未成功；页面继续显示上次数据。');
+    } catch (error) {
+      render.showToast(`会议快照读取失败：${error.message}。保留上次数据。`);
+    } finally {
       button.disabled = false;
-      button.textContent = '刷新实时清单';
+      button.setAttribute('aria-busy', 'false');
+      button.textContent = '刷新已发布快照';
+      render.renderConferences();
     }
   }
 
@@ -227,6 +282,7 @@
 
   function bind() {
     $('modelscopeRefresh').addEventListener('click', () => refreshModelScope());
+    $('modelscopeLiveRefresh').addEventListener('click', () => refreshModelScope(true));
     $('modelscopeExport').onclick = exportModelScopeCsv;
     for (const [id, key, eventName] of [['modelscopeSearch', 'modelscopeSearch', 'input'], ['modelscopeTask', 'modelscopeTask', 'change'], ['modelscopeSort', 'modelscopeSort', 'change']]) {
       $(id).addEventListener(eventName, event => {
@@ -261,6 +317,36 @@
       $('modelscopeChartReset').focus({ preventScroll: true });
       $('modelscopeChart').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'center' });
     });
+    // Conference board: filters only touch the list and the urgency panel.
+    for (const [id, key, eventName] of [
+      ['conferenceSearch', 'conferenceSearch', 'input'], ['conferenceArea', 'conferenceArea', 'change'],
+      ['conferenceRank', 'conferenceRank', 'change'], ['conferenceKind', 'conferenceKind', 'change'],
+      ['conferenceWindow', 'conferenceWindow', 'change']]) {
+      $(id).addEventListener(eventName, event => {
+        data.state[key] = event.target.value;
+        data.state.conferencePage = 1;
+        render.renderConferenceUpcoming();
+        render.renderConferenceTable();
+        render.renderConferenceStatus();
+      });
+    }
+    $('conferenceFilterReset').addEventListener('click', () => {
+      Object.assign(data.state, {
+        conferenceSearch: '', conferenceArea: 'all', conferenceRank: 'all',
+        conferenceKind: 'paper', conferenceWindow: '90', conferencePage: 1
+      });
+      render.renderConferences();
+    });
+    $('conferencePrev').addEventListener('click', () => {
+      data.state.conferencePage--;
+      render.renderConferenceTable();
+    });
+    $('conferenceNext').addEventListener('click', () => {
+      data.state.conferencePage++;
+      render.renderConferenceTable();
+    });
+    $('conferenceRefresh').addEventListener('click', refreshConferences);
+    $('conferenceExport').onclick = exportConferenceCsv;
     $('collectionFilter').addEventListener('change', event => selectCollection(event.target.value));
     $('collectionReset').addEventListener('click', () => selectCollection('all'));
     $('collectionRefresh').addEventListener('click', refreshCollections);
@@ -437,6 +523,7 @@
     render.renderSocial();
     render.renderGitHub();
     render.renderModelScopeBoard();
+    render.renderConferences();
   }
 
   async function boot() {
@@ -456,8 +543,8 @@
       try { render.renderSocial(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderGitHub(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderModelScopeBoard(); } catch (secondaryError) { console.error(secondaryError); }
+      try { render.renderConferences(); } catch (secondaryError) { console.error(secondaryError); }
     }
-    refreshModelScope(false);
     // The template library is independent of the download data, so it loads
     // on its own and a failure here never blocks the other boards.
     MO.templates.init().catch(error => console.error('模版库初始化失败：', error));

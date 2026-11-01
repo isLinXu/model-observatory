@@ -43,6 +43,7 @@
         <a href="#collections"><span class="navglyph">▦</span> 集合分类</a>
         <a href="#datasets"><span class="navglyph">▤</span> 数据集</a>
         <a href="#modelscope"><span class="navglyph">▦</span> ModelScope</a>
+        <a href="#conferences"><span class="navglyph">◴</span> 顶会截止</a>
         <a href="#scholar"><span class="navglyph">✦</span> 学术主页</a>
         <a href="#social"><span class="navglyph">◎</span> 社交媒体</a>
         <a href="#github"><span class="navglyph">◐</span> GitHub 看板</a>
@@ -130,8 +131,13 @@
       </section>
 
       <section id="modelscope" class="model-section">
-        <div class="section-heading"><div><div class="section-eyebrow">MODELSCOPE / ISLINXU</div><h2>魔搭模型观测</h2><p>独立记录 ModelScope 公开模型，不与 Hugging Face 重复合计</p></div><div class="section-actions"><a class="button secondary" href="https://www.modelscope.cn/profile/isLinXu" target="_blank" rel="noopener noreferrer">魔搭主页 ↗</a><button class="button secondary" id="modelscopeRefresh">刷新实时清单</button><button class="button" id="modelscopeExport" disabled>导出筛选 CSV</button></div></div>
-        <p id="modelscopeStatus" class="collection-note" role="status" aria-live="polite">正在读取 ModelScope 快照…</p>
+        <div class="section-heading"><div><div class="section-eyebrow">MODELSCOPE / ISLINXU</div><h2>魔搭模型观测</h2><p>独立记录 ModelScope 公开模型，不与 Hugging Face 重复合计</p></div><div class="section-actions"><a class="button secondary" href="https://www.modelscope.cn/profile/isLinXu" target="_blank" rel="noopener noreferrer">魔搭主页 ↗</a><button class="button secondary" id="modelscopeRefresh" aria-describedby="modelscopeRefreshHelp">刷新已发布快照</button><button class="button text-button" id="modelscopeLiveRefresh" aria-describedby="modelscopeRefreshHelp">尝试实时查询</button><button class="button" id="modelscopeExport" disabled>导出筛选 CSV</button></div></div>
+        <div class="modelscope-data-status" role="status" aria-live="polite">
+          <p id="modelscopeStatus" class="collection-note">正在读取 ModelScope 快照…</p>
+          <p id="modelscopeFreshness" class="collection-note">等待采集时间</p>
+          <p id="modelscopeSnapshotCheckedAt" class="micro muted">尚未成功读取快照</p>
+        </div>
+        <p id="modelscopeRefreshHelp" class="collection-note">默认读取本站已发布数据。刷新快照不会触发后台采集；后台每日采集，发布时间可能延迟。实时查询仅尝试更新模型清单，可能受网络或跨域限制，失败时保留当前数据。</p>
         <div class="modelscope-profile">
           <div class="modelscope-profile-stats">
             <div class="kpi accent-kpi"><div class="kpi-label">主页下载计数</div><div id="statModelscopeProfileDownloads" class="kpi-value">—</div><div id="statModelscopeProfileDownloadsSub" class="kpi-caption">公开主页 User.Downloads · 每日快照</div></div>
@@ -139,7 +145,7 @@
           </div>
           <div class="panel"><div class="panel-head"><div><div class="panel-overline">PROFILE DOWNLOADS / DAILY SNAPSHOTS</div><h2>主页下载趋势</h2><p id="modelscopeProfileCapturedAt">等待主页采集</p></div></div><div id="modelscopeProfileChart" class="chart-area"></div><div class="chart-footer"><span id="modelscopeProfileChartNote" class="micro muted">等待首次主页下载快照</span></div></div>
         </div>
-        <p class="collection-note">主页下载计数直接取自公开主页，与下方模型列表的下载计数之和独立观测；统计范围和时间窗口未明确，不互相替代或相加。净变化是两次快照的计数差，不代表独立日下载量；缺失记录不补零，下降保留为计数修正。刷新实时清单不会更新主页快照。</p>
+        <p class="collection-note">主页下载计数直接取自公开主页，与下方模型列表的下载计数之和独立观测；统计范围和时间窗口未明确，不互相替代或相加。净变化是两次快照的计数差，不代表独立日下载量；缺失记录不补零，下降保留为计数修正。实时查询不会更新主页快照；刷新已发布快照可读取后台保存的主页数据与历史。</p>
         <div class="kpis">
           <div class="kpi"><div class="kpi-label">公开模型</div><div id="statModelscopeModels" class="kpi-value">—</div><div class="kpi-caption">官方 OpenAPI 可枚举模型</div></div>
           <div class="kpi"><div class="kpi-label">模型下载计数之和</div><div id="statModelscopeDownloads" class="kpi-value">—</div><div id="statModelscopeDownloadsSub" class="kpi-caption">仅 ModelScope downloads 字段</div></div>
@@ -153,6 +159,34 @@
         <div class="table-scroll"><table class="models-table modelscope-table"><thead><tr><th>模型名称</th><th class="align-right">下载计数</th><th class="align-right">点赞</th><th class="align-right">上次快照净变</th><th>任务</th><th>更新时间</th><th>访问状态</th><th>历史</th></tr></thead><tbody id="modelscopeRows"><tr><td colspan="8" class="no-rows">等待 ModelScope 数据</td></tr></tbody></table></div>
         <div id="modelscopePagination" class="pagination" hidden><button class="button secondary" id="modelscopePrev">上一页</button><span id="modelscopePageInfo" class="micro muted">—</span><button class="button secondary" id="modelscopeNext">下一页</button></div>
         <div class="table-bottom"><span>数据来源：ModelScope 官方公开 OpenAPI 与公开主页；不使用访问令牌，仅记录匿名可见的元数据。公开或需申请访问不代表权重可直接推理。</span></div>
+      </section>
+
+      <section id="conferences" class="model-section">
+        <div class="section-heading"><div><div class="section-eyebrow">CONFERENCE BOARD / CCF-DEADLINES</div><h2>顶会投稿截止 <span id="conferenceCountBadge">0</span></h2><p>收录公开会议日历的投稿节点，统一换算为 UTC 并倒计时</p></div><div class="section-actions"><button class="button secondary" id="conferenceRefresh">刷新已发布快照</button><button class="button" id="conferenceExport" disabled>↓ 导出筛选 CSV</button></div></div>
+        <div class="modelscope-data-status" role="status" aria-live="polite">
+          <p id="conferenceStatus" class="collection-note">正在读取会议快照…</p>
+          <p id="conferenceFreshness" class="micro muted">等待采集时间</p>
+        </div>
+        <p class="collection-note">默认读取本站已发布数据。「刷新已发布快照」只重新读取文件，不会触发后台采集；后台每日采集一次，发布时间可能延迟。倒计时以采集器换算的 UTC 时刻为准，「源始时间」保留来源标注的当地时刻与时区原文，无法换算的条目照原样展示、不做推测。</p>
+        <div class="kpis">
+          <div class="kpi accent-kpi"><div class="kpi-label">最近一个截止 <span class="kpi-symbol teal">⌁</span></div><div id="statNextDeadline" class="kpi-value">—</div><div id="statNextDeadlineSub" class="kpi-caption">快照中最早到期的节点</div></div>
+          <div class="kpi"><div class="kpi-label">未来 30 天论文截止 <span class="kpi-symbol blue">◷</span></div><div id="statPaper30" class="kpi-value">—</div><div id="statPaper30Sub" class="kpi-caption">按 UTC 换算的论文稿提交</div></div>
+          <div class="kpi"><div class="kpi-label">未来 90 天论文截止 <span class="kpi-symbol">▦</span></div><div id="statPaper90" class="kpi-value">—</div><div class="kpi-caption">提前规划投稿节奏</div></div>
+          <div class="kpi"><div class="kpi-label">收录时间节点 <span class="kpi-symbol">◈</span></div><div id="statConferenceEvents" class="kpi-value">—</div><div id="statConferenceEventsSub" class="kpi-caption">摘要 / 论文 / Rebuttal / 录用</div></div>
+        </div>
+        <div class="panel conference-panel"><div class="panel-head"><div><div class="panel-overline">NEXT UP</div><h2>即将截止 <small>TOP 6</small></h2><p id="conferenceUpcomingNote">当前筛选下最近的时间节点</p></div><span class="mini-icon">◷</span></div><div id="conferenceUpcoming" class="conf-list"><div class="chart-empty">等待会议数据</div></div><div class="top-footer">COUNTDOWN USES THE UTC INSTANT FROM THE DAILY SNAPSHOT <span>● DAILY SNAPSHOTS</span></div></div>
+        <div class="table-toolbar">
+          <label class="search-box"><span>⌕</span><input id="conferenceSearch" placeholder="搜索会议名称、缩写或举办地" aria-label="搜索会议" autocomplete="off"></label>
+          <select id="conferenceArea" aria-label="会议领域"><option value="all">全部领域</option></select>
+          <select id="conferenceRank" aria-label="CCF 等级"><option value="all">全部等级</option><option value="A">CCF A</option><option value="B">CCF B</option><option value="C">CCF C</option><option value="N">未评级 (N)</option></select>
+          <select id="conferenceKind" aria-label="截止环节"><option value="paper">论文截止</option><option value="abstract">摘要截止</option><option value="rebuttal">Rebuttal</option><option value="decision">录用通知</option><option value="all">全部环节</option></select>
+          <select id="conferenceWindow" aria-label="时间窗口"><option value="30">未来 30 天</option><option value="90">未来 90 天</option><option value="180">未来 180 天</option><option value="365">未来 365 天</option><option value="open">全部未截止</option><option value="tbd">待定或无法解析</option><option value="past">已截止</option></select>
+          <button class="button secondary" id="conferenceFilterReset">重置筛选</button>
+          <span class="toolbar-spacer"></span><span id="conferenceTableCount" class="micro muted">—</span>
+        </div>
+        <div class="table-scroll"><table class="models-table conference-table"><thead><tr><th>会议</th><th>领域与等级</th><th>环节</th><th class="align-right">UTC 截止</th><th>源始时间</th><th class="align-right">倒计时</th><th>举办信息</th></tr></thead><tbody id="conferenceRows"><tr><td colspan="7" class="no-rows">等待会议数据</td></tr></tbody></table></div>
+        <div id="conferencePagination" class="pagination" hidden><button class="button secondary" id="conferencePrev">上一页</button><span id="conferencePageInfo" class="micro muted">—</span><button class="button secondary" id="conferenceNext">下一页</button></div>
+        <div class="table-bottom"><span>说明：「日期待定」与「无法解析」保留来源原文，不当作 0 也不倒推。同一会议可有多个环节与轮次，等级沿用来源的 CCF/CORE 标注。投稿前请以会议官网为准。</span></div>
       </section>
 
       <section id="scholar" class="model-section">

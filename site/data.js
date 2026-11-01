@@ -51,12 +51,26 @@ MO.data = (() => {
     modelscopeSnapshots: [],
     modelscopeSource: 'snapshot',
     modelscopeRefreshError: null,
+    modelscopeSnapshotRefreshError: null,
+    modelscopeSnapshotCapturedAt: null,
+    modelscopeSnapshotCheckedAt: null,
+    modelscopeSnapshotStatus: null,
+    modelscopeSnapshotError: null,
     modelscopeSearch: '',
     modelscopeTask: 'all',
     modelscopeSort: 'downloads',
     modelscopePage: 1,
     modelscopeModel: 'all',
     modelscopeMetric: 'downloads',
+    conferences: null,
+    conferenceSnapshotCheckedAt: null,
+    conferenceRefreshError: null,
+    conferenceSearch: '',
+    conferenceArea: 'all',
+    conferenceRank: 'all',
+    conferenceKind: 'paper',
+    conferenceWindow: '90',
+    conferencePage: 1,
     status: 'loading'
   };
 
@@ -88,8 +102,8 @@ MO.data = (() => {
   }
 
   /** Fetch JSON with a clear error message instead of a bare status code. */
-  async function getJSON(url, label) {
-    const response = await fetch(url, { cache: 'no-store' });
+  async function getJSON(url, label, options = {}) {
+    const response = await fetch(url, { ...options, cache: 'no-store' });
     if (!response.ok) throw new Error(`${label} 读取失败（HTTP ${response.status}）`);
     return response.json();
   }
@@ -351,22 +365,46 @@ MO.data = (() => {
   const msIdValid = id => typeof id === 'string' && /^isLinXu\/[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id) && !id.includes('..');
   const msCount = value => Number.isSafeInteger(value) && value >= 0 ? value : null;
 
-  async function loadModelScope() {
+  async function refreshModelScopeSnapshot() {
     try {
+      const signal = AbortSignal.timeout(20000);
       const [latest, history] = await Promise.all([
-        getJSON('./data/modelscope.json', 'ModelScope 数据'),
-        getJSON('./data/modelscope_history.json', 'ModelScope 历史')
+        getJSON('./data/modelscope.json', 'ModelScope 数据', { signal }),
+        getJSON('./data/modelscope_history.json', 'ModelScope 历史', { signal })
       ]);
       if ([latest, history].some(item => item?.schema_version !== 1 || item.author !== MODELSCOPE_AUTHOR || item.metric_source !== MODELSCOPE_SOURCE) ||
           !['ok', 'stale', 'unavailable'].includes(latest.status) || !Array.isArray(latest.models) ||
-          latest.models.some(model => !msIdValid(model.id) || !Array.isArray(model.tasks)) || !Array.isArray(history.snapshots)) {
+          latest.models.some(model => !msIdValid(model?.id) || !Array.isArray(model.tasks)) || !Array.isArray(history.snapshots) ||
+          history.snapshots.some(snapshot => typeof snapshot?.date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(snapshot.date))) {
         throw new Error('ModelScope 快照格式或统计来源不兼容');
       }
+      const snapshots = [...history.snapshots].sort((a, b) => a.date.localeCompare(b.date));
+      const checkedAt = new Date().toISOString();
       state.modelscope = latest;
-      state.modelscopeSnapshots = [...history.snapshots].sort((a, b) => a.date.localeCompare(b.date));
+      state.modelscopeSnapshots = snapshots;
+      state.modelscopeSource = 'snapshot';
+      state.modelscopeSnapshotCapturedAt = latest.status === 'unavailable' ? null : latest.captured_at || null;
+      state.modelscopeSnapshotCheckedAt = checkedAt;
+      state.modelscopeSnapshotStatus = latest.status;
+      state.modelscopeSnapshotError = latest.error || null;
+      state.modelscopeSnapshotRefreshError = null;
+      state.modelscopeRefreshError = null;
+      if (state.modelscopeModel !== 'all' && !latest.models.some(model => model.id === state.modelscopeModel)) state.modelscopeModel = 'all';
+      if (state.modelscopeTask !== 'all' && !latest.models.some(model => model.tasks.includes(state.modelscopeTask))) state.modelscopeTask = 'all';
+      return latest;
     } catch (error) {
-      state.modelscope = { status: 'unavailable', author: MODELSCOPE_AUTHOR, models: [], error: error.message };
-      state.modelscopeSnapshots = [];
+      state.modelscopeSnapshotRefreshError = error.name === 'TimeoutError' ? '读取已发布快照超时，请稍后重试' : error.message;
+      throw new Error(state.modelscopeSnapshotRefreshError);
+    }
+  }
+
+  async function loadModelScope() {
+    try {
+      await refreshModelScopeSnapshot();
+    } catch (error) {
+      if (!state.modelscope) {
+        state.modelscope = { status: 'unavailable', author: MODELSCOPE_AUTHOR, models: [], error: error.message };
+      }
       console.warn('ModelScope 快照读取失败：', error);
     }
   }
@@ -418,8 +456,10 @@ MO.data = (() => {
       if (state.modelscopeTask !== 'all' && !models.some(model => model.tasks.includes(state.modelscopeTask))) state.modelscopeTask = 'all';
       return state.modelscope;
     } catch (error) {
-      state.modelscopeRefreshError = error.message;
-      throw error;
+      state.modelscopeRefreshError = error.name === 'TypeError'
+        ? `网络或跨域限制（${error.message}），请使用已发布快照`
+        : error.name === 'TimeoutError' ? '实时查询超时，请稍后重试或使用已发布快照' : error.message;
+      throw new Error(state.modelscopeRefreshError);
     }
   }
 
@@ -478,10 +518,156 @@ MO.data = (() => {
     return compared ? { value, compared, from: older.date, to: newer.date } : null;
   }
 
+  // --- Conference deadlines -------------------------------------------------
+
+  const CONFERENCE_SOURCE_ID = 'ccfddl';
+  const CONFERENCE_PAGE_SIZE = 20;
+  const WINDOW_DAYS = { 30: 30, 90: 90, 180: 180, 365: 365 };
+
+  /** Flattened events stay cached until a new payload replaces the snapshot. */
+  let conferenceIndex = null;
+
+  function validateConferencePayload(payload) {
+    if (payload?.schema_version !== 1 || payload?.source?.id !== CONFERENCE_SOURCE_ID ||
+        !['ok', 'stale', 'unavailable'].includes(payload.status) || !Array.isArray(payload.conferences) ||
+        payload.conferences.some(conference => typeof conference?.key !== 'string')) {
+      throw new Error('会议快照格式或数据来源不兼容');
+    }
+    return payload;
+  }
+
+  /**
+   * Re-read the published conference snapshot. The feed is refreshed by the
+   * daily workflow, so a failure keeps the previous payload visible.
+   */
+  async function refreshConferenceSnapshot() {
+    try {
+      const payload = validateConferencePayload(await getJSON(
+        './data/conferences.json', '会议快照', { signal: AbortSignal.timeout(20000) }));
+      state.conferences = payload;
+      state.conferenceSnapshotCheckedAt = new Date().toISOString();
+      state.conferenceRefreshError = null;
+      if (state.conferenceArea !== 'all' && !payload.conferences.some(item => item.area === state.conferenceArea)) {
+        state.conferenceArea = 'all';
+      }
+      notify();
+      return payload;
+    } catch (error) {
+      state.conferenceRefreshError = error.name === 'TimeoutError'
+        ? '读取会议快照超时，请稍后重试' : error.message;
+      throw new Error(state.conferenceRefreshError);
+    }
+  }
+
+  async function loadConferences() {
+    try {
+      await refreshConferenceSnapshot();
+    } catch (error) {
+      if (!state.conferences) {
+        state.conferences = { status: 'unavailable', source: { id: CONFERENCE_SOURCE_ID }, conferences: [], error: error.message };
+      }
+      console.warn('会议快照读取失败：', error);
+    }
+  }
+
+  function conferenceEvents() {
+    const payload = state.conferences;
+    if (!Array.isArray(payload?.conferences)) return [];
+    if (conferenceIndex && conferenceIndex.payload === payload) return conferenceIndex.rows;
+    const rows = [];
+    for (const conference of payload.conferences) {
+      const rank = conference.rank || {};
+      for (const edition of conference.editions || []) {
+        for (const event of edition.events || []) {
+          if (typeof event?.id !== 'string') continue;
+          rows.push({
+            id: event.id,
+            kind: event.kind,
+            round: event.round,
+            comment: event.comment || '',
+            tbd: event.tbd === true,
+            source_local: event.source_local || '',
+            timezone: event.timezone || '',
+            offset_minutes: Number.isFinite(event.offset_minutes) ? event.offset_minutes : null,
+            time_status: event.time_status || 'ok',
+            utc: typeof event.utc === 'string' ? event.utc : null,
+            ts: Date.parse(event.utc),
+            key: conference.key,
+            title: conference.title || conference.key,
+            area: conference.area || '',
+            ccf: rank.ccf || '',
+            core: rank.core || '',
+            edition: edition.id || '',
+            year: Number.isFinite(edition.year) ? edition.year : null,
+            date: edition.date || '',
+            place: edition.place || '',
+            url: /^https?:\/\/.+/i.test(edition.url || '') ? edition.url : null
+          });
+        }
+      }
+    }
+    rows.sort((a, b) => (Number.isFinite(a.ts) ? a.ts : Infinity) - (Number.isFinite(b.ts) ? b.ts : Infinity) ||
+      a.id.localeCompare(b.id));
+    conferenceIndex = { payload, rows };
+    return rows;
+  }
+
+  function conferenceAreas() {
+    return [...new Set(conferenceEvents().map(row => row.area).filter(Boolean))].sort();
+  }
+
+  /** Rows for the current filters, soonest first (most recent first when past). */
+  function conferenceRows(now = Date.now()) {
+    const window = state.conferenceWindow;
+    const search = state.conferenceSearch.trim().toLowerCase();
+    const horizon = Object.hasOwn(WINDOW_DAYS, window) ? now + WINDOW_DAYS[window] * 86400000 : null;
+    const rows = conferenceEvents().filter(row => {
+      if (state.conferenceArea !== 'all' && row.area !== state.conferenceArea) return false;
+      if (state.conferenceRank !== 'all' && row.ccf !== state.conferenceRank) return false;
+      if (state.conferenceKind !== 'all' && row.kind !== state.conferenceKind) return false;
+      if (window === 'tbd') {
+        // Events without any usable instant would otherwise be invisible.
+        if (!row.tbd && Number.isFinite(row.ts)) return false;
+      } else if (window === 'past') {
+        if (!Number.isFinite(row.ts) || row.ts >= now) return false;
+      } else if (window === 'open') {
+        if (!Number.isFinite(row.ts) || row.ts < now) return false;
+      } else if (!Number.isFinite(row.ts) || row.ts < now || row.ts > horizon) return false;
+      return !search || `${row.title} ${row.key} ${row.place} ${row.date}`.toLowerCase().includes(search);
+    });
+    const direction = window === 'past' ? -1 : 1;
+    return rows.sort((a, b) => direction * (a.ts - b.ts) || a.id.localeCompare(b.id));
+  }
+
+  function conferencePageCount() {
+    return Math.max(1, Math.ceil(conferenceRows().length / CONFERENCE_PAGE_SIZE));
+  }
+
+  function conferencePage(now = Date.now()) {
+    const start = (Math.min(Math.max(1, state.conferencePage), conferencePageCount()) - 1) * CONFERENCE_PAGE_SIZE;
+    return conferenceRows(now).slice(start, start + CONFERENCE_PAGE_SIZE);
+  }
+
+  /** Headline numbers, deliberately independent of the table filters. */
+  function conferenceStats(now = Date.now()) {
+    const stats = { events: 0, tbd: 0, paper30: 0, paper90: 0, next: null };
+    for (const row of conferenceEvents()) {
+      stats.events++;
+      if (row.tbd) stats.tbd++;
+      if (!Number.isFinite(row.ts) || row.ts < now) continue;
+      if (row.kind === 'paper') {
+        if (row.ts <= now + 30 * 86400000) stats.paper30++;
+        if (row.ts <= now + 90 * 86400000) stats.paper90++;
+      }
+      if (!stats.next || row.ts < stats.next.ts) stats.next = row;
+    }
+    return stats;
+  }
+
   /** Load every dataset. Only a download failure is fatal for the page. */
   async function loadAll() {
     const [downloads] = await Promise.allSettled([
-      loadDownloads(), loadScholar(), loadSocial(), loadGitHub(), loadModelScope()
+      loadDownloads(), loadScholar(), loadSocial(), loadGitHub(), loadModelScope(), loadConferences()
     ]);
     if (downloads.status === 'rejected') throw downloads.reason;
     state.status = 'ready';
@@ -798,11 +984,20 @@ MO.data = (() => {
     githubRepositories,
     githubTotals,
     refreshModelScope,
+    refreshModelScopeSnapshot,
     modelscopeModels,
     modelscopeTotals,
     modelscopeSeries,
     modelscopeDelta,
     modelscopeProfileSeries,
-    modelscopeProfileDelta
+    modelscopeProfileDelta,
+    loadConferences,
+    refreshConferenceSnapshot,
+    conferenceEvents,
+    conferenceAreas,
+    conferenceRows,
+    conferencePage,
+    conferencePageCount,
+    conferenceStats
   };
 })();

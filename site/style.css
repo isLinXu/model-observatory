@@ -552,6 +552,9 @@ select { height: 40px; background: var(--input-bg); border: 1px solid var(--inpu
 .collection-card-foot > span { color: var(--muted-2); font-size: 10px; }
 .collection-card-foot button { flex: none; }
 .collection-note { margin: 0 0 18px; color: var(--muted); font-size: 12px; line-height: 1.8; }
+.modelscope-data-status { padding: 14px 16px; margin-bottom: 12px; border: 1px solid var(--line); border-radius: 12px; overflow-wrap: anywhere; }
+.modelscope-data-status .collection-note { margin-bottom: 6px; }
+.modelscope-data-status .micro { margin: 0; }
 .modelscope-profile { display: grid; grid-template-columns: minmax(230px, .85fr) minmax(0, 2fr); gap: var(--gap); margin-bottom: 18px; }
 .modelscope-profile-stats { display: grid; gap: var(--gap); min-width: 0; }
 .modelscope-profile .kpi-caption { overflow-wrap: anywhere; }
@@ -559,6 +562,37 @@ select { height: 40px; background: var(--input-bg); border: 1px solid var(--inpu
 .modelscope-table td:first-child { min-width: 230px; max-width: 350px; white-space: normal; overflow-wrap: anywhere; }
 .modelscope-table .model-link { white-space: normal; text-align: left; }
 #modelscopeChartLabel { overflow-wrap: anywhere; }
+
+/* --- Conference deadline board -------------------------------------------- */
+
+.conference-panel { margin: 4px 0 18px; }
+.conf-list { display: grid; gap: 10px; padding-top: 4px; }
+.conf-item { display: grid; grid-template-columns: 118px minmax(0, 1fr); gap: 14px; align-items: start; padding: 12px 14px; border: 1px solid var(--line-2); border-left: 3px solid var(--faint); border-radius: var(--radius-sm); background: var(--surface-2); }
+.conf-item.urgent { border-left-color: var(--red); }
+.conf-item.soon { border-left-color: var(--orange); }
+.conf-item.past { border-left-color: var(--line-3); opacity: .74; }
+.conf-item.unknown { border-left-style: dashed; }
+.conf-when strong { display: block; font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; color: var(--txt-strong); }
+.conf-when small { display: block; margin-top: 3px; font-size: 10px; color: var(--muted-2); }
+.conf-item.urgent .conf-when strong { color: var(--red); }
+.conf-item.soon .conf-when strong { color: var(--orange); }
+.conf-name { display: flex; align-items: center; gap: 7px; flex-wrap: wrap; font-size: 13px; font-weight: 660; color: var(--txt-soft); }
+.conf-name a:hover { color: var(--blue); }
+.conf-meta { margin-top: 5px; font-size: 10px; color: var(--muted-2); overflow-wrap: anywhere; }
+.conf-place { color: var(--faint); }
+.conference-table td:first-child { min-width: 200px; max-width: 300px; white-space: normal; overflow-wrap: anywhere; }
+.conference-table .model-link { white-space: normal; text-align: left; }
+.conference-table .conf-utc { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.conference-table .conf-left { white-space: nowrap; font-weight: 650; }
+.conference-table td:last-child { max-width: 190px; white-space: normal; overflow-wrap: anywhere; }
+.conference-table tr.urgent .conf-left { color: var(--red); }
+.conference-table tr.soon .conf-left { color: var(--orange); }
+.conference-table tr.past .conf-left, .conference-table tr.unknown .conf-left { color: var(--muted-2); font-weight: 500; }
+.chip.ccf-a { background: var(--state-ok-bg); border-color: transparent; color: var(--state-ok-txt); }
+.chip.ccf-b { background: var(--state-new-bg); border-color: transparent; color: var(--state-new-txt); }
+.chip.ccf-c { background: var(--state-missing-bg); border-color: transparent; color: var(--state-missing-txt); }
+.kpi-value.urgent { color: var(--red); }
+.kpi-value.soon { color: var(--orange); }
 .model-collections { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 8px; max-width: 370px; }
 .collection-tag { white-space: normal; text-align: left; }
 .collection-tag:hover { border-color: var(--blue); color: var(--blue); }
@@ -822,6 +856,7 @@ select { height: 40px; background: var(--input-bg); border: 1px solid var(--inpu
 @media (max-width: 700px) {
   .repo-desc { max-width: none; margin-left: 0; }
   .pagination { gap: 9px; flex-wrap: wrap; }
+  .conf-item { grid-template-columns: 1fr; gap: 8px; }
 }
 
 /* --- External link affordance for entity rows ----------------------------- */

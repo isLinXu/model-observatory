@@ -83,5 +83,47 @@ MO.format = (() => {
     return Math.max(0, (Date.now() - parsed) / 86400000);
   }
 
-  return { esc, fmt, compact, countCN, signed, signedCN, tone, dayLabel, timestamp, ageInDays, trimZero };
+  /** Days between now and a deadline; negative once it has passed. */
+  function untilDays(value, now = Date.now()) {
+    const stamp = typeof value === 'number' ? value : Date.parse(value ?? '');
+    return Number.isFinite(stamp) ? (stamp - now) / 86400000 : null;
+  }
+
+  /** Countdown wording. Deadlines already gone say so instead of showing 0. */
+  function countdown(value, now = Date.now()) {
+    const stamp = typeof value === 'number' ? value : Date.parse(value ?? '');
+    if (!Number.isFinite(stamp)) return '—';
+    const elapsed = Math.abs(stamp - now);
+    const hours = Math.floor(elapsed / 3600000);
+    const days = Math.floor(hours / 24);
+    let text;
+    if (hours < 1) text = '不足 1 小时';
+    else if (days < 1) text = `${hours} 小时`;
+    else if (days < 10) text = `${days} 天 ${hours % 24} 小时`;
+    else text = `${days} 天`;
+    return `${stamp >= now ? '' : '已过期 '}${text}`;
+  }
+
+  /** Urgency bucket used for deadline colours: urgent / soon / past / unknown. */
+  function deadlineTone(value, now = Date.now()) {
+    const days = untilDays(value, now);
+    if (days === null) return 'unknown';
+    if (days < 0) return 'past';
+    if (days <= 7) return 'urgent';
+    if (days <= 30) return 'soon';
+    return '';
+  }
+
+  /** "UTC+08:00" from a signed offset in minutes. */
+  function offsetLabel(minutes) {
+    if (!Number.isFinite(minutes)) return '—';
+    const absolute = Math.abs(minutes);
+    const sign = minutes < 0 ? '-' : '+';
+    return `UTC${sign}${String(Math.floor(absolute / 60)).padStart(2, '0')}:${String(absolute % 60).padStart(2, '0')}`;
+  }
+
+  return {
+    esc, fmt, compact, countCN, signed, signedCN, tone, dayLabel, timestamp,
+    ageInDays, untilDays, countdown, deadlineTone, offsetLabel, trimZero
+  };
 })();
