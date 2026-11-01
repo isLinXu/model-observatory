@@ -211,5 +211,95 @@ MO.charts = (() => {
     }).join('');
   }
 
-  return { line, delta, yearBars, ranking, colorAt, PALETTE };
+  /**
+   * Colour for cluster index `index` out of `total` clusters. The five themed
+   * variables cover the first clusters; the rest get an even hue spread so
+   * neighbouring wall blocks stay distinguishable in both themes.
+   */
+  function starColor(index, total) {
+    if (index < PALETTE.length) return PALETTE[index];
+    const span = Math.max(1, total - PALETTE.length);
+    return `hsl(${Math.round((index - PALETTE.length) * 360 / span)}, 58%, 55%)`;
+  }
+
+  /**
+   * Star wall: one cell per starred repository, laid out row-major so the whole
+   * list stays one dense grid. Clusters are contiguous runs, so their colour is
+   * the boundary marker; only geometry is emitted and the hover readout resolves
+   * the cell from `data-i`, which keeps thousands of cells cheap.
+   */
+  function starWall(node, model, opts = {}) {
+    if (!model || !model.groups || !model.groups.length) {
+      empty(node, opts.emptyText || '等待 star 明细：滚动到本节会自动读取，也可以手动重试。');
+      return;
+    }
+    const pitch = 15;
+    // 'all' means no cluster is selected, so nothing may be dimmed.
+    const active = opts.activeCluster && opts.activeCluster !== 'all' ? opts.activeCluster : null;
+    const cols = Math.max(12, Math.min(140, Math.ceil(Math.sqrt(model.total * 2.8))));
+    const rows = Math.ceil(model.total / cols);
+    const groups = model.groups.map((group, index) => {
+      const cells = model.cells.slice(group.start, group.start + group.count).map((cell, position) => {
+        const i = group.start + position;
+        const size = 9 + Math.min(4, Math.round(Math.log10(1 + (cell.stars || 0)) * 1.5));
+        const x = (i % cols) * pitch + (pitch - size) / 2;
+        const y = Math.floor(i / cols) * pitch + (pitch - size) / 2;
+        return `<rect data-i="${i}" x="${x.toFixed(1)}" y="${y.toFixed(1)}" width="${size}" height="${size}"/>`;
+      }).join('');
+      return `<g fill="${starColor(index, model.groups.length)}" data-cluster="${esc(group.id)}"` +
+        `${active && active !== group.id ? ' opacity=".22"' : ''}>` +
+        `${cells}<title>${esc(group.label)} · ${esc(fmt(group.count))} 个仓库</title></g>`;
+    }).join('');
+    node.innerHTML = `<svg class="star-wall" viewBox="0 0 ${cols * pitch} ${rows * pitch}" role="img" ` +
+      `aria-label="${esc(opts.label || 'star 星星墙：每个格子是一个 star 的仓库')}">${groups}</svg>`;
+  }
+
+  /**
+   * Cluster relation graph on concentric rings: languages innermost, then topics,
+   * then owners. Edges are the co-occurrence weights the collector published.
+   */
+  function starGraph(node, graph, opts = {}) {
+    const nodes = graph && graph.nodes;
+    if (!nodes || !nodes.length) {
+      empty(node, opts.emptyText || '等待 star 快照中的聚类节点。');
+      return;
+    }
+    const W = 840, H = 440, cx = W / 2, cy = H / 2 + 6;
+    const ringOf = { language: 74, topic: 146, owner: 196 };
+    const maxRepos = Math.max(...nodes.map(item => item.repos || 0), 1);
+    const radius = node => 5 + Math.sqrt((node.repos || 0) / maxRepos) * 17;
+    // Published rank order is by repository count, so the colour index stays
+    // stable for a snapshot and matches the legend chips one for one.
+    const rankOf = new Map(nodes.map((node, index) => [node.id, index]));
+    const placed = new Map();
+    ['language', 'topic', 'owner'].forEach(type => {
+      const ring = nodes.filter(node => node.type === type);
+      if (!ring.length) return;
+      const r = ringOf[type] ?? 146;
+      ring.forEach((node, index) => {
+        const angle = (index / ring.length) * Math.PI * 2 - Math.PI / 2;
+        placed.set(node.id, { ...node, x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle), r: radius(node) });
+      });
+    });
+    const maxWeight = Math.max(...(graph.edges || []).map(edge => edge.w || 0), 1);
+    const edges = (graph.edges || []).map(edge => {
+      const a = placed.get(edge.a), b = placed.get(edge.b);
+      if (!a || !b) return '';
+      const strength = (edge.w || 0) / maxWeight;
+      return `<line class="star-edge" x1="${a.x.toFixed(1)}" y1="${a.y.toFixed(1)}" x2="${b.x.toFixed(1)}" y2="${b.y.toFixed(1)}" ` +
+        `stroke-width="${(0.5 + strength * 2.6).toFixed(2)}" opacity="${(0.14 + strength * 0.42).toFixed(2)}">` +
+        `<title>${esc(a.label)} ↔ ${esc(b.label)} · ${esc(fmt(edge.w))} 个共同仓库</title></line>`;
+    }).join('');
+    const circles = [...placed.values()].map(node =>
+      `<circle class="star-node" data-cluster="${esc(node.id)}" cx="${node.x.toFixed(1)}" cy="${node.y.toFixed(1)}" ` +
+      `r="${node.r.toFixed(1)}" fill="${starColor(rankOf.get(node.id) || 0, nodes.length)}">` +
+      `<title>${esc(node.label)} · ${esc(node.type)} · ${esc(fmt(node.repos))} 个归属 / ${esc(fmt(node.appears))} 次出现</title></circle>` +
+      (node.repos / maxRepos > 0.16
+        ? `<text class="svg-label star-node-label" x="${node.x.toFixed(1)}" y="${(node.y - node.r - 5).toFixed(1)}" text-anchor="middle">${esc(node.label)}</text>`
+        : '')).join('');
+    node.innerHTML = `<svg class="star-graph" viewBox="0 0 ${W} ${H}" role="img" ` +
+      `aria-label="${esc(opts.label || 'star 聚类关系图')}">${edges}${circles}</svg>`;
+  }
+
+  return { line, delta, yearBars, ranking, starWall, starGraph, starColor, colorAt, PALETTE };
 })();

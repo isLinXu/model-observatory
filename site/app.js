@@ -132,6 +132,113 @@
     }
   }
 
+  const STAR_TYPE_LABELS = { language: '语言', topic: '主题', owner: '账户' };
+
+  function exportStarCsv() {
+    const snapshot = data.state.stars || {};
+    const header = ['repository', 'owner', 'repo', 'url', 'stars', 'language', 'topics', 'description',
+      'pushed_at', 'is_fork', 'is_archived', 'owner_is_organization', 'cluster_id', 'cluster_type',
+      'cluster_label', 'snapshot_captured_at', 'detail_captured_at'];
+    const rows = data.starFiltered().map(row => [row.name, row.owner, row.repo, row.url, row.stars,
+      row.language, row.topics.join('; '), row.description, row.pushed, row.fork, row.archived, row.org,
+      row.cluster, data.starClusterType(row.cluster), row.cluster.split(':')[1] || row.cluster,
+      snapshot.captured_at, data.state.starDetail?.captured_at]);
+    const date = String(snapshot.captured_at || '').slice(0, 10) || 'latest';
+    download(`github-starred-${date}.csv`,
+      '\uFEFF' + [header, ...rows].map(row => row.map(value => csvEscape(csvCell(value))).join(',')).join('\r\n'),
+      'text/csv;charset=utf-8');
+  }
+
+  /** Re-read the published star snapshot; collection stays in the daily workflow. */
+  async function refreshStars() {
+    const button = $('starRefresh');
+    if (button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = '读取已发布快照…';
+    try {
+      const payload = await data.refreshStarSnapshot();
+      render.showToast(payload.status === 'ok'
+        ? '已读取 star 快照；采集时间以页面标注为准，不会触发后台采集。'
+        : '已读取 star 快照，但后台最近一次采集未成功；页面继续显示上次数据。');
+    } catch (error) {
+      render.showToast(`star 快照读取失败：${error.message}。保留上次数据。`);
+    } finally {
+      button.disabled = false;
+      button.setAttribute('aria-busy', 'false');
+      button.textContent = '刷新已发布快照';
+      render.renderStars();
+    }
+  }
+
+  /** The wall and CSV need per-repository rows, which the aggregate snapshot omits. */
+  async function loadStarDetail(force = false) {
+    const state = data.state, button = $('starDetailLoad');
+    if (state.starDetailStatus === 'loading') return;
+    if (state.starDetail && !force) { render.renderStars(); return; }
+    button.textContent = '读取 star 明细…';
+    button.setAttribute('aria-busy', 'true');
+    render.renderStarStatus();
+    const payload = await data.ensureStarDetail(force);
+    button.removeAttribute('aria-busy');
+    render.showToast(payload
+      ? `已加载 ${fmt(data.starRows().length)} 个 star 仓库明细；墙、清单与 CSV 现已可用。`
+      : `${state.starDetailError || 'star 明细读取失败'}。KPI 与关系图仍来自聚合快照。`);
+    render.renderStars();
+  }
+
+  /** Hover readout resolves the cell index the wall SVG stamped into `data-i`. */
+  function starCellText(index) {
+    const cell = data.starWall().cells[index];
+    if (!cell) return '悬停任意格子查看仓库名、语言与 star 数。';
+    const label = cell.cluster.split(':').slice(1).join(':') || cell.cluster;
+    return `${cell.name} · ★${fmt(cell.stars || 0)} · ${cell.language || '语言未标注'} · ` +
+      `${STAR_TYPE_LABELS[data.starClusterType(cell.cluster)] || '聚类'}：${label}`;
+  }
+
+  function selectStarCluster(id) {
+    data.state.starCluster = data.state.starCluster === id ? 'all' : id;
+    data.state.starPage = 1;
+    render.renderStars();
+  }
+
+  function bindStarWall() {
+    const wall = $('starWall');
+    wall.addEventListener('mouseover', event => {
+      const cell = event.target.closest('[data-i]');
+      if (cell) $('starWallReadout').textContent = starCellText(Number(cell.dataset.i));
+    });
+    wall.addEventListener('click', event => {
+      const cell = event.target.closest('[data-i]');
+      if (cell) selectStarCluster(data.starWall().cells[Number(cell.dataset.i)]?.cluster || 'all');
+    });
+    // Wall blocks are only labelled through their colour, so the legend carries
+    // the same click as the cells, and the graph nodes link back to the wall.
+    $('starWallLegend').addEventListener('click', event => {
+      const chip = event.target.closest('[data-cluster]');
+      if (chip) selectStarCluster(chip.dataset.cluster);
+    });
+    $('starGraph').addEventListener('click', event => {
+      const node = event.target.closest('[data-cluster]');
+      if (node) selectStarCluster(node.dataset.cluster);
+    });
+  }
+
+  /**
+   * The detail file is the largest payload in this section and sits below the
+   * fold, so first paint only needs the aggregate snapshot and the browser
+   * pulls the rows when the reader gets close to the wall.
+   */
+  function watchStarSection() {
+    if (!('IntersectionObserver' in window)) return;
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return;
+      observer.disconnect();
+      if (data.state.starDetailStatus === 'idle') loadStarDetail();
+    }, { rootMargin: '300px 0px' });
+    observer.observe($('stars'));
+  }
+
   function exportDatasetCsv() {
     const header = ['dataset_id', 'downloads_all_time', 'downloads_rolling_30d', 'change_since_previous_snapshot',
       'change_7d', 'change_30d', 'likes', 'modality', 'languages', 'date_utc', 'huggingface_url'];
@@ -347,6 +454,49 @@
     });
     $('conferenceRefresh').addEventListener('click', refreshConferences);
     $('conferenceExport').onclick = exportConferenceCsv;
+    // Star wall: filters only touch the wall legend, the list and the CSV.
+    for (const [id, key, eventName] of [
+      ['starSearch', 'starSearch', 'input'], ['starCluster', 'starCluster', 'change'],
+      ['starLanguage', 'starLanguage', 'change'], ['starTopic', 'starTopic', 'change'],
+      ['starStatusFilter', 'starStatus', 'change'], ['starSort', 'starSort', 'change']]) {
+      $(id).addEventListener(eventName, event => {
+        data.state[key] = event.target.value;
+        data.state.starPage = 1;
+        render.renderStarWall();
+        render.renderStarTable();
+        render.renderStarStatus();
+      });
+    }
+    $('starFilterReset').addEventListener('click', () => {
+      Object.assign(data.state, {
+        starSearch: '', starCluster: 'all', starLanguage: 'all',
+        starTopic: 'all', starStatus: 'all', starSort: 'stars', starPage: 1
+      });
+      render.renderStars();
+    });
+    $('starRows').addEventListener('click', event => {
+      const cluster = event.target.closest('[data-cluster]');
+      if (cluster) { selectStarCluster(cluster.dataset.cluster); return; }
+      const topic = event.target.closest('[data-star-topic]');
+      if (topic) {
+        data.state.starTopic = data.state.starTopic === topic.dataset.starTopic ? 'all' : topic.dataset.starTopic;
+        data.state.starPage = 1;
+        render.renderStars();
+      }
+    });
+    $('starPrev').addEventListener('click', () => {
+      data.state.starPage--;
+      render.renderStarTable();
+    });
+    $('starNext').addEventListener('click', () => {
+      data.state.starPage++;
+      render.renderStarTable();
+    });
+    $('starRefresh').addEventListener('click', refreshStars);
+    $('starDetailLoad').addEventListener('click', () => loadStarDetail(true));
+    $('starExport').onclick = exportStarCsv;
+    bindStarWall();
+    watchStarSection();
     $('collectionFilter').addEventListener('change', event => selectCollection(event.target.value));
     $('collectionReset').addEventListener('click', () => selectCollection('all'));
     $('collectionRefresh').addEventListener('click', refreshCollections);
@@ -524,6 +674,7 @@
     render.renderGitHub();
     render.renderModelScopeBoard();
     render.renderConferences();
+    render.renderStars();
   }
 
   async function boot() {
@@ -544,6 +695,7 @@
       try { render.renderGitHub(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderModelScopeBoard(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderConferences(); } catch (secondaryError) { console.error(secondaryError); }
+      try { render.renderStars(); } catch (secondaryError) { console.error(secondaryError); }
     }
     // The template library is independent of the download data, so it loads
     // on its own and a failure here never blocks the other boards.

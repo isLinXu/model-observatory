@@ -505,9 +505,21 @@ function loadModelView(data, globals = {}) {
     return elements.get(id);
   };
   const blobs = [];
+  const chartCalls = [];
   const context = {
     console,
-    MO: { data, charts: { line() {} } },
+    MO: {
+      data,
+      charts: {
+        line() {},
+        // render.js captures MO.charts at load time, so the star panels need the
+        // same entry points the chart module exposes. Record the arguments so a
+        // test can read exactly what the renderer asked the chart to draw.
+        starWall(node, model, opts) { chartCalls.push({ name: 'starWall', node, model, opts }); },
+        starGraph(node, graph, opts) { chartCalls.push({ name: 'starGraph', node, graph, opts }); },
+        starColor: index => `var(--chart-${index % 5 + 1})`
+      }
+    },
     document: {
       getElementById: element, querySelectorAll: () => [], addEventListener() {},
       createElement: () => ({ click() {}, remove() {} }), body: { append() {} }
@@ -525,7 +537,7 @@ function loadModelView(data, globals = {}) {
   };
   run('format.js');
   run('render.js');
-  return { context, element, blobs, run, render: context.MO.render };
+  return { context, element, blobs, chartCalls, run, render: context.MO.render };
 }
 
 test('year bars define their shared gradient only once', () => {
@@ -671,7 +683,8 @@ function publishedPayloads(collections) {
     './data/github_history.json': { snapshots: [] },
     './data/modelscope.json': modelscopeSnapshot(),
     './data/modelscope_history.json': modelscopeHistory(),
-    './data/conferences.json': conferencePayload([conference('Keep', [conferenceEvent('AI/keep:keep26:paper:1')])])
+    './data/conferences.json': conferencePayload([conference('Keep', [conferenceEvent('AI/keep:keep26:paper:1')])]),
+    './data/stars.json': starSnapshot()
   };
 }
 
@@ -699,7 +712,7 @@ test('loadAll tolerates collection failure and preserves published membership th
       });
       data.state.modelCollection = hasFallback ? 'gatilin/saved' : 'unassigned';
       await data.loadAll();
-      assert.equal(requested.length, 13);
+      assert.equal(requested.length, 14);
       assert.equal(data.state.status, 'ready');
       assert.equal(data.state.modelSource, 'live');
       assert.equal(data.state.modelRefreshError, null);
@@ -1196,7 +1209,7 @@ test('loadAll loads both optional ModelScope files with the versioned author/sou
     const beforeHistory = plain(history);
     const data = loadData(publishedFetch(payloads, requested));
     await data.loadAll();
-    assert.equal(requested.length, 13);
+    assert.equal(requested.length, 14);
     assert.equal(requested.filter(url => url === './data/modelscope.json').length, 1);
     assert.equal(requested.filter(url => url === './data/modelscope_history.json').length, 1);
     assert.equal(data.state.modelscope, latest);
@@ -1887,6 +1900,35 @@ function seedConferences(data, conferences) {
   return data.state.conferences;
 }
 
+function starCluster(id, type, label, repos, appears = repos) {
+  return { id, type, label, repos, appears, reps: [{ n: 'a/one', s: 10 }] };
+}
+
+function starRow(name, extra = {}) {
+  return { n: name, l: 'Python', t: ['llm'], s: 10, d: 'desc', p: '2026-10-01',
+    f: 0, r: 0, o: 0, c: 'lang:Python', ...extra };
+}
+
+function starSnapshot(clusters = [starCluster('lang:Python', 'language', 'Python', 3)], extra = {}) {
+  return {
+    schema_version: 1,
+    source: { id: 'github', login: 'isLinXu', api: 'users/isLinXu/starred', per_page: 100 },
+    status: 'ok', error: null, captured_at: '2026-10-31T02:23:00Z', last_attempt_at: '2026-10-31T02:23:00Z',
+    pages: 1, expected_total: 3,
+    counts: { total: 3, languages: 1, topics: 1, owners: 2, org_owned: 0, archived: 0, forks: 0,
+      undocumented: 1, active_90d: 2 },
+    changes: { status: 'compared', added: [], removed: [], added_count: 1, removed_count: 0, truncated: false },
+    clusters, edges: [], warnings: [], ...extra
+  };
+}
+
+function starDetail(rows = [starRow('a/one')], extra = {}) {
+  return {
+    schema_version: 1, source: { id: 'github', login: 'isLinXu' },
+    captured_at: '2026-10-31T02:23:00Z', count: rows.length, rows, ...extra
+  };
+}
+
 const confTitles = data => Array.from(data.conferenceRows(CONF_NOW), row => row.title);
 
 test('conference windows keep future deadlines, order them, and separate pending and past', () => {
@@ -2147,3 +2189,657 @@ test('conference filters, paging, reset, refresh and CSV stay on the published s
   assert.equal(rows[0][16], 'false');
   assert.equal(rows.at(-1)[11], '2026-11-25T12:00:00Z');
 });
+
+// --- Star wall and cluster graph --------------------------------------------
+
+test('the star board paints from the aggregate snapshot and leaves the detail file lazy', async () => {
+  const payloads = publishedPayloads();
+  const detail = starDetail([starRow('a/one'), starRow('b/two', { s: 40, l: 'Rust', c: 'lang:Rust' })]);
+  payloads['./data/stars_repos.json'] = detail;
+  const requested = [];
+  const data = loadData(publishedFetch(payloads, requested));
+  await data.loadAll();
+
+  assert.equal(requested.filter(url => url === './data/stars.json').length, 1);
+  assert.equal(requested.filter(url => url === './data/stars_repos.json').length, 0,
+    'the detail file must stay out of the first paint');
+  assert.equal(data.state.starDetailStatus, 'idle');
+  assert.equal(data.state.starDetail, null);
+  assert.equal(data.starRows().length, 0);
+  assert.equal(data.starWall().total, 0, 'the wall is empty until the detail arrives');
+  assert.deepEqual(plain(data.starGraph().nodes.map(node => node.id)), ['lang:Python'],
+    'the graph already has nodes from the snapshot alone');
+  assert.deepEqual(plain(data.starStats()), {
+    available: true, total: 3, active: 2, activeShare: 2 / 3, languages: 1, topics: 1, owners: 2,
+    orgOwned: 0, archived: 0, forks: 0, undocumented: 1, pages: 1, expected: 3,
+    changes: starSnapshot().changes, clusters: 1, edges: 0
+  });
+
+  assert.equal(await data.ensureStarDetail(), detail);
+  assert.equal(requested.filter(url => url === './data/stars_repos.json').length, 1);
+  assert.equal(data.state.starDetailStatus, 'ready');
+  assert.equal(data.state.starDetailLoadedAt, detail.captured_at);
+  assert.equal(data.starWall().total, 2);
+  assert.equal(await data.ensureStarDetail(), detail, 'the cached payload answers without a second fetch');
+  assert.equal(requested.filter(url => url === './data/stars_repos.json').length, 1);
+});
+
+test('star detail shares one in-flight request, retries only on demand, and keeps rows when a retry fails', async () => {
+  const detail = starDetail([starRow('a/one'), starRow('b/two', { s: 40 })]);
+  let calls = 0, failing = false;
+  const data = loadData(async url => {
+    if (!url.endsWith('stars_repos.json')) return jsonResponse({}, { status: 404 });
+    calls++;
+    return failing ? jsonResponse({}, { status: 503 }) : jsonResponse(detail);
+  });
+  const pending = data.ensureStarDetail();
+  assert.equal(data.state.starDetailStatus, 'loading');
+  const shared = data.ensureStarDetail();
+  assert.equal(await pending, detail);
+  assert.equal(await shared, detail);
+  assert.equal(calls, 1, 'concurrent callers share the in-flight request');
+
+  failing = true;
+  assert.equal(await data.ensureStarDetail(true), null);
+  assert.equal(calls, 2);
+  assert.equal(data.state.starDetailStatus, 'error');
+  assert.equal(data.state.starDetailError, '仓库明细 读取失败（HTTP 503）');
+  assert.equal(data.state.starDetail, detail, 'a failed retry keeps the rows already on screen');
+  assert.equal(data.starRows().length, 2);
+  assert.equal(await data.ensureStarDetail(), detail);
+  assert.equal(calls, 2, 'without force the cached payload still answers');
+
+  failing = false;
+  assert.equal(await data.ensureStarDetail(true), detail);
+  assert.equal(data.state.starDetailStatus, 'ready');
+  assert.equal(data.state.starDetailError, null);
+});
+
+test('star detail refuses payloads it cannot render instead of drawing half a wall', async () => {
+  for (const bad of [
+    { schema_version: 2, rows: [] },
+    { schema_version: 1, rows: [{ n: 42 }] },
+    { schema_version: 1, rows: 'not a list' }
+  ]) {
+    const data = loadData(async () => jsonResponse(bad));
+    assert.equal(await data.ensureStarDetail(), null);
+    assert.equal(data.state.starDetailStatus, 'error');
+    assert.match(data.state.starDetailError, /star 明细格式不完整/);
+    assert.equal(data.state.starDetail, null);
+    assert.deepEqual(plain(data.starRows()), []);
+  }
+});
+
+test('a missing or incompatible star snapshot degrades the board alone', async () => {
+  const payloads = publishedPayloads();
+  delete payloads['./data/stars.json'];
+  const requested = [];
+  const data = loadData(publishedFetch(payloads, requested));
+  await data.loadAll();
+  assert.equal(requested.filter(url => url === './data/stars_repos.json').length, 0);
+  assert.equal(data.state.stars.status, 'unavailable');
+  assert.equal(data.state.stars.source.id, 'github');
+  assert.deepEqual(plain(data.state.stars.clusters), []);
+  assert.deepEqual(plain(data.state.stars.edges), []);
+  assert.match(data.state.stars.error, /HTTP 404/);
+  assert.equal(data.starStats().available, false);
+  assert.equal(data.starStats().total, 0);
+  assert.equal(data.state.status, 'ready', 'a missing star snapshot must not sink the page');
+  assert.equal(data.state.conferences.status, 'ok');
+
+  const foreign = publishedPayloads();
+  foreign['./data/stars.json'] = starSnapshot(undefined, { source: { id: 'gitlab' } });
+  const other = loadData(publishedFetch(foreign));
+  await other.loadStars();
+  assert.equal(other.state.stars.status, 'unavailable');
+  assert.match(other.state.stars.error, /格式或数据来源不兼容/);
+
+  const keep = publishedPayloads();
+  const third = loadData(publishedFetch(keep));
+  await third.loadStars();
+  const snapshot = third.state.stars, checkedAt = third.state.starSnapshotCheckedAt;
+  keep['./data/stars.json'] = starSnapshot(undefined, { schema_version: 0 });
+  await assert.rejects(third.refreshStarSnapshot(), /格式或数据来源不兼容/);
+  assert.equal(third.state.stars, snapshot, 'a rejected refresh keeps the last good snapshot');
+  assert.equal(third.state.starSnapshotCheckedAt, checkedAt, 'a failed read is not logged as a successful one');
+  assert.match(third.state.starRefreshError, /格式或数据来源不兼容/);
+
+  third.state.starCluster = 'topic:llm';
+  keep['./data/stars.json'] = starSnapshot([starCluster('lang:Python', 'language', 'Python', 4)]);
+  assert.equal(await third.refreshStarSnapshot(), keep['./data/stars.json']);
+  assert.equal(third.state.stars.clusters.length, 1);
+  assert.equal(third.state.starRefreshError, null, 'a successful read clears the previous read failure');
+});
+
+test('star rows, filters, facets and paging read the published detail without inventing data', () => {
+  const clock = testClock('2026-10-31T06:00:00.000Z');
+  const data = loadData(undefined, { Date: clock.Date });
+  data.state.stars = starSnapshot([
+    starCluster('lang:Python', 'language', 'Python', 3),
+    starCluster('lang:Rust', 'language', 'Rust', 1)
+  ]);
+  const payload = starDetail([
+    starRow('a/fresh', { s: 500 }),
+    starRow('b/old', { s: 40, l: 'Rust', c: 'lang:Rust', p: '2025-01-01' }),
+    starRow('c/plain', { s: null, l: '', t: [], d: '', p: null, f: 1, c: '' }),
+    starRow('d/archived', { s: 10, r: 1 })
+  ]);
+  const before = plain(payload);
+  data.state.starDetail = payload;
+
+  assert.deepEqual(plain(data.starRows()[0]), {
+    name: 'a/fresh', owner: 'a', repo: 'fresh', url: 'https://github.com/a/fresh',
+    language: 'Python', topics: ['llm'], stars: 500, description: 'desc', pushed: '2026-10-01',
+    fork: false, archived: false, org: false, cluster: 'lang:Python'
+  });
+  assert.equal(data.starRows()[2].cluster, 'lang:未知', 'a row with no cluster id lands on the unknown node');
+  assert.equal(data.starRows()[2].stars, null, 'an unknown counter is never presented as zero');
+  assert.equal(data.starClusterType('lang:Python'), 'language', 'the id prefix maps to the published type');
+  assert.equal(data.starClusterType('topic:llm'), 'topic');
+  assert.equal(data.starClusterType('license:MIT'), 'license', 'an unknown prefix stays visible as itself');
+
+  const names = rows => plain(rows.map(row => row.name));
+  assert.deepEqual(names(data.starFiltered()), ['a/fresh', 'b/old', 'd/archived', 'c/plain']);
+  data.state.starCluster = 'lang:Rust';
+  assert.deepEqual(names(data.starFiltered()), ['b/old']);
+  data.state.starCluster = 'lang:未知';
+  assert.deepEqual(names(data.starFiltered()), ['c/plain']);
+  data.state.starCluster = 'all';
+  data.state.starLanguage = 'Rust';
+  assert.deepEqual(names(data.starFiltered()), ['b/old']);
+  data.state.starLanguage = 'all';
+  data.state.starTopic = 'llm';
+  assert.deepEqual(names(data.starFiltered()), ['a/fresh', 'b/old', 'd/archived']);
+  data.state.starTopic = 'all';
+  for (const [status, expected] of [
+    ['maintained', ['a/fresh', 'd/archived']], ['archived', ['d/archived']],
+    ['fork', ['c/plain']], ['undocumented', ['c/plain']]
+  ]) {
+    data.state.starStatus = status;
+    assert.deepEqual(names(data.starFiltered()), expected, `status filter ${status}`);
+  }
+  data.state.starStatus = 'all';
+  data.state.starSearch = '  ARCHIVED ';
+  assert.deepEqual(names(data.starFiltered()), ['d/archived']);
+  data.state.starSearch = '';
+
+  data.state.starSort = 'name';
+  assert.deepEqual(names(data.starFiltered()), ['a/fresh', 'b/old', 'c/plain', 'd/archived']);
+  data.state.starSort = 'pushed';
+  assert.deepEqual(names(data.starFiltered()), ['a/fresh', 'd/archived', 'b/old', 'c/plain']);
+  data.state.starSort = 'stars';
+
+  assert.deepEqual(plain(data.starFacets()), {
+    payload, languages: [{ label: 'Python', count: 2 }, { label: 'Rust', count: 1 }],
+    topics: [{ label: 'llm', count: 3 }]
+  });
+  assert.equal(data.starFacets(), data.starFacets(), 'facets are memoised per payload');
+  assert.deepEqual(plain(payload), before, 'the published detail is never mutated');
+
+  const many = starDetail(Array.from({ length: 60 },
+    (_, index) => starRow(`p/n${String(index).padStart(2, '0')}`, { s: 60 - index })));
+  const paged = loadData();
+  paged.state.starDetail = many;
+  assert.equal(paged.starPageCount(), 3);
+  assert.equal(paged.starPage().length, 24);
+  paged.state.starPage = 3;
+  assert.equal(paged.starPage().at(-1).name, 'p/n59');
+  paged.state.starPage = 9;
+  assert.deepEqual(names(paged.starPage()), names(paged.starFiltered().slice(48, 60)),
+    'a page index past the end clamps to the last page');
+});
+
+test('the star wall groups one contiguous run per cluster id, even when the detail outlives the snapshot', () => {
+  const data = loadData();
+  data.state.stars = starSnapshot([]);
+  data.state.starDetail = starDetail([
+    starRow('a/one', { c: 'lang:Python' }),
+    starRow('b/two', { c: 'lang:Python', s: 20 }),
+    starRow('c/three', { c: 'lang:Rust' }),
+    starRow('d/four', { c: 'lang:Rust' }),
+    starRow('e/five', { c: 'lang:Rust' }),
+    starRow('f/six', { c: '' })
+  ]);
+  const wall = data.starWall();
+  assert.equal(wall.total, 6);
+  assert.equal(wall.groups.length, 3, 'one group per cluster id, not one per repository');
+  assert.deepEqual(plain(wall.groups.map(group => [group.id, group.count, group.start])),
+    [['lang:Rust', 3, 0], ['lang:Python', 2, 3], ['lang:未知', 1, 5]]);
+  assert.deepEqual(plain(wall.cells.map(cell => cell.name)),
+    ['c/three', 'd/four', 'e/five', 'b/two', 'a/one', 'f/six'],
+    'cells flow in group order and bigger clusters come first');
+  assert.equal(wall.groups[1].label, 'Python', 'the id suffix becomes the readable label');
+  assert.equal(wall.groups[1].type, 'language');
+  assert.equal(wall.groups[2].label, '未知');
+  assert.equal(data.starWall(), wall, 'the model is memoised per payload and snapshot');
+  assert.deepEqual(plain(data.starWall().groups.map(group => group.id)), plain(wall.groups.map(group => group.id)),
+    're-reading the model still yields one group per cluster');
+
+  // The same detail beside a snapshot that publishes those clusters uses their labels.
+  data.state.stars = starSnapshot([
+    starCluster('lang:Rust', 'language', 'Rust 语言', 3),
+    starCluster('lang:Python', 'language', 'Python', 2)
+  ]);
+  assert.deepEqual(plain(data.starWall().groups.map(group => [group.id, group.label, group.appears])),
+    [['lang:Rust', 'Rust 语言', 3], ['lang:Python', 'Python', 2], ['lang:未知', '未知', 0]],
+    'snapshot labels win over the derived ones');
+});
+
+test('the star graph keeps one ring budget per cluster type and reports what it left out', () => {
+  const clusters = [
+    ...Array.from({ length: 12 }, (_, index) => starCluster(`lang:l${index}`, 'language', `L${index}`, 100 - index)),
+    ...Array.from({ length: 24 }, (_, index) => starCluster(`topic:t${index}`, 'topic', `T${index}`, 50 - index)),
+    ...Array.from({ length: 11 }, (_, index) => starCluster(`owner:o${index}`, 'owner', `O${index}`, 20 - index)),
+    starCluster('lang:zero', 'language', 'Zero', 0),
+    starCluster('license:MIT', 'license', 'MIT', 9)
+  ];
+  const data = loadData();
+  data.state.stars = starSnapshot(clusters, { edges: [
+    { a: 'lang:l0', b: 'topic:t0', w: 5 },
+    { a: 'lang:l10', b: 'topic:t0', w: 4 },
+    { a: 'lang:l0', b: 'owner:o0', w: 3 },
+    { a: 'lang:l0', b: 'lang:l1', w: 0 }
+  ] });
+  const graph = data.starGraph();
+  const perType = type => graph.nodes.filter(node => node.type === type).length;
+  assert.deepEqual({ language: perType('language'), topic: perType('topic'), owner: perType('owner') },
+    { language: 10, topic: 22, owner: 10 });
+  assert.equal(graph.nodes[0].id, 'lang:l0', 'the largest clusters are drawn first');
+  assert.equal(graph.hidden, 6, 'smaller clusters and unplaceable types stay out of the rings');
+  assert.deepEqual(plain(graph.edges.map(edge => edge.w)), [5, 3, 0], 'a zero co-occurrence is a real edge');
+  assert.equal(graph.missing, 1, 'edges to a node the budget dropped are counted, not silently lost');
+
+  const empty = loadData();
+  empty.state.stars = starSnapshot([]);
+  assert.deepEqual(plain(empty.starGraph()), { nodes: [], edges: [], hidden: 0, missing: 0 });
+});
+
+test('the star board separates snapshot metrics from detail rows and escapes every third-party string', () => {
+  const clock = testClock('2026-10-31T06:00:00.000Z');
+  const data = loadData(undefined, { Date: clock.Date });
+  data.state.stars = starSnapshot([
+    starCluster('lang:Python', 'language', 'Python', 2),
+    starCluster('topic:llm', 'topic', '<i>LLM</i>', 1)
+  ], { edges: [{ a: 'lang:Python', b: 'topic:llm', w: 1 }] });
+  data.state.starDetail = starDetail([
+    starRow('a/fresh', { s: 500 }),
+    starRow('a/second', { s: 200 }),
+    starRow('<svg/onload>bad</svg/onload>', { s: 4, d: '<img src=x onerror=alert(1)>', r: 1, c: 'topic:llm' }),
+    starRow('c/plain', { s: null, l: '', d: '', p: null, f: 1, c: '' })
+  ]);
+  data.state.starDetailStatus = 'ready';
+  data.state.starDetailLoadedAt = '2026-10-31T02:23:00Z';
+  data.state.starSnapshotCheckedAt = '2026-10-31T05:59:00Z';
+  const view = loadModelView({ ...data, loadAll: async () => {} }, { Date: clock.Date });
+  view.render.renderStars();
+
+  assert.equal(view.element('starStatus').textContent,
+    'GitHub 公开 star 快照 · 3 个仓库 · 1 页 · 采集于 2026-10-31 02:23 UTC · 较上次采集 新增 1 · 取消 0');
+  assert.equal(view.element('starFreshness').textContent,
+    '快照采集于 2026-10-31 02:23 UTC · 距今 3 小时 · 最近读取 2026-10-31 05:59 UTC（读取不触发采集）');
+  assert.equal(view.element('starSnapshotCheckedAt').textContent,
+    '最近成功读取快照 2026-10-31 05:59 UTC · 采集由每日工作流完成');
+  assert.equal(view.element('starDetailNote').textContent,
+    '4 个仓库明细已加载 · 明细采集于 2026-10-31 02:23 UTC · 仅在进入本节视口时读取，首屏不下载' +
+    ' · 墙、清单与 CSV 来自明细，KPI 与关系图来自 2 个聚类节点的快照');
+  assert.equal(view.element('starExport').disabled, false);
+  assert.equal(view.element('starDetailLoad').textContent, '重新加载 star 明细');
+  assert.equal(view.element('starFilterReset').disabled, true, 'no filter is active yet');
+  // The headline numbers stay on the collector summary even when the detail file
+  // is a different day, so a KPI is never quietly restated from a partial load.
+  assert.deepEqual({
+    total: view.element('statStars').textContent,
+    sub: view.element('statStarsSub').textContent,
+    active: view.element('statStarActive').textContent,
+    activeSub: view.element('statStarActiveSub').textContent,
+    clusters: view.element('statStarClusters').textContent,
+    special: view.element('statStarSpecial').textContent
+  }, {
+    total: '3', sub: '1 种语言 · 1 个主题 · 2 个所有者', active: '66.7%',
+    activeSub: '90 天内有推送 2 / 3 个仓库', clusters: '2', special: '0'
+  });
+
+  const wall = view.chartCalls.filter(call => call.name === 'starWall').at(-1);
+  assert.equal(wall.node, view.element('starWall'));
+  assert.equal(wall.model.total, 4);
+  assert.deepEqual(plain(wall.model.groups.map(group => [group.id, group.count])),
+    [['lang:Python', 2], ['lang:未知', 1], ['topic:llm', 1]]);
+  assert.equal(wall.opts.activeCluster, 'all');
+  assert.equal(wall.opts.label, 'star 星星墙：4 个仓库，一格一个');
+  const graph = view.chartCalls.filter(call => call.name === 'starGraph').at(-1);
+  assert.deepEqual(plain(graph.graph.nodes.map(node => node.id)), ['lang:Python', 'topic:llm']);
+  assert.equal(graph.graph.edges.length, 1);
+  assert.match(view.element('starGraphNote').textContent,
+    /^内环＝语言，中环＝主题，外环＝账户 · 2 个节点、1 条关系 · 连线粗细/);
+
+  const legend = view.element('starWallLegend').innerHTML;
+  assert.doesNotMatch(legend, /<i>LLM<\/i>/);
+  assert.match(legend, /&lt;i&gt;LLM&lt;\/i&gt;/);
+  assert.match(legend, /data-cluster="topic:llm"/);
+  assert.match(legend, /--star-chip:var\(--chart-1\)/);
+  assert.match(legend, /<b>2<\/b>/);
+  assert.match(view.element('starWallNote').textContent, /^4 格 · 一格一仓库 · 3 种颜色对应 3 个聚类/);
+
+  const markup = view.element('starRows').innerHTML;
+  assert.doesNotMatch(markup, /<svg\/onload>|<img src=x/);
+  assert.match(markup, /&lt;svg\/onload&gt;bad&lt;\/svg\/onload&gt;/);
+  assert.match(markup, /&lt;img src=x onerror=alert\(1\)&gt;/);
+  assert.match(markup, /href="https:\/\/github\.com\/&lt;svg\/onload&gt;bad&lt;\/svg\/onload&gt;"/);
+  assert.match(markup, /star-flag-archived">归档</);
+  assert.match(markup, /star-flag-fork">fork</);
+  assert.match(markup, /star-flag-undocumented">无描述</);
+  assert.match(markup, /data-star-topic="llm"/);
+  assert.match(markup, /语言 · 未知/);
+  assert.match(markup, /主题 · &lt;i&gt;LLM&lt;\/i&gt;/);
+  assert.match(markup, /正常</);
+  assert.equal(view.element('starTableCount').textContent, '4 / 4 REPOSITORIES');
+  assert.equal(view.element('starPagination').hidden, true);
+
+  // A detail failure only removes the wall, list and export; the snapshot panels stay.
+  data.state.starDetail = null;
+  data.state.starDetailStatus = 'error';
+  data.state.starDetailError = '仓库明细 读取失败（HTTP 404）';
+  view.render.renderStars();
+  assert.equal(view.element('starDetailNote').textContent,
+    '仓库明细 读取失败（HTTP 404）；指标与图谱仍来自快照。');
+  assert.equal(view.element('starExport').disabled, true);
+  assert.equal(view.element('starDetailLoad').textContent, '重试加载 star 明细');
+  const failedWall = view.chartCalls.filter(call => call.name === 'starWall').at(-1);
+  assert.equal(failedWall.model.total, 0);
+  assert.equal(failedWall.opts.emptyText,
+    '仓库明细 读取失败（HTTP 404），可点击「重试加载 star 明细」。');
+  assert.match(view.element('starTableCount').textContent, /^等待 star 明细$/);
+  assert.match(view.element('starRows').innerHTML, /star 明细尚未加载/);
+  assert.deepEqual(plain(view.chartCalls.filter(call => call.name === 'starGraph').at(-1).graph.nodes
+    .map(node => node.id)), ['lang:Python', 'topic:llm'], 'the graph keeps working from the snapshot');
+
+  // Nothing has been fetched yet on a fresh page.
+  data.state.starDetailStatus = 'idle';
+  data.state.starDetailError = null;
+  data.state.starSnapshotCheckedAt = null;
+  view.render.renderStars();
+  assert.equal(view.element('starDetailLoad').textContent, '加载 star 明细');
+  assert.match(view.element('starDetailNote').textContent, /^star 明细尚未加载：滚动到本节会自动读取/);
+  assert.match(view.element('starSnapshotCheckedAt').textContent, /^尚未成功读取快照 · 采集由每日工作流完成$/);
+});
+
+test('the star selects follow the options that are actually on screen', () => {
+  const data = loadData();
+  data.state.stars = starSnapshot([starCluster('lang:Python', 'language', 'Python', 2)]);
+  data.state.starDetail = starDetail([
+    starRow('a/one'),
+    starRow('a/two', { l: 'Rust', c: 'lang:Rust' })
+  ]);
+  data.state.starDetailStatus = 'ready';
+  data.state.starCluster = 'lang:Gone';
+  data.state.starLanguage = 'Go';
+  data.state.starTopic = 'rl';
+  const view = loadModelView({ ...data, loadAll: async () => {} });
+  view.render.renderStars();
+
+  assert.equal(data.state.starCluster, 'all', 'a cluster that is on neither wall nor snapshot cannot stay selected');
+  assert.equal(data.state.starLanguage, 'all', 'a language the detail does not list cannot stay selected');
+  assert.equal(data.state.starTopic, 'all');
+  assert.deepEqual({
+    cluster: view.element('starCluster').value,
+    language: view.element('starLanguage').value,
+    topic: view.element('starTopic').value
+  }, { cluster: 'all', language: 'all', topic: 'all' });
+  assert.match(view.element('starCluster').innerHTML, /^<option value="all">全部聚类<\/option>/);
+  assert.match(view.element('starLanguage').innerHTML, /<option value="Rust">Rust \(1\)<\/option>/);
+  assert.doesNotMatch(view.element('starLanguage').innerHTML, /<option value="all">全部聚类/);
+
+  // Once the wall is on screen its own clusters are selectable, even when the
+  // snapshot beside it has not caught up with the detail file yet.
+  assert.match(view.element('starCluster').innerHTML, /<option value="lang:Rust">语言 · Rust \(1\)<\/option>/);
+  data.state.starCluster = 'lang:Rust';
+  view.render.renderStars();
+  assert.equal(data.state.starCluster, 'lang:Rust', 'a cluster the wall draws keeps its selection');
+  assert.equal(view.element('starCluster').value, 'lang:Rust');
+  assert.equal(view.element('starLanguage').value, 'all');
+
+  data.state.starLanguage = 'Python';
+  view.render.renderStars();
+  assert.equal(data.state.starLanguage, 'Python', 'an option that exists keeps its selection');
+  assert.equal(view.element('starLanguage').value, 'Python');
+});
+
+test('the star wall chart gives every repository one cell and dims only the unselected clusters', () => {
+  const data = loadData();
+  data.state.stars = starSnapshot([
+    starCluster('lang:Python', 'language', '<b>Python</b>', 150),
+    starCluster('topic:llm', 'topic', 'LLM', 50)
+  ]);
+  data.state.starDetail = starDetail([
+    ...Array.from({ length: 150 }, (_, index) => starRow(`p/py${index}`, { s: 1000 - index })),
+    ...Array.from({ length: 50 }, (_, index) => starRow(`p/llm${index}`, { s: 10, c: 'topic:llm' }))
+  ]);
+  const view = loadModelView(data);
+  view.run('charts.js');
+  const charts = view.context.MO.charts;
+  const node = view.element('starWall');
+  const model = data.starWall();
+  assert.equal(model.groups.length, 2, 'the snapshot clusters, not the detail rows, define the groups');
+
+  charts.starWall(node, model, { activeCluster: 'all' });
+  const markup = node.innerHTML;
+  const cells = [...markup.matchAll(/<rect data-i="(\d+)" x="([\d.]+)" y="([\d.]+)" width="(\d+)" height="\4"/g)];
+  assert.equal(cells.length, 200, 'one cell per starred repository');
+  assert.deepEqual(plain(cells.map(cell => Number(cell[1]))), Array.from({ length: 200 }, (_, index) => index),
+    'cell indexes flow in wall order for the hover readout');
+  const [, width, height] = markup.match(/viewBox="0 0 (\d+) (\d+)"/);
+  assert.equal(Number(width) % 15, 0, 'the grid pitch is one fifth of the viewBox width');
+  assert.ok(Number(width) <= 140 * 15 && Number(height) <= 40 * 15, 'the wall stays one dense SVG, not thousands of rows');
+  for (const cell of cells) {
+    assert.ok(Number(cell[2]) < Number(width) && Number(cell[3]) < Number(height), `${cell[1]} is inside the viewBox`);
+  }
+  assert.equal((markup.match(/<g /g) || []).length, 2);
+  assert.match(markup, /<g fill="var\(--chart-1\)" data-cluster="lang:Python"/);
+  assert.match(markup, /<g fill="var\(--chart-2\)" data-cluster="topic:llm"/);
+  assert.doesNotMatch(markup, /opacity=/, 'nothing is dimmed while every cluster is in scope');
+  assert.doesNotMatch(markup, /<b>Python<\/b>/);
+  assert.match(markup, /<title>&lt;b&gt;Python&lt;\/b&gt; · 150 个仓库</);
+  const sizes = cells.map(cell => Number(cell[4]));
+  assert.ok(sizes[0] > sizes[150], 'a 1000-star repository is larger than a 10-star one');
+
+  charts.starWall(node, model, { activeCluster: 'topic:llm' });
+  assert.equal((node.innerHTML.match(/opacity="\.22"/g) || []).length, 1,
+    'only the other clusters fade out');
+  assert.match(node.innerHTML, /data-cluster="topic:llm">/);
+  assert.doesNotMatch(node.innerHTML, /data-cluster="topic:llm" opacity/);
+
+  charts.starWall(node, { cells: [], groups: [], total: 0 }, { activeCluster: 'all' });
+  assert.equal(node.innerHTML, '<div class="chart-empty">等待 star 明细：滚动到本节会自动读取，也可以手动重试。</div>');
+  charts.starWall(node, { cells: [], groups: [], total: 0 }, { emptyText: '明细读取失败' });
+  assert.match(node.innerHTML, /^<div class="chart-empty">明细读取失败<\/div>$/);
+});
+
+test('the cluster graph chart rings each type and weights edges by co-occurrence', () => {
+  const view = loadModelView(loadData());
+  view.run('charts.js');
+  const charts = view.context.MO.charts;
+  const node = view.element('starGraph');
+  const nodes = [
+    { id: 'lang:Python', label: 'Python', type: 'language', repos: 9, appears: 9 },
+    { id: 'lang:Rust', label: 'Rust', type: 'language', repos: 4, appears: 4 },
+    { id: 'topic:<b>llm</b>', label: '<b>llm</b>', type: 'topic', repos: 4, appears: 6 },
+    { id: 'owner:gatilin', label: 'gatilin', type: 'owner', repos: 1, appears: 1 }
+  ];
+  charts.starGraph(node, { nodes, edges: [
+    { a: 'lang:Python', b: 'topic:<b>llm</b>', w: 10 },
+    { a: 'lang:Rust', b: 'owner:gatilin', w: 1 }
+  ] }, {});
+  const markup = node.innerHTML;
+  const circles = [...markup.matchAll(/<circle class="star-node" data-cluster="([^"]+)" cx="([\d.-]+)" cy="([\d.-]+)" r="([\d.]+)"/g)];
+  assert.equal(circles.length, 4);
+  const ringOf = { lang: 74, topic: 146, owner: 196 };
+  for (const circle of circles) {
+    const type = circle[1].split(':')[0];
+    const distance = Math.hypot(Number(circle[2]) - 420, Number(circle[3]) - 226);
+    assert.ok(Math.abs(distance - ringOf[type]) < 0.5, `${type} sits on ring ${ringOf[type]}`);
+  }
+  const radiusOf = id => Number(circles.find(circle => circle[1].startsWith(id))[4]);
+  assert.ok(radiusOf('lang:Python') > radiusOf('lang:Rust'), 'node size follows repository count');
+  assert.ok(radiusOf('lang:Rust') > radiusOf('owner:gatilin'));
+  const lines = [...markup.matchAll(/<line class="star-edge"[^>]*stroke-width="([\d.]+)" opacity="([\d.]+)"/g)];
+  assert.deepEqual(plain(lines.map(line => [Number(line[1]), Number(line[2])])), [[3.1, 0.56], [0.76, 0.18]],
+    'the strongest co-occurrence draws the heaviest line');
+  assert.equal((markup.match(/class="svg-label star-node-label"/g) || []).length, 3,
+    'only the large clusters get a label, so the rings stay readable');
+  assert.doesNotMatch(markup, /<b>llm<\/b>/);
+  assert.match(markup, /&lt;b&gt;llm&lt;\/b&gt;/);
+
+  charts.starGraph(node, { nodes: [nodes[0]], edges: [{ a: 'lang:Python', b: 'lang:Gone', w: 3 }] }, {});
+  assert.doesNotMatch(node.innerHTML, /<line/, 'an edge with a missing end is never drawn');
+  charts.starGraph(node, { nodes: [], edges: [] }, { emptyText: '等待 star 快照中的聚类节点。' });
+  assert.equal(node.innerHTML, '<div class="chart-empty">等待 star 快照中的聚类节点。</div>');
+});
+
+test('the star board pulls the detail on viewport entry, filters the wall, and exports the published rows', async () => {
+  const payloads = publishedPayloads();
+  payloads['./data/stars_repos.json'] = starDetail([
+    starRow('a/fresh', { s: 500 }),
+    starRow('b/old', { s: 40, l: 'Rust', c: 'lang:Rust', p: '2025-01-01', o: 1 }),
+    starRow('=danger', { s: 5, d: '=cmd', c: 'topic:llm' })
+  ]);
+  const requested = [];
+  const data = loadData(publishedFetch(payloads, requested));
+  await data.loadAll();
+  assert.equal(requested.filter(url => url === './data/stars.json').length, 1);
+
+  const observers = [];
+  class IntersectionObserver {
+    constructor(callback, options) { this.callback = callback; this.options = options; observers.push(this); }
+    observe(target) { this.target = target; }
+    disconnect() { this.disconnected = (this.disconnected || 0) + 1; }
+  }
+  const booted = deferred();
+  let snapshotCalls = 0, snapshotFailure = null;
+  const viewData = {
+    ...data, loadAll: async () => {},
+    refreshStarSnapshot: async () => {
+      snapshotCalls++;
+      if (snapshotFailure) throw snapshotFailure;
+      return data.state.stars;
+    }
+  };
+  const view = loadModelView(viewData, { IntersectionObserver });
+  const toasts = [];
+  view.context.MO.theme = { init() {} };
+  view.context.MO.templates = { init: async () => { booted.resolve(); } };
+  view.context.MO.render = Object.fromEntries(Object.entries(view.render).map(([name, render]) =>
+    [name, /^(renderStar|renderConference)/.test(name) ? render
+      : name === 'showToast' ? message => toasts.push(message) : () => {}]));
+  view.run('app.js');
+  await booted.promise;
+
+  const detailCalls = () => requested.filter(url => url === './data/stars_repos.json').length;
+  assert.equal(detailCalls(), 0, 'first paint must not download the detail file');
+  assert.equal(observers.length, 1);
+  assert.equal(observers[0].target, view.element('stars'));
+  assert.equal(observers[0].options.rootMargin, '300px 0px');
+
+  observers[0].callback([{ isIntersecting: false }]);
+  assert.equal(detailCalls(), 0, 'leaving the section must not fetch');
+  observers[0].callback([{ isIntersecting: true }]);
+  await nextTurn();
+  await nextTurn();
+  assert.equal(detailCalls(), 1);
+  assert.equal(observers[0].disconnected, 1, 'the observer stops after the first entry');
+  assert.equal(data.state.starDetailStatus, 'ready');
+  assert.match(toasts.at(-1), /已加载 3 个 star 仓库明细/);
+  assert.equal(view.element('starExport').disabled, false);
+  assert.equal(view.chartCalls.filter(call => call.name === 'starWall').at(-1).model.total, 3);
+  observers[0].callback([{ isIntersecting: true }]);
+  await nextTurn();
+  assert.equal(detailCalls(), 1, 'a second entry does not refetch');
+
+  const change = (id, value, event = 'change') => view.element(id).events[event]({ target: { value } });
+  assert.equal(view.element('starTableCount').textContent, '3 / 3 REPOSITORIES');
+  assert.equal(view.element('starPagination').hidden, true);
+  assert.equal(view.element('starNext').disabled, true);
+  change('starSearch', 'fresh', 'input');
+  assert.equal(view.element('starTableCount').textContent, '1 / 3 REPOSITORIES');
+  change('starStatusFilter', 'archived');
+  assert.equal(view.element('starTableCount').textContent, '0 / 3 REPOSITORIES');
+  assert.match(view.element('starRows').innerHTML, /当前筛选没有匹配的仓库/);
+  assert.equal(view.element('starFilterReset').disabled, false);
+
+  const cell = index => ({ target: { closest: selector =>
+    selector === '[data-i]' ? { dataset: { i: String(index) } } : null } });
+  view.element('starWall').events.mouseover(cell(2));
+  assert.equal(view.element('starWallReadout').textContent, '=danger · ★5 · Python · 主题：llm');
+  view.element('starWall').events.mouseover(cell(99));
+  assert.match(view.element('starWallReadout').textContent, /^悬停任意格子查看/);
+
+  view.element('starFilterReset').events.click();
+  assert.deepEqual({
+    cluster: data.state.starCluster, language: data.state.starLanguage, topic: data.state.starTopic,
+    status: data.state.starStatus, sort: data.state.starSort, search: data.state.starSearch,
+    page: data.state.starPage
+  }, { cluster: 'all', language: 'all', topic: 'all', status: 'all', sort: 'stars', search: '', page: 1 });
+  assert.equal(view.element('starTableCount').textContent, '3 / 3 REPOSITORIES');
+
+  const chip = value => ({ target: { closest: selector =>
+    selector === '[data-cluster]' ? { dataset: { cluster: value } } : null } });
+  view.element('starWall').events.click(cell(1));
+  assert.equal(data.state.starCluster, 'lang:Rust');
+  assert.equal(view.element('starTableCount').textContent, '1 / 3 REPOSITORIES');
+  assert.equal(view.chartCalls.filter(call => call.name === 'starWall').at(-1).opts.activeCluster, 'lang:Rust');
+  view.element('starWallLegend').events.click(chip('lang:Rust'));
+  assert.equal(data.state.starCluster, 'all', 'clicking the active cluster again clears the filter');
+  view.element('starGraph').events.click(chip('topic:llm'));
+  assert.equal(data.state.starCluster, 'topic:llm');
+  view.element('starRows').events.click(chip('lang:Python'));
+  assert.equal(data.state.starCluster, 'lang:Python', 'a table chip selects that cluster');
+  view.element('starRows').events.click({ target: { closest: selector =>
+    selector === '[data-cluster]' ? null : { dataset: { starTopic: 'llm' } } } });
+  assert.equal(data.state.starTopic, 'llm', 'a topic chip filters the list');
+  view.element('starFilterReset').events.click();
+
+  await view.element('starRefresh').events.click();
+  assert.equal(snapshotCalls, 1);
+  assert.equal(detailCalls(), 1, 'reading the snapshot must not pull the detail file');
+  assert.equal(view.element('starRefresh').disabled, false);
+  assert.equal(view.element('starRefresh').getAttribute('aria-busy'), 'false');
+  assert.equal(view.element('starRefresh').textContent, '刷新已发布快照');
+  assert.match(toasts.at(-1), /已读取 star 快照.*不会触发后台采集/);
+  snapshotFailure = new Error('HTTP 503');
+  await view.element('starRefresh').events.click();
+  assert.match(toasts.at(-1), /star 快照读取失败：HTTP 503。保留上次数据/);
+  assert.equal(view.element('starRefresh').disabled, false);
+  snapshotFailure = null;
+
+  await view.element('starDetailLoad').events.click();
+  await nextTurn();
+  await nextTurn();
+  assert.equal(detailCalls(), 2, 'the manual button always forces a fresh read');
+  assert.match(toasts.at(-1), /已加载 3 个 star 仓库明细/);
+  assert.equal(view.element('starDetailLoad').textContent, '重新加载 star 明细');
+
+  const parseCsv = text => text.replace(/^﻿/, '').split('\r\n').map(row =>
+    Array.from(row.matchAll(/"((?:[^"]|"")*)"/g), match => match[1].replace(/""/g, '"')));
+  view.element('starExport').onclick();
+  assert.equal(view.blobs.at(-1).type, 'text/csv;charset=utf-8');
+  const [header, ...csvRows] = parseCsv(await view.blobs.at(-1).text());
+  assert.deepEqual(header, ['repository', 'owner', 'repo', 'url', 'stars', 'language', 'topics', 'description',
+    'pushed_at', 'is_fork', 'is_archived', 'owner_is_organization', 'cluster_id', 'cluster_type',
+    'cluster_label', 'snapshot_captured_at', 'detail_captured_at']);
+  assert.equal(csvRows.length, 3, 'CSV exports every filter match, not only the visible page');
+  assert.deepEqual(csvRows[0], ['a/fresh', 'a', 'fresh', 'https://github.com/a/fresh', '500', 'Python', 'llm',
+    'desc', '2026-10-01', 'false', 'false', 'false', 'lang:Python', 'language', 'Python',
+    '2026-10-31T02:23:00Z', '2026-10-31T02:23:00Z']);
+  assert.equal(csvRows[1][11], 'true', 'organization ownership survives the export');
+  assert.deepEqual(plain(csvRows[2].slice(12, 15)), ['topic:llm', 'topic', 'llm']);
+  assert.equal(csvRows[2][0], "'=danger", 'formula-leading repository names are neutralised');
+  assert.equal(csvRows[2][7], "'=cmd", 'formula-leading descriptions are neutralised');
+
+  change('starCluster', 'lang:Rust');
+  view.element('starExport').onclick();
+  const filtered = parseCsv(await view.blobs.at(-1).text()).slice(1);
+  assert.deepEqual(filtered.map(row => row[0]), ['b/old'], 'the export follows the active filter');
+});
+
+
+
+

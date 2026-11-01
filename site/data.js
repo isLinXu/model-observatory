@@ -71,6 +71,20 @@ MO.data = (() => {
     conferenceKind: 'paper',
     conferenceWindow: '90',
     conferencePage: 1,
+    stars: null,
+    starDetail: null,
+    starDetailStatus: 'idle',
+    starDetailError: null,
+    starDetailLoadedAt: null,
+    starSnapshotCheckedAt: null,
+    starRefreshError: null,
+    starSearch: '',
+    starCluster: 'all',
+    starLanguage: 'all',
+    starTopic: 'all',
+    starStatus: 'all',
+    starSort: 'stars',
+    starPage: 1,
     status: 'loading'
   };
 
@@ -664,10 +678,292 @@ MO.data = (() => {
     return stats;
   }
 
+  // --- Starred repositories -------------------------------------------------
+
+  const STAR_SOURCE_ID = 'github';
+  const STAR_PAGE_SIZE = 24;
+  const STAR_UNKNOWN_CLUSTER = 'lang:未知';
+  /** Ring budgets for the graph: enough clusters to read, few enough to label. */
+  const STAR_RINGS = { language: 10, topic: 22, owner: 10 };
+  const STAR_EDGE_LIMIT = 120;
+
+  // Module-level so `state` stays a plain serialisable object.
+  let starDetailPromise = null;
+  let starRowCache = null;
+  let starFacetCache = null;
+  let starWallCache = null;
+
+  /** Cluster ids carry a short prefix (`lang:Python`); published nodes use the long type word. */
+  const STAR_TYPE_BY_PREFIX = { lang: 'language', topic: 'topic', owner: 'owner' };
+
+  function starClusterType(id) {
+    const prefix = String(id).split(':')[0];
+    return STAR_TYPE_BY_PREFIX[prefix] || prefix;
+  }
+
+  function validateStarSnapshot(payload) {
+    if (payload?.schema_version !== 1 || payload?.source?.id !== STAR_SOURCE_ID ||
+        !['ok', 'stale', 'unavailable'].includes(payload.status) ||
+        !Array.isArray(payload.clusters) || !Array.isArray(payload.edges) ||
+        payload.clusters.some(cluster => typeof cluster?.id !== 'string')) {
+      throw new Error('star 快照格式或数据来源不兼容');
+    }
+    return payload;
+  }
+
+  /**
+   * Re-read the published star graph. The wall itself needs the detail file and
+   * is fetched lazily, so this snapshot alone already fills the KPIs and graph.
+   */
+  async function refreshStarSnapshot() {
+    try {
+      const payload = validateStarSnapshot(await getJSON(
+        './data/stars.json', 'star 快照', { signal: AbortSignal.timeout(20000) }));
+      state.stars = payload;
+      state.starSnapshotCheckedAt = new Date().toISOString();
+      state.starRefreshError = null;
+      notify();
+      return payload;
+    } catch (error) {
+      state.starRefreshError = error.name === 'TimeoutError'
+        ? '读取 star 快照超时，请稍后重试' : error.message;
+      throw new Error(state.starRefreshError);
+    }
+  }
+
+  async function loadStars() {
+    try {
+      await refreshStarSnapshot();
+    } catch (error) {
+      if (!state.stars) {
+        state.stars = { status: 'unavailable', source: { id: STAR_SOURCE_ID }, clusters: [], edges: [], error: error.message };
+      }
+      console.warn('star 快照读取失败：', error);
+    }
+  }
+
+  /** Fetch the star detail rows once per payload; `force` retries a failure. */
+  function ensureStarDetail(force = false) {
+    if (state.starDetail && !force) return Promise.resolve(state.starDetail);
+    if (starDetailPromise && !force) return starDetailPromise;
+    state.starDetailStatus = 'loading';
+    state.starDetailError = null;
+    starDetailPromise = getJSON('./data/stars_repos.json', '仓库明细',
+      { signal: AbortSignal.timeout(30000) })
+      .then(payload => {
+        if (payload?.schema_version !== 1 || !Array.isArray(payload.rows) ||
+            payload.rows.some(row => typeof row?.n !== 'string')) {
+          throw new Error('star 明细格式不完整');
+        }
+        state.starDetail = payload;
+        state.starDetailStatus = 'ready';
+        state.starDetailLoadedAt = payload.captured_at || new Date().toISOString();
+        starDetailPromise = null;
+        return payload;
+      })
+      .catch(error => {
+        state.starDetailStatus = 'error';
+        state.starDetailError = error.name === 'TimeoutError'
+          ? '读取 star 明细超时，请重试' : error.message;
+        starDetailPromise = null;
+        return null;
+      });
+    return starDetailPromise;
+  }
+
+  function starRows() {
+    const payload = state.starDetail;
+    if (!Array.isArray(payload?.rows)) return [];
+    if (starRowCache && starRowCache.payload === payload) return starRowCache.rows;
+    const rows = payload.rows.map(row => ({
+      name: row.n,
+      owner: row.n.split('/', 1)[0],
+      repo: row.n.split('/')[1] || row.n,
+      url: `https://github.com/${row.n}`,
+      language: typeof row.l === 'string' ? row.l : '',
+      topics: Array.isArray(row.t) ? row.t : [],
+      stars: Number.isFinite(row.s) ? row.s : null,
+      description: typeof row.d === 'string' ? row.d : '',
+      pushed: typeof row.p === 'string' ? row.p : null,
+      fork: row.f === 1,
+      archived: row.r === 1,
+      org: row.o === 1,
+      // The collector assigns each repository to one cluster; falling back to the
+      // unknown node only covers a detail file older than the graph beside it.
+      cluster: typeof row.c === 'string' && row.c ? row.c : STAR_UNKNOWN_CLUSTER
+    }));
+    starRowCache = { payload, rows };
+    return rows;
+  }
+
+  function starClusters() {
+    return (state.stars?.clusters || []).filter(cluster => cluster.repos);
+  }
+
+  function starLanguages() {
+    const counts = new Map();
+    starRows().forEach(row => {
+      if (!row.language) return;
+      counts.set(row.language, (counts.get(row.language) || 0) + 1);
+    });
+    return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([label, count]) => ({ label, count }));
+  }
+
+  function starTopics() {
+    const counts = new Map();
+    starRows().forEach(row => row.topics.forEach(topic =>
+      counts.set(topic, (counts.get(topic) || 0) + 1)));
+    return [...counts].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+      .map(([label, count]) => ({ label, count }));
+  }
+
+  function starFacets() {
+    const payload = state.starDetail;
+    if (starFacetCache && starFacetCache.payload === payload) return starFacetCache;
+    starFacetCache = { payload, languages: starLanguages(), topics: starTopics() };
+    return starFacetCache;
+  }
+
+  /** Rows for the current filters; `now` is injectable so tests stay deterministic. */
+  function starFiltered(now = Date.now()) {
+    const search = state.starSearch.trim().toLowerCase();
+    const floor = new Date(now - 90 * 86400000).toISOString().slice(0, 10);
+    const rows = starRows().filter(row => {
+      if (state.starCluster !== 'all' && row.cluster !== state.starCluster) return false;
+      if (state.starLanguage !== 'all' && row.language !== state.starLanguage) return false;
+      if (state.starTopic !== 'all' && !row.topics.includes(state.starTopic)) return false;
+      if (state.starStatus === 'archived' && !row.archived) return false;
+      if (state.starStatus === 'fork' && !row.fork) return false;
+      if (state.starStatus === 'undocumented' && row.description) return false;
+      if (state.starStatus === 'maintained' && !(row.pushed && row.pushed >= floor)) return false;
+      return !search || `${row.name} ${row.description} ${row.topics.join(' ')}`.toLowerCase().includes(search);
+    });
+    const sort = state.starSort;
+    return rows.sort((a, b) => {
+      if (sort === 'name') return a.name.toLowerCase().localeCompare(b.name.toLowerCase());
+      if (sort === 'pushed') return String(b.pushed || '').localeCompare(String(a.pushed || ''));
+      return (b.stars || 0) - (a.stars || 0);
+    });
+  }
+
+  function starPageCount() {
+    return Math.max(1, Math.ceil(starFiltered().length / STAR_PAGE_SIZE));
+  }
+
+  function starPage() {
+    const start = (Math.min(Math.max(1, state.starPage), starPageCount()) - 1) * STAR_PAGE_SIZE;
+    return starFiltered().slice(start, start + STAR_PAGE_SIZE);
+  }
+
+  /**
+   * Headline numbers from the snapshot alone, so the board is filled before the
+   * detail file arrives. `counts` is the collector's own summary.
+   */
+  function starStats() {
+    const snapshot = state.stars || {};
+    const counts = snapshot.counts || {};
+    const total = Number.isFinite(counts.total) ? counts.total : 0;
+    const active = Number.isFinite(counts.active_90d) ? counts.active_90d : 0;
+    return {
+      available: ['ok', 'stale'].includes(snapshot.status),
+      total,
+      active,
+      activeShare: total ? active / total : null,
+      languages: counts.languages || 0,
+      topics: counts.topics || 0,
+      owners: counts.owners || 0,
+      orgOwned: counts.org_owned || 0,
+      archived: counts.archived || 0,
+      forks: counts.forks || 0,
+      undocumented: counts.undocumented || 0,
+      pages: snapshot.pages || 0,
+      expected: Number.isFinite(snapshot.expected_total) ? snapshot.expected_total : null,
+      changes: snapshot.changes || null,
+      clusters: starClusters().length,
+      edges: (snapshot.edges || []).length
+    };
+  }
+
+  /** Every starred repository as one cell, grouped by cluster in wall order. */
+  function starWall() {
+    const payload = state.starDetail;
+    const snapshot = state.stars;
+    if (starWallCache && starWallCache.payload === payload && starWallCache.snapshot === snapshot) {
+      return starWallCache.model;
+    }
+    const groups = starClusters().map(cluster => ({
+      id: cluster.id,
+      label: cluster.label || cluster.id,
+      type: cluster.type,
+      appears: cluster.appears || 0,
+      members: []
+    }));
+    const byId = new Map(groups.map(group => [group.id, group]));
+    starRows().forEach(row => {
+      // A detail file can outlive the snapshot beside it, so an unknown cluster
+      // id still needs a group — created once per id, not once per repository.
+      let group = byId.get(row.cluster);
+      if (!group) {
+        group = { id: row.cluster, label: row.cluster.split(':').slice(1).join(':') || row.cluster,
+          type: starClusterType(row.cluster), appears: 0, members: [] };
+        byId.set(group.id, group);
+        groups.push(group);
+      }
+      group.members.push(row);
+    });
+    const kept = groups.filter(group => group.members.length);
+    kept.forEach(group => group.members.sort((a, b) =>
+      (b.stars || 0) - (a.stars || 0) || a.name.toLowerCase().localeCompare(b.name.toLowerCase())));
+    kept.sort((a, b) => b.members.length - a.members.length || a.id.localeCompare(b.id));
+    let offset = 0;
+    const cells = [];
+    for (const group of kept) {
+      group.start = offset;
+      group.count = group.members.length;
+      group.members.forEach(row => {
+        cells.push({ name: row.name, stars: row.stars, language: row.language, cluster: group.id });
+        offset++;
+      });
+      delete group.members;
+    }
+    const model = { cells, groups: kept, total: cells.length };
+    starWallCache = { payload, snapshot, model };
+    return model;
+  }
+
+  /**
+   * Nodes and edges for the ring graph. The snapshot publishes more clusters than
+   * a readable graph can hold, so each type keeps a budget of the largest clusters
+   * and the report says how many were left out.
+   */
+  function starGraph() {
+    const snapshot = state.stars || {};
+    const ranked = [...starClusters()].sort((a, b) => b.repos - a.repos || a.id.localeCompare(b.id));
+    const taken = {};
+    const nodes = [];
+    for (const cluster of ranked) {
+      // A type the chart cannot place gets no ring, so it must not slip past the
+      // budget check and steal node slots; the note reports it as hidden.
+      const budget = STAR_RINGS[cluster.type];
+      if (!budget || (taken[cluster.type] || 0) >= budget) continue;
+      taken[cluster.type] = (taken[cluster.type] || 0) + 1;
+      nodes.push({ id: cluster.id, label: cluster.label || cluster.id, type: cluster.type,
+        repos: cluster.repos, appears: cluster.appears || 0 });
+    }
+    const ids = new Set(nodes.map(node => node.id));
+    const edges = (snapshot.edges || [])
+      .filter(edge => ids.has(edge.a) && ids.has(edge.b) && Number.isFinite(edge.w))
+      .slice(0, STAR_EDGE_LIMIT);
+    const hidden = ranked.length - nodes.length;
+    return { nodes, edges, hidden, missing: Math.max(0, ((snapshot.edges || []).length) - edges.length) };
+  }
+
   /** Load every dataset. Only a download failure is fatal for the page. */
   async function loadAll() {
     const [downloads] = await Promise.allSettled([
-      loadDownloads(), loadScholar(), loadSocial(), loadGitHub(), loadModelScope(), loadConferences()
+      loadDownloads(), loadScholar(), loadSocial(), loadGitHub(), loadModelScope(),
+      loadConferences(), loadStars()
     ]);
     if (downloads.status === 'rejected') throw downloads.reason;
     state.status = 'ready';
@@ -998,6 +1294,19 @@ MO.data = (() => {
     conferenceRows,
     conferencePage,
     conferencePageCount,
-    conferenceStats
+    conferenceStats,
+    loadStars,
+    refreshStarSnapshot,
+    ensureStarDetail,
+    starRows,
+    starClusters,
+    starClusterType,
+    starFacets,
+    starFiltered,
+    starPage,
+    starPageCount,
+    starStats,
+    starWall,
+    starGraph
   };
 })();

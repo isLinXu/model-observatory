@@ -345,6 +345,192 @@ MO.render = (() => {
     renderConferenceTable();
   }
 
+  // --- Starred repositories -------------------------------------------------
+
+  const STAR_TYPE_LABELS = { language: '语言', topic: '主题', owner: '账户' };
+  const STAR_STATUS_LABELS = { archived: '归档', fork: 'fork', org: '组织', undocumented: '无描述' };
+
+  function starClusterLabel(id) {
+    const cluster = (data.state.stars?.clusters || []).find(item => item.id === id);
+    return cluster?.label || String(id).split(':')[1] || id;
+  }
+
+  function renderStarStatus() {
+    const state = data.state, snapshot = state.stars || {}, stats = data.starStats();
+    const changes = snapshot.changes;
+    const lines = [stats.available
+      ? `GitHub 公开 star 快照 · ${fmt(stats.total)} 个仓库 · ${fmt(stats.pages)} 页 · 采集于 ${timestamp(snapshot.captured_at)} UTC`
+      : 'star 数据暂不可用，其他看板不受影响。'];
+    if (changes?.status === 'initial') lines.push('首次采集，后续每日快照开始对比 star 列表变化');
+    else if (changes?.status === 'compared') lines.push(`较上次采集 新增 ${fmt(changes.added_count)} · 取消 ${fmt(changes.removed_count)}` +
+      (changes.truncated ? '（变化清单已截断，计数为完整值）' : ''));
+    if (snapshot.status === 'stale' || snapshot.error) lines.push(`后台采集失败，保留上次快照${snapshot.error ? `：${snapshot.error}` : ''}`);
+    if (state.starRefreshError) lines.push(`快照读取失败，保留上次数据：${state.starRefreshError}`);
+    if (stats.expected !== null && stats.expected !== stats.total) {
+      lines.push(`列表分页报告 ${fmt(stats.expected)} 个 star，实际解析 ${fmt(stats.total)} 个`);
+    }
+    if ((snapshot.warnings || []).length) lines.push(`${fmt(snapshot.warnings.length)} 条记录字段异常，已按可用部分保留`);
+    $('starStatus').textContent = lines.join(' · ');
+    $('starStatus').title = [snapshot.error, state.starRefreshError].filter(Boolean).join('\n');
+    $('starStatus').classList.toggle('neg', !stats.available || lines.length > 1);
+    const age = snapshotFreshness(snapshot.captured_at);
+    $('starFreshness').textContent = `${stats.available ? `快照采集于 ${timestamp(snapshot.captured_at)} UTC · ` : ''}${age.text}` +
+      `${state.starSnapshotCheckedAt ? ` · 最近读取 ${timestamp(state.starSnapshotCheckedAt)} UTC（读取不触发采集）` : ''}`;
+    $('starFreshness').classList.toggle('neg', age.overdue && stats.available);
+    const detailStatus = state.starDetailStatus;
+    $('starDetailNote').textContent = (detailStatus === 'ready'
+      ? `${fmt(data.starRows().length)} 个仓库明细已加载 · 明细采集于 ${timestamp(state.starDetailLoadedAt)} UTC · 仅在进入本节视口时读取，首屏不下载`
+      : detailStatus === 'loading' ? '正在读取 star 明细…'
+        : detailStatus === 'error' ? `${state.starDetailError}；指标与图谱仍来自快照。`
+          : 'star 明细尚未加载：滚动到本节会自动读取，也可以手动加载。') +
+      `${detailStatus === 'ready' ? ` · 墙、清单与 CSV 来自明细，KPI 与关系图来自 ${fmt((snapshot.clusters || []).length)} 个聚类节点的快照` : ''}`;
+    $('starDetailNote').classList.toggle('neg', detailStatus === 'error');
+    $('starSnapshotCheckedAt').textContent = `${state.starSnapshotCheckedAt
+      ? `最近成功读取快照 ${timestamp(state.starSnapshotCheckedAt)} UTC` : '尚未成功读取快照'} · 采集由每日工作流完成`;
+    $('starExport').disabled = detailStatus !== 'ready';
+    $('starDetailLoad').disabled = detailStatus === 'loading';
+    $('starDetailLoad').textContent = detailStatus === 'ready' ? '重新加载 star 明细'
+      : detailStatus === 'error' ? '重试加载 star 明细'
+        : detailStatus === 'loading' ? '读取 star 明细…' : '加载 star 明细';
+    $('starFilterReset').disabled = !state.starSearch && state.starCluster === 'all' && state.starLanguage === 'all' &&
+      state.starTopic === 'all' && state.starStatus === 'all';
+  }
+
+  function renderStarSummary() {
+    const stats = data.starStats();
+    $('starCountBadge').textContent = fmt(stats.total);
+    $('statStars').textContent = countCN(stats.total);
+    $('statStars').title = fmt(stats.total);
+    $('statStarsSub').textContent = `${fmt(stats.languages)} 种语言 · ${fmt(stats.topics)} 个主题 · ${fmt(stats.owners)} 个所有者`;
+    $('statStarActive').textContent = stats.activeShare === null ? '—' : `${(stats.activeShare * 100).toFixed(1)}%`;
+    $('statStarActiveSub').textContent = `90 天内有推送 ${fmt(stats.active)} / ${fmt(stats.total)} 个仓库`;
+    $('statStarClusters').textContent = fmt(stats.clusters);
+    $('statStarClustersSub').textContent = `一格一仓库 · ${fmt(stats.edges)} 条聚类共现关系`;
+    $('statStarSpecial').textContent = fmt(stats.archived + stats.forks);
+    $('statStarSpecialSub').textContent = `归档 ${fmt(stats.archived)} · fork ${fmt(stats.forks)} · 无描述 ${fmt(stats.undocumented)} · 组织所有 ${fmt(stats.orgOwned)}`;
+  }
+
+  function renderStarWall() {
+    const state = data.state;
+    const model = state.starDetailStatus === 'ready' ? data.starWall() : null;
+    charts.starWall($('starWall'), model || { cells: [], groups: [], total: 0 }, {
+      emptyText: state.starDetailStatus === 'loading' ? '正在读取 star 明细…'
+        : state.starDetailStatus === 'error'
+          ? `${state.starDetailError || 'star 明细读取失败'}，可点击「重试加载 star 明细」。`
+          : 'star 明细尚未加载；滚动到本节会自动读取，也可以手动加载。',
+      label: `star 星星墙：${fmt(model?.total || 0)} 个仓库，一格一个`,
+      activeCluster: state.starCluster
+    });
+    $('starWallLegend').innerHTML = model?.groups.length
+      ? model.groups.map((group, index) =>
+        `<button type="button" class="star-legend-item${state.starCluster === group.id ? ' active' : ''}" ` +
+        `data-cluster="${esc(group.id)}" title="${esc(STAR_TYPE_LABELS[group.type] || group.type)} · 出现 ${fmt(group.appears)} 次">` +
+        `<span class="star-legend-chip" style="--star-chip:${charts.starColor(index, model.groups.length)}"></span>` +
+        `<span class="star-legend-name">${esc(group.label)}</span><b>${fmt(group.count)}</b></button>`).join('')
+      : '';
+    $('starWallNote').textContent = model
+      ? `${fmt(model.total)} 格 · 一格一仓库 · ${fmt(model.groups.length)} 种颜色对应 ${fmt(model.groups.length)} 个聚类 · 格子大小随 star 数增长 · 悬停查看仓库，点击格子或图例按聚类筛选`
+      : '加载明细后，这里会显示全部 star 仓库的方块墙。';
+    $('starWallReadout').textContent = '悬停任意格子查看仓库名、语言与 star 数。';
+  }
+
+  function renderStarGraph() {
+    const graph = data.starGraph();
+    charts.starGraph($('starGraph'), graph, { emptyText: '快照中没有可绘制的聚类节点；等待后台成功采集一次 star 列表。' });
+    $('starGraphNote').textContent = graph.nodes.length
+      ? `内环＝语言，中环＝主题，外环＝账户 · ${fmt(graph.nodes.length)} 个节点、${fmt(graph.edges.length)} 条关系` +
+        `${graph.hidden > 0 ? ` · ${fmt(graph.hidden)} 个较小聚类未绘出（受每环节点预算限制）` : ''}` +
+        `${graph.missing > 0 ? ` · ${fmt(graph.missing)} 条关系因另一端未入选而省略` : ''} · 连线粗细与亮度＝共同 star 的仓库数`
+      : '关系节点来自每日快照，不随明细加载变化。';
+  }
+
+  function renderStarTable() {
+    const state = data.state;
+    const rows = data.starFiltered();
+    const pages = data.starPageCount();
+    state.starPage = Math.min(Math.max(1, state.starPage), pages);
+    const offset = (state.starPage - 1) * 24;
+    $('starTableCount').textContent = state.starDetailStatus === 'ready'
+      ? `${fmt(rows.length)} / ${fmt(data.starRows().length)} REPOSITORIES`
+      : '等待 star 明细';
+    $('starRows').innerHTML = rows.length ? rows.slice(offset, offset + 24).map(row => {
+      const flags = [row.archived && 'archived', row.fork && 'fork', row.org && 'org', !row.description && 'undocumented']
+        .filter(Boolean);
+      return `<tr class="star-row${row.archived ? ' dim' : ''}">` +
+        `<td><a class="model-link" href="${esc(row.url)}" target="_blank" rel="noopener noreferrer">${esc(row.name)} ↗</a>` +
+        `<div class="micro muted star-desc">${esc(row.description || '该仓库没有公开描述')}</div></td>` +
+        `<td><button type="button" class="chip tiny star-cluster-chip" data-cluster="${esc(row.cluster)}" ` +
+        `title="按该聚类筛选">${esc(STAR_TYPE_LABELS[data.starClusterType(row.cluster)] || '聚类')} · ${esc(starClusterLabel(row.cluster))}</button></td>` +
+        `<td>${esc(row.language || '—')}</td>` +
+        `<td>${row.topics.length ? row.topics.slice(0, 3).map(topic =>
+          `<span class="chip tiny" data-star-topic="${esc(topic)}">${esc(topic)}</span>`).join('') +
+          (row.topics.length > 3 ? `<span class="micro muted"> +${fmt(row.topics.length - 3)}</span>` : '') : '<span class="muted">—</span>'}</td>` +
+        `<td class="align-right">${row.stars === null ? '—' : fmt(row.stars)}</td>` +
+        `<td class="align-right">${esc(row.pushed || '—')}</td>` +
+        `<td class="micro">${flags.length ? flags.map(flag =>
+          `<span class="chip tiny star-flag-${flag}">${esc(STAR_STATUS_LABELS[flag])}</span>`).join('') : '<span class="muted">正常</span>'}</td></tr>`;
+    }).join('') : `<tr><td colspan="7" class="no-rows">${state.starDetailStatus === 'ready'
+      ? '当前筛选没有匹配的仓库' : 'star 明细尚未加载'}</td></tr>`;
+    $('starPageInfo').textContent = `${state.starPage} / ${pages}`;
+    $('starPrev').disabled = state.starPage === 1;
+    $('starNext').disabled = state.starPage === pages;
+    $('starPagination').hidden = rows.length <= 24;
+  }
+
+  /** Rebuild a select only when its option list changes; keep state in sync. */
+  function fillStarSelect(id, options, key, allLabel) {
+    const select = $(id);
+    const signature = [allLabel, ...options.map(item => item.value)].join('|');
+    if (select.dataset.signature !== signature) {
+      select.dataset.signature = signature;
+      select.innerHTML = `<option value="all">${esc(allLabel)}</option>` +
+        options.map(item => `<option value="${esc(item.value)}">${esc(item.label)}</option>`).join('');
+    }
+    const current = data.state[key];
+    // A new snapshot can drop the selected facet; the filter must follow the
+    // options that are actually on screen.
+    data.state[key] = current === 'all' || options.some(item => item.value === current) ? current : 'all';
+    select.value = data.state[key];
+  }
+
+  /**
+   * Cluster options come from the snapshot while the detail is still lazy; once
+   * the wall is on screen they follow its groups, so clicking a wall cell always
+   * lands on an option that exists even if the snapshot beside it is older.
+   */
+  function starClusterOptions() {
+    const published = new Map(data.starClusters().map(cluster => [cluster.id, cluster]));
+    const source = data.state.starDetailStatus === 'ready'
+      ? data.starWall().groups.map(group => ({ id: group.id, label: group.label, type: group.type,
+        count: published.get(group.id)?.repos ?? group.count }))
+      : data.starClusters().map(cluster => ({ id: cluster.id, label: cluster.label,
+        type: cluster.type, count: cluster.repos }));
+    return source.map(cluster => ({
+      value: cluster.id,
+      label: `${STAR_TYPE_LABELS[cluster.type] || cluster.type} · ${cluster.label} (${fmt(cluster.count)})`
+    }));
+  }
+
+  function renderStars() {
+    const state = data.state;
+    const facets = data.starFacets();
+    fillStarSelect('starCluster', starClusterOptions(), 'starCluster', '全部聚类');
+    fillStarSelect('starLanguage', facets.languages.map(item => ({
+      value: item.label, label: `${item.label} (${fmt(item.count)})`
+    })), 'starLanguage', '全部语言');
+    fillStarSelect('starTopic', facets.topics.map(item => ({
+      value: item.label, label: `${item.label} (${fmt(item.count)})`
+    })), 'starTopic', '全部主题');
+    $('starSort').value = state.starSort;
+    $('starStatusFilter').value = state.starStatus;
+    $('starSearch').value = state.starSearch;
+    renderStarStatus();
+    renderStarSummary();
+    renderStarWall();
+    renderStarGraph();
+    renderStarTable();
+  }
+
   // --- Models ---------------------------------------------------------------
 
   function renderSummary() {
@@ -1035,6 +1221,12 @@ MO.render = (() => {
     renderModelScopeBoard,
     renderModelScopeTable,
     renderConferences,
+    renderStars,
+    renderStarStatus,
+    renderStarSummary,
+    renderStarWall,
+    renderStarGraph,
+    renderStarTable,
     renderConferenceStatus,
     renderConferenceSummary,
     renderConferenceUpcoming,

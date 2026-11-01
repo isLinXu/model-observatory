@@ -44,6 +44,7 @@
         <a href="#datasets"><span class="navglyph">▤</span> 数据集</a>
         <a href="#modelscope"><span class="navglyph">▦</span> ModelScope</a>
         <a href="#conferences"><span class="navglyph">◴</span> 顶会截止</a>
+        <a href="#stars"><span class="navglyph">✧</span> 星星墙</a>
         <a href="#scholar"><span class="navglyph">✦</span> 学术主页</a>
         <a href="#social"><span class="navglyph">◎</span> 社交媒体</a>
         <a href="#github"><span class="navglyph">◐</span> GitHub 看板</a>
@@ -187,6 +188,45 @@
         <div class="table-scroll"><table class="models-table conference-table"><thead><tr><th>会议</th><th>领域与等级</th><th>环节</th><th class="align-right">UTC 截止</th><th>源始时间</th><th class="align-right">倒计时</th><th>举办信息</th></tr></thead><tbody id="conferenceRows"><tr><td colspan="7" class="no-rows">等待会议数据</td></tr></tbody></table></div>
         <div id="conferencePagination" class="pagination" hidden><button class="button secondary" id="conferencePrev">上一页</button><span id="conferencePageInfo" class="micro muted">—</span><button class="button secondary" id="conferenceNext">下一页</button></div>
         <div class="table-bottom"><span>说明：「日期待定」与「无法解析」保留来源原文，不当作 0 也不倒推。同一会议可有多个环节与轮次，等级沿用来源的 CCF/CORE 标注。投稿前请以会议官网为准。</span></div>
+      </section>
+
+      <section id="stars" class="model-section">
+        <div class="section-heading"><div><div class="section-eyebrow">GITHUB / STARRED REPOSITORY WALL</div><h2>星星墙 <span id="starCountBadge">0</span></h2><p>把公开 star 列表画成一格一仓库的墙，并按聚类连成关系图</p></div><div class="section-actions"><a class="button secondary" href="https://github.com/stars/isLinXu" target="_blank" rel="noopener noreferrer">GitHub star 列表 ↗</a><button class="button secondary" id="starRefresh">刷新已发布快照</button><button class="button" id="starExport" disabled>↓ 导出筛选 CSV</button></div></div>
+        <div class="modelscope-data-status" role="status" aria-live="polite">
+          <p id="starStatus" class="collection-note">正在读取 star 快照…</p>
+          <p id="starFreshness" class="micro muted">等待采集时间</p>
+          <p id="starDetailNote" class="micro muted">等待 star 明细</p>
+          <p id="starSnapshotCheckedAt" class="micro muted">尚未成功读取快照</p>
+        </div>
+        <p class="collection-note">数据来自本站每日采集的 GitHub 公开 star 列表，只读取仓库公开元数据；「刷新已发布快照」只重新读取文件，不会触发后台采集。墙与清单需要逐仓库明细，进入本节视口时自动读取一次，也可用下方按钮手动加载或重试；KPI 与关系图只用聚合快照，首屏无需下载明细。</p>
+        <div class="kpis">
+          <div class="kpi accent-kpi"><div class="kpi-label">star 的仓库 <span class="kpi-symbol teal">✧</span></div><div id="statStars" class="kpi-value">—</div><div id="statStarsSub" class="kpi-caption">公开列表去重后的仓库数</div></div>
+          <div class="kpi"><div class="kpi-label">90 天内仍在维护 <span class="kpi-symbol blue">◷</span></div><div id="statStarActive" class="kpi-value">—</div><div id="statStarActiveSub" class="kpi-caption">按最近一次推送日期判定</div></div>
+          <div class="kpi"><div class="kpi-label">聚类节点 <span class="kpi-symbol">◈</span></div><div id="statStarClusters" class="kpi-value">—</div><div id="statStarClustersSub" class="kpi-caption">语言 / 主题 / 账户三层归属</div></div>
+          <div class="kpi"><div class="kpi-label">归档与 fork <span class="kpi-symbol">▤</span></div><div id="statStarSpecial" class="kpi-value">—</div><div id="statStarSpecialSub" class="kpi-caption">识别需要留意的仓库状态</div></div>
+        </div>
+        <div class="panel star-wall-panel"><div class="panel-head"><div><div class="panel-overline">ONE CELL PER REPOSITORY</div><h2>星星墙</h2><p id="starWallNote">等待 star 明细</p></div><div class="section-actions"><button class="button secondary" id="starDetailLoad">加载 star 明细</button></div></div>
+          <div id="starWall" class="chart-area star-wall-area" role="img" aria-label="star 星星墙"></div>
+          <div class="chart-footer"><span id="starWallReadout" class="micro muted">悬停任意格子查看仓库</span><span class="micro muted">颜色＝聚类</span></div>
+          <div id="starWallLegend" class="star-legend"></div>
+        </div>
+        <div class="panel"><div class="panel-head"><div><div class="panel-overline">CLUSTER RELATION GRAPH</div><h2>聚类关系图</h2><p id="starGraphNote">语言 / 主题 / 账户之间的共现关系</p></div><span class="mini-icon">◈</span></div>
+          <div id="starGraph" class="chart-area star-graph-area" role="img" aria-label="star 聚类关系图"></div>
+          <div class="chart-footer"><span class="muted micro">节点大小＝归属该聚类的仓库数；连线只统计同时属于两个聚类节点的仓库，权重来自每日快照，不是相似度模型。</span></div>
+        </div>
+        <div class="table-toolbar">
+          <label class="search-box"><span>⌕</span><input id="starSearch" placeholder="搜索仓库名、描述或主题" aria-label="搜索 star 仓库" autocomplete="off"></label>
+          <select id="starCluster" aria-label="聚类筛选"><option value="all">全部聚类</option></select>
+          <select id="starLanguage" aria-label="语言筛选"><option value="all">全部语言</option></select>
+          <select id="starTopic" aria-label="主题筛选"><option value="all">全部主题</option></select>
+          <select id="starStatusFilter" aria-label="仓库状态"><option value="all">全部状态</option><option value="maintained">90 天内有推送</option><option value="archived">已归档</option><option value="fork">fork 仓库</option><option value="undocumented">无描述</option></select>
+          <select id="starSort" aria-label="star 仓库排序"><option value="stars">按 star 数排序</option><option value="pushed">按最近推送排序</option><option value="name">按仓库名排序</option></select>
+          <button class="button secondary" id="starFilterReset">重置筛选</button>
+          <span class="toolbar-spacer"></span><span id="starTableCount" class="micro muted">—</span>
+        </div>
+        <div class="table-scroll"><table class="models-table star-table"><thead><tr><th>仓库</th><th>归属聚类</th><th>语言</th><th>主题</th><th class="align-right">★ Star</th><th class="align-right">最近推送</th><th>状态</th></tr></thead><tbody id="starRows"><tr><td colspan="7" class="no-rows">等待 star 明细</td></tr></tbody></table></div>
+        <div id="starPagination" class="pagination" hidden><button class="button secondary" id="starPrev">上一页</button><span id="starPageInfo" class="micro muted">—</span><button class="button secondary" id="starNext">下一页</button></div>
+        <div class="table-bottom"><span>说明：每个仓库只归入一个聚类（语言优先，其次足够热门的主题，再次足够热门的账户），因此各聚类数量可以相加；「出现次数」按多标签成员统计，不能相加。star 数、语言与主题都是 GitHub 公开元数据的当前值，取消 star 会体现在次日快照中。</span></div>
       </section>
 
       <section id="scholar" class="model-section">
