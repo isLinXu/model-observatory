@@ -1,10 +1,10 @@
 # Model Observatory · @gatilin
 
-一个**直接托管到 GitHub Pages** 的 Hugging Face 模型与数据集下载统计看板，并附带类 Google Scholar 的公开学术档案板块、社交平台粉丝数板块与 GitHub 账号/仓库看板。静态前端，无后端服务器和前端密钥；页面打开时会通过 Hugging Face 公共 API 自动分页读取最新公开模型清单，新上传模型无需等待每日采集即可出现；GitHub Actions 每日自动抓取你的 **全部公开模型与数据集**、**公开 Google Scholar 档案**、**各平台公开粉丝数**、**GitHub 账号与公开仓库**并提交历史 JSON，同时重新部署网站。
+一个**直接托管到 GitHub Pages** 的 Hugging Face 模型与数据集下载统计看板，并附带类 Google Scholar 的公开学术档案板块、社交平台粉丝数板块、GitHub 账号/仓库看板、ModelScope 模型计数板块与顶会投稿截止看板。静态前端，无后端服务器和前端密钥；页面打开时会通过 Hugging Face 公共 API 自动分页读取最新公开模型清单，新上传模型无需等待每日采集即可出现；GitHub Actions 每日自动抓取你的 **全部公开模型与数据集**、**公开 Google Scholar 档案**、**各平台公开粉丝数**、**GitHub 账号与公开仓库**、**ModelScope 公开模型计数**与**顶会截止时间目录**并提交历史 JSON，同时重新部署网站。
 
-支持：模型排行、单模型详情、总体趋势、最近 30 天活跃下载、历史累计、相邻快照净变化、7/30 日净变化、统计下调异常标记、3 模型对比、搜索和 CSV / JSON 导出；数据集板块与模型完全同口径；学术主页展示引用总数、h-index、i10-index、逐年引用分布、每日引用快照与论文列表；社交媒体板块展示各平台粉丝数、平台筛选、时间范围筛选与卡片/表格双视图；GitHub 看板展示粉丝历史趋势、增长量与增长率，以及仓库的名称 / Star / Fork / 语言 / 最近更新时间，支持搜索、排序、语言筛选、**仅自有 / 含 Fork 口径切换**、分页与一键跳转，并可导出 CSV。界面支持**明暗双主题**，默认跟随系统偏好。首次采集仅有当天数据，不伪造历史走势。
+支持：模型排行、单模型详情、总体趋势、最近 30 天活跃下载、历史累计、相邻快照净变化、7/30 日净变化、统计下调异常标记、3 模型对比、搜索和 CSV / JSON 导出；数据集板块与模型完全同口径；学术主页展示引用总数、h-index、i10-index、逐年引用分布、每日引用快照与论文列表；社交媒体板块展示各平台粉丝数、平台筛选、时间范围筛选与卡片/表格双视图；GitHub 看板展示粉丝历史趋势、增长量与增长率，以及仓库的名称 / Star / Fork / 语言 / 最近更新时间，支持搜索、排序、语言筛选、**仅自有 / 含 Fork 口径切换**、分页与一键跳转，并可导出 CSV；ModelScope 看板展示匿名公开接口可见的模型下载计数、点赞与逐日快照趋势；**顶会投稿截止看板**把 CCF-Deadlines 目录展开成截止时间线，可按领域 / CCF 等级 / 截止类型 / 时间窗口筛选、倒计时、分页与导出 CSV。界面支持**明暗双主题**，默认跟随系统偏好。首次采集仅有当天数据，不伪造历史走势。
 
-**所有实体都带 `url` 字段**：模型、数据集、论文、仓库与项目在列表中点击名称即可在新标签页打开原始页面；链接缺失时优雅降级为纯文本，不产生死链。
+**所有实体都带 `url` 字段**：模型、数据集、论文、仓库、项目与会议届次在列表中点击名称即可在新标签页打开原始页面；链接缺失时优雅降级为纯文本，不产生死链。
 
 **质量保障**：每次 push 与每日定时任务都会先跑完整的 Python 采集测试与 Node.js 前端回归测试，不通过则不采集、不部署。历史快照采用分级留存，避免数据文件无限膨胀（见下文）。
 
@@ -48,11 +48,20 @@ Hugging Face API 读取 @gatilin 全部公开模型与数据集
 抓取各平台公开粉丝数（失败不影响其余流程）
                 +
 抓取 GitHub 账号指标与全部分页公开仓库（失败不影响其余流程）
+                +
+抓取 ModelScope 公开 OpenAPI 模型计数（失败不影响其余流程）
+                +
+抓取 CCF-Deadlines 会议目录并把截止时间归一为 UTC（失败不影响其余流程）
+                +
+索引 templates/ 下的 Skill 与 Prompt 模版（只读仓库，不访问网络）
                 ↓
 更新 data/latest.json、data/history.json、
 data/scholar.json、data/scholar_history.json、
 data/social.json、data/social_history.json、
-data/github.json、data/github_history.json
+data/github.json、data/github_history.json、
+data/modelscope.json、data/modelscope_history.json、
+data/conferences.json、
+data/templates.json、data/templates_history.json
                 ↓
 自动提交历史快照到 main
                 ↓
@@ -278,6 +287,67 @@ python scripts/build.py && python scripts/serve.py --port 8080
 | 未配置 Token 就点推送 | 面板与toast 提示「请先填写 GitHub Token」，草稿保留 |
 | GitHub 返回 401/403/422 | 显示 GitHub 的错误原文，不丢失已保存的草稿 |
 
+## 顶会投稿截止看板：数据来源与口径
+
+「顶会截止」栏目把社区维护的 CCF-Deadlines 目录变成可筛选、可倒计时、可导出的投稿时间线，由 `scripts/collect_conferences.py` 独立采集，输出单文件 `data/conferences.json`（当前快照，不含历史）。
+
+### 数据来源
+
+| 内容 | 接口 | 是否需要凭据 |
+| --- | --- | --- |
+| 全部会议 / 届次 / 截止时间 | `https://ccfddl.com/conference/allconf.json` | 否 |
+
+- 该聚合文件由 [`ccfddl/ccf-deadlines`](https://github.com/ccfddl/ccf-deadlines)（MIT）生成，本站只做匿名读取与归一化：不跟随重定向、禁用系统代理、响应上限 8 MB、整体 90 秒预算、可重试错误（429 / 5xx / 网络与超时）最多重试两次。
+- 采集器按「会议 → 届次 → 事件」三层展开。上游 timeline 的四个字段分别归一为 `abstract`（摘要截止）、`paper`（论文截止）、`rebuttal`（Rebuttal）、`decision`（录用通知），同一届的多轮次用 `round` + `comment` 保留，不按「一届一条」压缩。
+- 当前快照规模：383 个会议 / 2,346 个届次 / 4,446 个事件，其中论文截止 2,926 个、待定（TBD）115 个；领域覆盖 `AI/CG/CT/DB/DS/HI/MX/NW/SC/SE`，CCF 等级分布为 A 58 / B 131 / C 146 / N 48（`N` = 目录中未评级的会议，下拉里标为「未评级 (N)」）。
+- 每日采集由 `.github/workflows/pages.yml` 的「Capture conference deadline feed」步骤承担，`continue-on-error: true`：上游宕机或格式变更不会阻塞下载看板的采集与 Pages 部署。
+
+### 时间口径：归一化只发生在采集端
+
+上游发布的是**裸的本地时间 + 时区标签**（例如 `2026-08-07 23:59:59` + `PT`）。直接按字符串比较会让倒计时偏差十几个小时，因此采集时就换算成 UTC 时刻，前端不再猜时区：
+
+| 标签 | 处理 |
+| --- | --- |
+| `AoE` | 固定 `UTC-12`（学术截止的惯例写法） |
+| `PT` | `zoneinfo` 的 `America/Los_Angeles`，自动跟随夏令时 |
+| `UTC±H` / `UTC±H:MM` | 按固定偏移解析（超出 ±14 小时视为无法解析） |
+| 缺失、拼写不认识、时间文本无法解析 | **不做猜测**：`utc` 写 `null`，`time_status` 标记 `unknown_timezone` 或 `invalid_time` |
+| `TBD` | `tbd: true` + `time_status: "tbd"`，原样保留 |
+
+每条事件因此同时带三个时间视图：`utc`（排序、倒计时、窗口筛选都用它）、`source_local` + `timezone`（与会议官网公告对照）、`offset_minutes`（展示偏移）。无法解析的时间不参与倒计时，只会出现在「待定或无法解析」窗口里。
+
+### 与其他板块不同的留存策略
+
+`data/conferences.json` 是**单文件当前快照，不写历史**：上游目录是「截止时间」而不是计数器，逐日累积没有可加指标，而 1.4 MB 的体量再存历史会迅速拖慢首屏。看板改用**相邻两次采集的差异**来表达变化：
+
+```json
+{"status": "compared", "added": 6, "updated": 12, "removed": 0,
+ "previous_captured_at": "2026-10-31T02:23:11Z"}
+```
+
+差异按事件 ID 与内容签名计算，首次采集为 `status: "initial"`。`captured_at` 只在成功时更新，`last_attempt_at` 每次运行都更新——提示条据此区分「数据变旧」与「采集一直没跑成」。
+
+### 采集失败时的行为
+
+| 情况 | 行为 |
+| --- | --- |
+| 不可达 / 非 200 / 重定向 / 超过 8 MB / 非法 JSON | 保留上一次快照，`status` 置 `stale` 并记录 `error`，页面顶部显示信息级提示条 |
+| 顶层不是数组、为空、会议键或届次 ID 非法、`conference_key` 或届次 ID 重复 | 整次采集判定失败（同上），**不做部分写入**，避免格式变更静默清空看板 |
+| timeline 结构异常、截止时间不是字符串、会议链接非法、某会议无届次 | 跳过问题内容并记入 `warnings`（去重、上限 100 条），其余正常发布 |
+| 首次运行前就失败（没有历史可留） | 写入 `status: unavailable` 的空壳，`counts` 全 0 |
+| 采集时间早于已有快照 | 拒绝写入且不改动文件，防止旧数据覆盖新数据 |
+| 快照缺失或版本 / 来源不认识 | 前端仅本栏目降级为「暂无数据」，其它板块照常加载 |
+
+### 看板功能
+
+- **KPI**：「最近一个截止」显示剩余时间（≤7 天转红、≤30 天转橙），副标题给出会议、节点类型与换算后的 UTC 时刻；「未来 30 天 / 90 天论文截止」只统计 `paper` 事件；「收录时间节点」是全部事件数，副标题说明其中多少个尚未公布日期。四项统计基于全部事件，**不随筛选变化**，筛选影响的是下面的列表。
+- **NEXT UP**：最近 6 条截止，卡片左边框按紧迫度着色（`urgent` / `soon` / `past` / `unknown`）。
+- **筛选与搜索**：领域、CCF 等级、截止类型（默认只看论文截止）、时间窗口（未来 30 / 90 / 180 / 365 天、全部未截止、待定或无法解析、已截止），关键词覆盖会议名、缩写、地点与日期描述；每页 20 条，「已截止」窗口按时间倒序。
+- **CSV 导出**：导出当前筛选结果（不是仅当前页），22 列同时保留 `deadline_utc` 与 `source_local` / `timezone_label` / `time_status`。
+- **手动刷新**：读取线上已发布的 `data/conferences.json`（绕过缓存）；要真正重新抓取上游，仍需手动运行工作流。
+
+口径提醒：同一会议的多轮次与多类截止**不能相加**为「投稿次数」；倒计时以浏览器当前时间对比快照中的 UTC 时刻，快照本身是每日一份；目录由社区维护，可能与官网不同步，**投稿前以会议官网为准**。第三方的会议名、地点、备注都是不可信文本，渲染时统一转义，导出时对以 `=`、`+`、`-`、`@` 开头的单元格加前置单引号，避免被电子表格当作公式执行。
+
 ## 历史快照的保留策略
 
 每日快照会随时间线性增长，若不做处理，`data/history.json`（139 个模型 × 每日）一年后可达数 MB，且首屏每次都要全量下载。因此采集器在写入时做**分级留存**：
@@ -287,12 +357,15 @@ python scripts/build.py && python scripts/serve.py --port 8080
 | `data/history.json` | 近 400 天日粒度，更早按周聚合 | 周桶取该周的均值而非末值（下载计数可正可负，均值更能反映净变化），带 `granularity: "weekly"` 与 `days` 字段 |
 | `data/github_history.json` | 保留最近 1100 天 | 每条快照仅 4 个整数，体积可忽略，只做上限不做降采样 |
 | `data/scholar_history.json` | 保留最近 1100 天 | 同上 |
+| `data/modelscope_history.json` | 保留最近 400 天 | 不做周聚合：ModelScope 计数按快照整条存储，漏采的日期不补点 |
+| `data/templates_history.json` | 保留最近 1100 天 | 每天只有几个整数 |
+| `data/conferences.json` | 只保留当前快照（约 1.4 MB） | 截止时间不是可累加指标，逐日历史没有意义，变化量由 `changes` 差异代替 |
 
 周桶以该周**最后一天**为日期戳，并丢弃跨越保留边界的桶，保证日期序列严格递增且不与日粒度段重叠。历史文件的读取端无需改动——旧快照与周桶都是相同的 `{id: [累计, 滚动30天]}` 结构。
 
 ## 元数据的 url 字段约定
 
-四类实体统一使用 `url` 作为「可一键直达的外部链接」字段，存储位置与可选性如下：
+各实体统一使用 `url` 作为「可一键直达的外部链接」字段，存储位置与可选性如下：
 
 | 实体 | 存储位置 | 字段名 | 取值 | 可选性 |
 | --- | --- | --- | --- | --- |
@@ -302,6 +375,7 @@ python scripts/build.py && python scripts/serve.py --port 8080
 | 仓库 | `data/github.json` → `repositories[]` | `url` | `https://github.com/<owner>/<repo>` | 可选，缺失为 `null` |
 | 项目 | `data/github.json` → `projects.items[]` | `url` | GitHub Projects 页面地址 | 可选，缺失为 `null` |
 | 模版 | `data/templates.json` → `templates[]` | `url` | 仓库内 Markdown 源文件地址 | 必填，由 `path` 生成 |
+| 会议届次 | `data/conferences.json` → `conferences[].editions[]` | `url` | 会议官网页面（`https?` 且长度 ≤2048 才保留） | 可选，缺失为 `null` |
 
 约定细节：
 
@@ -335,8 +409,14 @@ python scripts/collect_scholar.py --user oTYM_I8AAAAJ
 python scripts/collect_social.py --config config/social_sources.json
 python scripts/collect_github.py --login isLinXu
 
+# ModelScope 公开模型计数（匿名接口，不需要令牌）
+python scripts/collect_modelscope.py --author isLinXu
+
 # 模版库只读本地目录，不访问网络
 python scripts/collect_templates.py
+
+# 顶会截止时间：匿名读取 ccfddl.com 的聚合 JSON，访问网络但不需要凭据
+python scripts/collect_conferences.py
 
 # 构建静态站点并启动本地预览
 python scripts/build.py
@@ -362,7 +442,7 @@ PYTHONPATH=. python -m unittest discover -s tests
 node --test tests/test_frontend.js
 ```
 
-Python 套件覆盖数据集转换、历史迁移、url 字段生成、Scholar 解析、社交配置校验、各平台降级路径与小红书状态解析、GitHub 仓库转换与降级逻辑。Node.js 套件覆盖社交净增基线、缺失平台处理、趋势范围及辅助数据加载隔离；全部离线运行，不访问网络。
+Python 套件覆盖数据集转换、历史迁移、url 字段生成、Scholar 解析、社交配置校验、各平台降级路径与小红书状态解析、GitHub 仓库转换与降级逻辑，以及会议目录的时区归一（`AoE` / `PT` / 固定偏移）、TBD 与「无法解析」的区分、逐条校验与告警上限、差异计算和失败保旧快照。Node.js 套件覆盖社交净增基线、缺失平台处理、趋势范围、辅助数据加载隔离，以及顶会看板的窗口筛选与排序、统计口径、来源校验降级、倒计时渲染转义和 CSV 公式防护；全部离线运行，不访问网络。
 
 `data/latest.json` 保存最新模型与数据集清单及对应数值，`data/history.json` 保存逐日快照。历史格式：
 
@@ -456,7 +536,9 @@ scripts/collect.py            # Hugging Face 模型 + 数据集 API、异常保�
 scripts/collect_scholar.py    # 公开 Google Scholar 档案抓取与解析
 scripts/collect_social.py     # 社交平台粉丝数采集（可插拔 fetcher 注册表）
 scripts/collect_github.py      # GitHub 账号指标、公开仓库分页与 Projects 采集
+scripts/collect_modelscope.py  # ModelScope 匿名 OpenAPI 模型计数与逐日快照
 scripts/collect_templates.py   # 索引 templates/ 下的 Skill 与 Prompt 模版（只读本地）
+scripts/collect_conferences.py # 抓取 CCF-Deadlines 目录并把截止时间归一为 UTC
 scripts/build.py              # 组装纯静态站点
 scripts/serve.py              # 本地预览用多线程静态服务器
 templates/skills/<slug>.md    # Skill 定义（frontmatter + 正文）
@@ -480,12 +562,17 @@ data/social.json              # 最新社交平台指标
 data/social_history.json      # 逐日粉丝数快照
 data/github.json              # 最新 GitHub 账号指标 + 公开仓库 + Projects
 data/github_history.json      # 逐日 GitHub 粉丝快照
+data/modelscope.json          # 最新 ModelScope 公开模型清单与计数
+data/modelscope_history.json  # 逐日 ModelScope 计数快照
 data/templates.json           # 最新模版索引（含完整正文）
 data/templates_history.json   # 逐日模版数量快照
+data/conferences.json         # 当前会议目录（含归一化后的 UTC 截止时间，无历史文件）
 tests/test_collect.py         # 离线测试（数据集 + url 字段 + 档案解析）
 tests/test_social.py          # 离线测试（社交配置、降级、小红书解析）
 tests/test_github.py          # 离线测试（仓库转换、历史、降级）
+tests/test_modelscope.py      # 离线测试（OpenAPI 转换、身份校验、分页与降级）
 tests/test_templates.py       # 离线测试（frontmatter 解析、标签归一、索引与降级）
+tests/test_conferences.py     # 离线测试（时区归一、事件展开、差异比对、失败保旧快照）
 tests/test_frontend.js        # 前端派生指标与辅助数据加载回归测试
 tests/fixtures/               # 离线测试用的真实页面片段
 ```
@@ -500,7 +587,7 @@ tests/fixtures/               # 离线测试用的真实页面片段
 - 如果 `deploy-pages` 返回配置问题，核对 Settings → Pages → Source = GitHub Actions。
 - 页面会直接请求 HF 的公开模型 API 来发现新上传模型；该接口允许跨域且无需 Token。单次请求超过 10 秒、请求失败或限流时自动回退到自己站点的 `./data/latest.json`，数据集和其它板块仍只读取发布的 JSON。
 - 模型清单实时读取，历史仍是每天一个 UTC 快照，定时采集不等于实时历史。可以手动重新运行工作流刷新当天快照。
-- 历史按前文策略有界保留：HF 近 400 天为日粒度，更早数据按周聚合并最多保留 104 个周桶；GitHub、Scholar 与模版历史保留最近 1100 天。
+- 历史按前文策略有界保留：HF 近 400 天为日粒度，更早数据按周聚合并最多保留 104 个周桶；GitHub、Scholar 与模版历史保留最近 1100 天，ModelScope 历史保留最近 400 天日粒度；`data/conferences.json` 只有当前快照。
 - 学术档案依赖 Google Scholar 的公开页面：若被验证码拦截，采集会跳过并保留上一次成功的快照，网站仍可正常展示下载统计。不要提高抓取频率，工作流每日一次即可。
 - 知乎与小红书需要登录态，请把 Cookie 存在**仓库 Secret**（`ZHIHU_COOKIE` / `XIAOHONGSHU_COOKIE`）而不是提交进代码库。Cookie 会过期，属于正常现象：过期后该平台显示为「暂不可用」并保留上次数据，其它平台不受影响。
 - 社交平台的粉丝数会随平台自身的风控与统计口径变化，与下载统计一样，负向跳变会被保留并标记为待核查，而不是被静默抹平。
