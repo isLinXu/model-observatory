@@ -881,6 +881,7 @@ MO.data = (() => {
       expected: Number.isFinite(snapshot.expected_total) ? snapshot.expected_total : null,
       changes: snapshot.changes || null,
       clusters: starClusters().length,
+      publishedClusters: (snapshot.clusters || []).length,
       edges: (snapshot.edges || []).length
     };
   }

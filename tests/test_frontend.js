@@ -2212,7 +2212,7 @@ test('the star board paints from the aggregate snapshot and leaves the detail fi
   assert.deepEqual(plain(data.starStats()), {
     available: true, total: 3, active: 2, activeShare: 2 / 3, languages: 1, topics: 1, owners: 2,
     orgOwned: 0, archived: 0, forks: 0, undocumented: 1, pages: 1, expected: 3,
-    changes: starSnapshot().changes, clusters: 1, edges: 0
+    changes: starSnapshot().changes, clusters: 1, publishedClusters: 1, edges: 0
   });
 
   assert.equal(await data.ensureStarDetail(), detail);
@@ -2508,6 +2508,7 @@ test('the star board separates snapshot metrics from detail rows and escapes eve
   assert.doesNotMatch(clusterOptions, /owner:nobody/);
   assert.match(clusterOptions, /value="topic:llm"/);
   assert.doesNotMatch(view.element('starDetailNote').textContent, /3 个聚类节点/);
+  assert.equal(view.element('statStarClustersSub').textContent, '3 个快照节点，仅 2 个分到仓库');
 
   const wall = view.chartCalls.filter(call => call.name === 'starWall').at(-1);
   assert.equal(wall.node, view.element('starWall'));

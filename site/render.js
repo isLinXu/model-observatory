@@ -405,7 +405,9 @@ MO.render = (() => {
     $('statStarActive').textContent = stats.activeShare === null ? '—' : `${(stats.activeShare * 100).toFixed(1)}%`;
     $('statStarActiveSub').textContent = `90 天内有推送 ${fmt(stats.active)} / ${fmt(stats.total)} 个仓库`;
     $('statStarClusters').textContent = fmt(stats.clusters);
-    $('statStarClustersSub').textContent = `一格一仓库 · ${fmt(stats.edges)} 条聚类共现关系`;
+    $('statStarClustersSub').textContent = stats.publishedClusters > stats.clusters
+      ? `${fmt(stats.publishedClusters)} 个快照节点，仅 ${fmt(stats.clusters)} 个分到仓库`
+      : `${fmt(stats.clusters)} 个聚类均有仓库归属 · ${fmt(stats.edges)} 条共现关系`;
     $('statStarSpecial').textContent = fmt(stats.archived + stats.forks);
     $('statStarSpecialSub').textContent = `归档 ${fmt(stats.archived)} · fork ${fmt(stats.forks)} · 无描述 ${fmt(stats.undocumented)} · 组织所有 ${fmt(stats.orgOwned)}`;
   }
