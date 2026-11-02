@@ -263,6 +263,8 @@ author: gatilin
 ```bash
 python scripts/collect_templates.py              # 只读本地目录，不访问网络
 python scripts/collect_templates.py --repo owner/name --branch main
+python scripts/collect_entities.py --check        # 只校验 entities/ 结构与链接，不写文件
+python scripts/collect_entities.py --ids --domain hf_dataset   # 列出本次能链接的真实 id
 python scripts/build.py && python scripts/serve.py --port 8080
 ```
 
@@ -510,7 +512,7 @@ PYTHONPATH=. python -m unittest discover -s tests
 node --test tests/test_frontend.js
 ```
 
-Python 套件覆盖数据集转换、历史迁移、url 字段生成、Scholar 解析、社交配置校验、各平台降级路径与小红书状态解析、GitHub 仓库转换与降级逻辑、会议目录的时区归一（`AoE` / `PT` / 固定偏移）、TBD 与「无法解析」的区分、逐条校验与告警上限、差异计算和失败保旧快照，以及 star 列表的分页聚合、单仓库唯一聚类归属、共现权重与页数上限；Node.js 套件覆盖社交净增基线、缺失平台处理、趋势范围、辅助数据加载隔离，顶会看板的窗口筛选与排序、统计口径、来源校验降级、倒计时渲染转义和 CSV 公式防护，以及星星墙的**首屏不下载明细**、明细单飞与强制重试、快照校验降级、墙的一聚类一段、图环节点预算、渲染转义与 CSV 公式防护；全部离线运行，不访问网络。
+Python 套件覆盖数据集转换、历史迁移、url 字段生成、Scholar 解析、社交配置校验、各平台降级路径与小红书状态解析、GitHub 仓库转换与降级逻辑、会议目录的时区归一（`AoE` / `PT` / 固定偏移）、TBD 与「无法解析」的区分、逐条校验与告警上限、差异计算和失败保旧快照，以及 star 列表的分页聚合、单仓库唯一聚类归属、共现权重与页数上限；Node.js 套件覆盖社交净增基线、缺失平台处理、趋势范围、辅助数据加载隔离，顶会看板的窗口筛选与排序、统计口径、来源校验降级、倒计时渲染转义和 CSV 公式防护，以及星星墙的**首屏不下载明细**、明细单飞与强制重试、快照校验降级、墙的一聚类一段、图环节点预算、渲染转义与 CSV 公式防护，以及实体注册表的四种链接状态（来源不可用只能说「未核对」，不能谎报失效）、覆盖率分母只算自有非 fork 仓库、论文标题别名规则、体积上限与失败保旧快照；全部离线运行，不访问网络。
 
 `data/latest.json` 保存最新模型与数据集清单及对应数值，`data/history.json` 保存逐日快照。历史格式：
 
@@ -608,10 +610,12 @@ scripts/collect_modelscope.py  # ModelScope 匿名 OpenAPI 模型计数与逐日
 scripts/collect_templates.py   # 索引 templates/ 下的 Skill 与 Prompt 模版（只读本地）
 scripts/collect_conferences.py # 抓取 CCF-Deadlines 目录并把截止时间归一为 UTC
 scripts/collect_starred.py     # 分页读取账号全部公开 star，聚合为聚类图与仓库明细
+scripts/collect_entities.py    # 索引 entities/ 条目，并与同日快照交叉核对关系链接（只读本地）
 scripts/build.py              # 组装纯静态站点
 scripts/serve.py              # 本地预览用多线程静态服务器
 templates/skills/<slug>.md    # Skill 定义（frontmatter + 正文）
 templates/prompts/<slug>.md   # Prompt 模版（frontmatter + 正文）
+entities/<slug>.md            # 一个研究对象一条：frontmatter 写关系，正文写结论
 site/index.html               # 看板 DOM
 site/style.css                # 设计令牌 + 明暗双主题 + 响应式布局
 site/format.js                # 数值格式化（万/亿、千位分隔、日期、涨跌符号）
@@ -639,6 +643,8 @@ data/conferences.json         # 当前会议目录（含归一化后的 UTC 截�
 data/stars.json               # star 聚合快照（计数、聚类节点、共现边、差异），首屏读取
 data/stars_repos.json         # 一格一仓库的明细，进入星星墙视口才读取
 data/stars_history.json       # 逐日 star 总数与结构计数
+data/entities.json            # 最新实体索引（正文、四种链接状态、覆盖率工作队列）
+data/entities_history.json    # 逐日实体与链接状态快照
 tests/test_collect.py         # 离线测试（数据集 + url 字段 + 档案解析）
 tests/test_social.py          # 离线测试（社交配置、降级、小红书解析）
 tests/test_github.py          # 离线测试（仓库转换、历史、降级）
@@ -646,6 +652,7 @@ tests/test_modelscope.py      # 离线测试（OpenAPI 转换、身份校验、�
 tests/test_templates.py       # 离线测试（frontmatter 解析、标签归一、索引与降级）
 tests/test_conferences.py     # 离线测试（时区归一、事件展开、差异比对、失败保旧快照）
 tests/test_starred.py         # 离线测试（star 分页聚合、聚类归属、共现与告警、失败保旧快照）
+tests/test_entities.py        # 离线测试（四种链接状态、覆盖率口径、别名规则、失败保旧快照）
 tests/test_frontend.js        # 前端派生指标与辅助数据加载回归测试
 tests/fixtures/               # 离线测试用的真实页面片段
 ```
