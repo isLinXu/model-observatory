@@ -480,7 +480,7 @@ MO.render = (() => {
   }
 
   /** Rebuild a select only when its option list changes; keep state in sync. */
-  function fillStarSelect(id, options, key, allLabel) {
+  function fillSelect(id, options, key, allLabel) {
     const select = $(id);
     const signature = [allLabel, ...options.map(item => item.value)].join('|');
     if (select.dataset.signature !== signature) {
@@ -516,11 +516,11 @@ MO.render = (() => {
   function renderStars() {
     const state = data.state;
     const facets = data.starFacets();
-    fillStarSelect('starCluster', starClusterOptions(), 'starCluster', '全部聚类');
-    fillStarSelect('starLanguage', facets.languages.map(item => ({
+    fillSelect('starCluster', starClusterOptions(), 'starCluster', '全部聚类');
+    fillSelect('starLanguage', facets.languages.map(item => ({
       value: item.label, label: `${item.label} (${fmt(item.count)})`
     })), 'starLanguage', '全部语言');
-    fillStarSelect('starTopic', facets.topics.map(item => ({
+    fillSelect('starTopic', facets.topics.map(item => ({
       value: item.label, label: `${item.label} (${fmt(item.count)})`
     })), 'starTopic', '全部主题');
     $('starSort').value = state.starSort;
@@ -531,6 +531,279 @@ MO.render = (() => {
     renderStarWall();
     renderStarGraph();
     renderStarTable();
+  }
+
+  // --- Entity registry ------------------------------------------------------
+
+  const ENTITY_STATE_LABELS = { resolved: '已核对', unresolved: '断链', unchecked: '未核对', out_of_scope: '范围外' };
+  const ENTITY_STATE_EXPLAINED = {
+    unresolved: '来源当天回答了我们，但清单里没有这个 ID：条目要改，或对象已下架',
+    unchecked: '对应来源本次没有可用快照，链接未被核对，不作为断链处理',
+    out_of_scope: '他人的仓库，不属于本站核对范围',
+    resolved: '在本次每日快照中找到'
+  };
+  const ENTITY_KIND_LABELS = { project: '项目', model: '模型', dataset: '数据集', paper: '论文' };
+  const ENTITY_STAGE_LABELS = { proposal: '提案', training: '训练中', evaluating: '评测中',
+    submitting: '投稿中', shipped: '已交付', archived: '归档' };
+  const ENTITY_DOMAIN_LABELS = { hf_model: 'HF 模型', hf_dataset: 'HF 数据集', hf_collection: 'HF 集合',
+    hf_space: 'HF Space', ms_model: 'ModelScope 模型', gh_repo: 'GitHub 仓库', scholar: '学术档案',
+    conf: '顶会目录', template: '模版库' };
+
+  const entityDomainLabel = domain => ENTITY_DOMAIN_LABELS[domain] || domain;
+  const entityValueLabel = (labels, value, empty) => value ? (labels[value] || value) : empty;
+  /** Facets publish an unlabeled entry as `none`, so its option needs its own text. */
+  const entityFacetLabel = (labels, value, empty) =>
+    value === 'none' ? empty : (labels[value] || value);
+
+  /** A link is both a claim and a filter: clicking it asks who else references it. */
+  function entityLinkChip(link, index, total) {
+    const label = link.id.length > 46 ? `${link.id.slice(0, 44)}…` : link.id;
+    return `<button type="button" class="chip tiny entity-link entity-${esc(link.state)}` +
+      `${link.state === 'resolved' ? '' : ' entity-flag'}" data-entity-object="${esc(link.key)}" ` +
+      `title="${esc(entityDomainLabel(link.domain))} · ${esc(ENTITY_STATE_LABELS[link.state] || link.state)}：` +
+      `${esc(ENTITY_STATE_EXPLAINED[link.state] || '')}｜点击查看引用该对象的其他实体">` +
+      `${esc(entityDomainLabel(link.domain))} · ${esc(label)}</button>` +
+      (link.url ? `<a class="ext-link" href="${esc(link.url)}" target="_blank" rel="noopener noreferrer" ` +
+        `title="在来源打开 ${esc(link.id)}" aria-label="打开 ${esc(link.id)}">↗</a>` : '') +
+      (index === 2 && total > 3 ? `<span class="micro muted entity-more">+${fmt(total - 3)}</span>` : '');
+  }
+
+  function renderEntityStatus() {
+    const state = data.state, payload = state.entities || {}, stats = data.entityStats();
+    const changes = payload.changes || {};
+    const lines = [stats.available
+      ? `注册表快照 · ${fmt(stats.total)} 个实体 · ${fmt(stats.links)} 条关联 · ${fmt(stats.objects)} 个被引用对象 · 采集于 ${timestamp(payload.captured_at)} UTC`
+      : '注册表数据暂不可用，其他看板不受影响。'];
+    if (changes.status === 'initial') lines.push('首次发布注册表索引，后续每日快照开始对比条目增删与修订');
+    else if (changes.status === 'compared') lines.push(`较上次采集 新增 ${fmt(changes.added_count)} · 删除 ${fmt(changes.removed_count)} · 修订 ${fmt(changes.revised_count)}` +
+      (changes.truncated ? '（变化清单已截断，计数为完整值）' : ''));
+    if (payload.status === 'stale' || payload.error) lines.push(`后台索引失败，保留上次快照${payload.error ? `：${payload.error}` : ''}`);
+    if (state.entityRefreshError) lines.push(`快照读取失败，保留上次数据：${state.entityRefreshError}`);
+    // The author-facing report stays on the board: a field the collector could
+    // not read is published as 未标注, and the reader deserves to know.
+    if (stats.errors) lines.push(`${fmt(stats.errors)} 条结构错误按未标注处理（CI --check 会失败）`);
+    if (stats.warnings) lines.push(`${fmt(stats.warnings)} 条字段告警，已按可用部分保留`);
+    $('entityStatus').textContent = lines.join(' · ');
+    $('entityStatus').title = [payload.error, state.entityRefreshError].filter(Boolean).join('\n');
+    $('entityStatus').classList.toggle('neg', !stats.available || lines.length > 1);
+    const age = snapshotFreshness(payload.captured_at);
+    $('entityFreshness').textContent = `${stats.available ? `快照采集于 ${timestamp(payload.captured_at)} UTC · ` : ''}${age.text}` +
+      `${state.entitySnapshotCheckedAt ? ` · 最近读取 ${timestamp(state.entitySnapshotCheckedAt)} UTC（读取不触发采集，本页只读）` : ''}`;
+    $('entityFreshness').classList.toggle('neg', age.overdue && stats.available);
+    $('entitySnapshotCheckedAt').textContent = `${state.entitySnapshotCheckedAt
+      ? `最近成功读取快照 ${timestamp(state.entitySnapshotCheckedAt)} UTC` : '尚未成功读取快照'} · 采集由每日工作流完成`;
+    $('entityExport').disabled = !stats.available;
+    $('entityFilterReset').disabled = !state.entitySearch && state.entityKind === 'all' &&
+      state.entityStage === 'all' && state.entityTag === 'all' && state.entityLink === 'all' &&
+      state.entityObject === 'all';
+  }
+
+  function renderEntitySummary() {
+    const payload = data.state.entities || {}, stats = data.entityStats();
+    const byKind = payload.summary?.by_kind || {};
+    const byStage = payload.summary?.by_stage || {};
+    $('entityCountBadge').textContent = fmt(stats.total);
+    $('statEntities').textContent = fmt(stats.total);
+    $('statEntitiesSub').textContent = Object.keys(byKind).length
+      ? Object.entries(byKind).map(([kind, count]) => `${entityValueLabel(ENTITY_KIND_LABELS, kind, '未标注')} ${fmt(count)}`).join(' · ')
+      : '暂无条目';
+    $('statEntityLinks').textContent = fmt(stats.links);
+    $('statEntityLinksSub').textContent = `已核对 ${fmt(stats.resolved)} · 断链 ${fmt(stats.unresolved)} · ` +
+      `未核对 ${fmt(stats.unchecked)} · 范围外 ${fmt(stats.out_of_scope)}`;
+    $('statEntityLinks').title = stats.problems ? `${fmt(stats.problems)} 条链接需要看一眼` : '全部链接核对通过';
+    $('statEntityCoverage').textContent = stats.coverage.total ? `${fmt(stats.coverage.registered)} / ${fmt(stats.coverage.total)}` : '—';
+    $('statEntityCoverageSub').textContent = stats.coverage.sources
+      ? `${fmt(stats.coverage.sources)} 个来源当日可用 · ` +
+        (stats.gaps.length ? `零登记：${stats.gaps.map(entityDomainLabel).join('、')}` : '每个来源都有条目')
+      : '当日没有可比对的来源快照';
+    $('statEntityActive').textContent = fmt(stats.active);
+    $('statEntityActiveSub').textContent = `已交付 ${fmt(byStage.shipped || 0)} · 归档 ${fmt(byStage.archived || 0)} · ` +
+      `未标注 ${fmt(byStage['未标注'] || 0)}`;
+  }
+
+  function renderEntityCoverage() {
+    const rows = data.entityCoverage();
+    const usable = rows.filter(row => row.available);
+    $('entityCoverageNote').textContent = rows.length
+      ? `${fmt(usable.length)} / ${fmt(rows.length)} 个来源当日可用 · 分母是本站自有对象 · 未登记对象合计 ${fmt(rows.reduce((sum, row) => sum + row.missingCount, 0))} 个`
+      : '等待注册表数据';
+    $('entityCoverageList').innerHTML = rows.length ? rows.map(row => {
+      const share = row.available && row.total ? Math.min(100, (row.registered / row.total) * 100) : 0;
+      const hidden = Math.max(0, row.missingCount - row.missing.length);
+      return `<div class="entity-cov-row${row.available ? '' : ' off'}">` +
+        `<div class="entity-cov-head"><span class="entity-domain">${esc(entityDomainLabel(row.domain))}</span>` +
+        `<b>${row.available ? `${fmt(row.registered)} / ${fmt(row.total)}` : '未核对'}</b></div>` +
+        `<div class="entity-cov-bar"><i style="width:${share.toFixed(1)}%"></i></div>` +
+        `<div class="micro muted entity-cov-meta">` +
+        (row.available
+          ? `已登记 ${fmt(row.registered)} · 未登记 ${fmt(row.missingCount)} · 分母采集于 ` +
+            `${row.capturedAt ? esc(timestamp(row.capturedAt)) : '时间未知'}`
+          : `本来源无可用快照：${esc(row.reason || '未说明原因')}｜该域链接按未核对处理`) +
+        `</div>` +
+        (row.available && row.missing.length
+          ? `<div class="entity-cov-missing">${row.missing.slice(0, 6).map(id =>
+              `<span class="chip tiny muted-chip" title="尚未被任何实体引用">${esc(id)}</span>`).join('')}` +
+            `${hidden ? `<span class="micro muted">另有 ${fmt(hidden)} 项未列出</span>` : ''}</div>`
+          : '') +
+        `</div>`;
+    }).join('') : '<div class="chart-empty">等待注册表数据</div>';
+  }
+
+  function renderEntityProblems() {
+    const stats = data.entityStats(), problems = data.entityProblems();
+    const sources = data.state.entities?.sources || {};
+    $('entityProblemNote').textContent = problems.length
+      ? `${fmt(problems.length)} 条链接需要留意 · 断链 ${fmt(stats.unresolved)} · 未核对 ${fmt(stats.unchecked)} · 范围外 ${fmt(stats.out_of_scope)}`
+      : `${fmt(stats.links)} 条关联全部在当日快照中核对通过`;
+    $('entityProblems').innerHTML = problems.length ? problems.map(problem =>
+      `<div class="entity-problem ${esc(problem.state)}">` +
+      `<span class="chip tiny entity-state entity-${esc(problem.state)}">${esc(ENTITY_STATE_LABELS[problem.state] || problem.state)}</span>` +
+      `<div class="entity-problem-body"><div class="entity-problem-link">` +
+      `<span class="entity-domain">${esc(entityDomainLabel(problem.domain))}</span> <code>${esc(problem.id)}</code>` +
+      `${problem.url ? `<a class="ext-link" href="${esc(problem.url)}" target="_blank" rel="noopener noreferrer">↗</a>` : ''}</div>` +
+      `<div class="micro muted entity-problem-why">${esc(ENTITY_STATE_EXPLAINED[problem.state] || '')}` +
+      `${problem.state === 'unchecked' && sources[problem.domain]?.reason ? `（${esc(sources[problem.domain].reason)}）` : ''}</div>` +
+      `<div class="micro entity-problem-from">来自实体 <button type="button" class="button text-button" ` +
+      `data-entity-open="${esc(problem.slug)}">${esc(problem.title)}</button> · 点开查看正文与全部关联</div>` +
+      `</div></div>`).join('')
+      : '<div class="chart-empty">没有断链，也没有未核对链接。注册表只登记关系，指标仍在各自看板。</div>';
+  }
+
+  /** Rebuild the reverse select with one optgroup per source. */
+  function fillEntityObjectSelect() {
+    const select = $('entityObject'), state = data.state;
+    const objects = data.entityObjects();
+    const signature = objects.map(item => item.key).join('|');
+    if (select.dataset.signature !== signature) {
+      select.dataset.signature = signature;
+      const domains = [];
+      objects.forEach(item => {
+        if (!domains.includes(item.domain)) domains.push(item.domain);
+      });
+      select.innerHTML = '<option value="all">反查：全部对象</option>' + domains.map(domain =>
+        `<optgroup label="${esc(entityDomainLabel(domain))}">` +
+        objects.filter(item => item.domain === domain).map(item =>
+          `<option value="${esc(item.key)}">${esc(item.id)} (${fmt(item.entries.length)})</option>`).join('') +
+        '</optgroup>').join('');
+    }
+    // A refreshed snapshot can drop the object the reader was tracing.
+    state.entityObject = state.entityObject === 'all' ||
+      objects.some(item => item.key === state.entityObject) ? state.entityObject : 'all';
+    select.value = state.entityObject;
+  }
+
+  function renderEntityReverseNote() {
+    const state = data.state;
+    if (state.entityObject === 'all') {
+      $('entityReverseNote').textContent = '反向链接：点条目行里的关联对象，或选择上方「反查对象」，' +
+        '即可看到哪个实体引用了这个模型、数据集或仓库。';
+      return;
+    }
+    const group = (data.entityObjects() || []).find(item => item.key === state.entityObject);
+    const matches = data.entityReferences(state.entityObject);
+    $('entityReverseNote').textContent = `反查 ${entityDomainLabel(group?.domain || state.entityObject.split(':')[0])} · ` +
+      `${group?.id || state.entityObject}（${ENTITY_STATE_LABELS[group?.state] || group?.state || '未知状态'}）· ` +
+      `引用该对象的实体 ${fmt(matches.length)} 个：${matches.map(item => item.title).join('、') || '无'}` +
+      '｜表格已按该对象筛选，再选「反查：全部对象」取消。';
+  }
+
+  function entityDetailRow(entry) {
+    const reason = data.state.entities?.sources || {};
+    return `<tr class="entity-detail"><td colspan="7"><div class="entity-detail-grid">` +
+      `<div class="entity-detail-main">` +
+      `<div class="panel-overline">正文（按源文件原文展示）</div>` +
+      `<pre class="entity-body">${esc(entry.body || '（该条目没有正文）')}</pre>` +
+      (entry.truncated
+        ? `<p class="micro muted">正文在采集中被截断：源文件共 ${fmt(entry.bytes)} 字节 / ${fmt(entry.lines)} 行，` +
+          '快照只发布前一段，完整内容请打开原文。</p>'
+        : `<p class="micro muted">源文件 ${fmt(entry.bytes)} 字节 / ${fmt(entry.lines)} 行 · ` +
+          `正文摘要 sha256 ${esc(entry.sha || '未公开')}</p>`) +
+      `</div>` +
+      `<div class="entity-detail-links"><div class="panel-overline">关联对象与核对</div>` +
+      (entry.links.length ? entry.links.map(link =>
+        `<div class="entity-detail-item"><span class="chip tiny entity-state entity-${esc(link.state)}">` +
+        `${esc(ENTITY_STATE_LABELS[link.state] || link.state)}</span><div class="entity-detail-text">` +
+        `<div><span class="entity-domain">${esc(entityDomainLabel(link.domain))}</span> <code>${esc(link.id)}</code>` +
+        `${link.url ? `<a class="ext-link" href="${esc(link.url)}" target="_blank" rel="noopener noreferrer">↗</a>` : ''}</div>` +
+        `<div class="micro muted">${esc(ENTITY_STATE_EXPLAINED[link.state] || '')}` +
+        `${link.state === 'unchecked' && reason[link.domain]?.reason ? `（${esc(reason[link.domain].reason)}）` : ''}</div>` +
+        `<div class="micro">反向链接：${fmt(data.entityReferences(link.key).length)} 个实体引用该对象</div>` +
+        `</div></div>`).join('') : '<p class="micro muted">该条目还没有登记任何关联对象——注册表允许空链接，只有作者知道它该连向哪里。</p>') +
+      `<div class="entity-detail-actions">${entry.url
+        ? `<a class="button secondary" href="${esc(entry.url)}" target="_blank" rel="noopener noreferrer">在 GitHub 编辑源文件 ↗</a>`
+        : '<span class="micro muted">源文件链接不可用</span>'}<span class="micro muted">本页只读；回写排在下一批</span></div>` +
+      `</div></div></td></tr>`;
+  }
+
+  function renderEntityTable() {
+    const state = data.state;
+    const total = data.entityFiltered().length;
+    const pages = data.entityPageCount();
+    state.entityPage = Math.min(Math.max(1, state.entityPage), pages);
+    const rows = data.entityPage();
+    $('entityTableCount').textContent = `${fmt(total)} / ${fmt(data.entityEntries().length)} ENTRIES` +
+      `${state.entityObject !== 'all' ? ' · 反查中' : ''}`;
+    $('entityRows').innerHTML = rows.length ? rows.map(entry => {
+      const counts = entry.links.reduce((tally, link) => {
+        tally[link.state] = (tally[link.state] || 0) + 1;
+        return tally;
+      }, {});
+      const open = state.entityOpen === entry.slug;
+      const summary = Object.entries(counts).map(([stateName, count]) =>
+        `<span class="chip tiny entity-state entity-${esc(stateName)}" title="${esc(ENTITY_STATE_EXPLAINED[stateName] || '')}">` +
+        `${esc(ENTITY_STATE_LABELS[stateName] || stateName)} ${fmt(count)}</span>`).join('');
+      return `<tr class="entity-row${open ? ' open' : ''}">` +
+        `<td>${entry.url
+          ? `<a class="model-link" href="${esc(entry.url)}" target="_blank" rel="noopener noreferrer">${esc(entry.title)} ↗</a>`
+          : `<span class="model-title">${esc(entry.title)}</span>`}` +
+        `<div class="micro muted">${esc(entry.slug)}</div></td>` +
+        `<td><span class="chip tiny entity-kind">${esc(entityValueLabel(ENTITY_KIND_LABELS, entry.kind, '未标注类型'))}</span>` +
+        `<span class="chip tiny entity-stage">${esc(entityValueLabel(ENTITY_STAGE_LABELS, entry.stage, '未标注阶段'))}</span></td>` +
+        `<td class="entity-links">${entry.links.length
+          ? entry.links.slice(0, 3).map((link, index) => entityLinkChip(link, index, entry.links.length)).join('')
+          : '<span class="muted">未登记关联</span>'}</td>` +
+        `<td class="entity-tags">${entry.tags.length ? entry.tags.slice(0, 3).map(tag =>
+          `<button type="button" class="chip tiny" data-entity-tag="${esc(tag)}" title="按该标签筛选">${esc(tag)}</button>`).join('') +
+          (entry.tags.length > 3 ? `<span class="micro muted"> +${fmt(entry.tags.length - 3)}</span>` : '')
+          : '<span class="muted">—</span>'}</td>` +
+        `<td class="align-right entity-check">${counts.unresolved || counts.unchecked
+          ? summary : (entry.links.length ? `<span class="chip tiny entity-state entity-resolved">已核对 ${fmt(counts.resolved || 0)}</span>` : '<span class="muted">—</span>')}</td>` +
+        `<td class="align-right entity-updated">${esc(entry.updated || '—')}</td>` +
+        `<td><button type="button" class="button text-button" data-entity-open="${esc(entry.slug)}" ` +
+        `aria-pressed="${open}">${open ? '收起正文 ✕' : '查看正文 ⌄'}</button></td></tr>` +
+        (open ? entityDetailRow(entry) : '');
+    }).join('') : `<tr><td colspan="7" class="no-rows">${data.entityEntries().length
+      ? '当前筛选没有匹配的实体' : '注册表还没有条目，或快照读取失败'}</td></tr>`;
+    $('entityPageInfo').textContent = `${state.entityPage} / ${pages}`;
+    $('entityPrev').disabled = state.entityPage === 1;
+    $('entityNext').disabled = state.entityPage === pages;
+    $('entityPagination').hidden = total <= data.entityPageSize();
+  }
+
+  function renderEntities() {
+    const state = data.state;
+    const facets = data.entityFacets();
+    fillSelect('entityKind', facets.kinds.map(item => ({
+      value: item.value,
+      label: `${entityFacetLabel(ENTITY_KIND_LABELS, item.value, '未标注类型')} (${fmt(item.count)})`
+    })), 'entityKind', '全部类型');
+    fillSelect('entityStage', facets.stages.map(item => ({
+      value: item.value,
+      label: `${entityFacetLabel(ENTITY_STAGE_LABELS, item.value, '未标注阶段')} (${fmt(item.count)})`
+    })), 'entityStage', '全部阶段');
+    fillSelect('entityTag', facets.tags.map(item => ({
+      value: item.value, label: `${item.label} (${fmt(item.count)})`
+    })), 'entityTag', '全部标签');
+    fillEntityObjectSelect();
+    $('entityLink').value = state.entityLink;
+    $('entitySort').value = state.entitySort;
+    $('entitySearch').value = state.entitySearch;
+    renderEntityStatus();
+    renderEntitySummary();
+    renderEntityCoverage();
+    renderEntityProblems();
+    renderEntityReverseNote();
+    renderEntityTable();
   }
 
   // --- Models ---------------------------------------------------------------
@@ -1229,6 +1502,13 @@ MO.render = (() => {
     renderStarWall,
     renderStarGraph,
     renderStarTable,
+    renderEntities,
+    renderEntityStatus,
+    renderEntitySummary,
+    renderEntityCoverage,
+    renderEntityProblems,
+    renderEntityReverseNote,
+    renderEntityTable,
     renderConferenceStatus,
     renderConferenceSummary,
     renderConferenceUpcoming,

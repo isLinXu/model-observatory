@@ -85,6 +85,18 @@ MO.data = (() => {
     starStatus: 'all',
     starSort: 'stars',
     starPage: 1,
+    entities: null,
+    entitySnapshotCheckedAt: null,
+    entityRefreshError: null,
+    entitySearch: '',
+    entityKind: 'all',
+    entityStage: 'all',
+    entityTag: 'all',
+    entityLink: 'all',
+    entityObject: 'all',
+    entitySort: 'updated',
+    entityOpen: null,
+    entityPage: 1,
     status: 'loading'
   };
 
@@ -960,11 +972,249 @@ MO.data = (() => {
     return { nodes, edges, hidden, missing: Math.max(0, ((snapshot.edges || []).length) - edges.length) };
   }
 
+  // --- Entity registry ------------------------------------------------------
+
+  const ENTITY_SOURCE_ID = 'registry';
+  const ENTITY_PAGE_SIZE = 8;
+  const ENTITY_LINK_STATES = ['resolved', 'unresolved', 'unchecked', 'out_of_scope'];
+  /** Registry stages that still expect work; `shipped` and `archived` are finished. */
+  const ENTITY_ACTIVE_STAGES = ['proposal', 'training', 'evaluating', 'submitting'];
+
+  // The index is rebuilt per payload so a refresh cannot mix two snapshots.
+  let entityRowCache = null;
+  let entityIndexCache = null;
+
+  function validateEntitySnapshot(payload) {
+    if (payload?.schema_version !== 1 || payload?.source?.id !== ENTITY_SOURCE_ID ||
+        !['ok', 'stale', 'unavailable'].includes(payload.status) || !Array.isArray(payload.entries) ||
+        payload.entries.some(entry => typeof entry?.slug !== 'string')) {
+      throw new Error('注册表快照格式或数据来源不兼容');
+    }
+    return payload;
+  }
+
+  /**
+   * Re-read the published registry index. The collector runs in the daily
+   * workflow, so this never asks the registry to change - the board is read-only.
+   */
+  async function refreshEntitySnapshot() {
+    try {
+      const payload = validateEntitySnapshot(await getJSON(
+        './data/entities.json', '实体注册表', { signal: AbortSignal.timeout(20000) }));
+      state.entities = payload;
+      state.entitySnapshotCheckedAt = new Date().toISOString();
+      state.entityRefreshError = null;
+      notify();
+      return payload;
+    } catch (error) {
+      state.entityRefreshError = error.name === 'TimeoutError'
+        ? '读取实体注册表超时，请稍后重试' : error.message;
+      throw new Error(state.entityRefreshError);
+    }
+  }
+
+  async function loadEntities() {
+    try {
+      await refreshEntitySnapshot();
+    } catch (error) {
+      if (!state.entities) {
+        state.entities = { status: 'unavailable', source: { id: ENTITY_SOURCE_ID }, entries: [], error: error.message };
+      }
+      console.warn('实体注册表快照读取失败：', error);
+    }
+  }
+
+  /**
+   * Published entries with their link states. Only the url fields are re-checked
+   * here: the page must not offer a link the collector could not vouch for.
+   */
+  function entityEntries() {
+    const payload = state.entities;
+    if (!Array.isArray(payload?.entries)) return [];
+    if (entityRowCache && entityRowCache.payload === payload) return entityRowCache.rows;
+    const rows = payload.entries.map(entry => ({
+      slug: entry.slug,
+      title: typeof entry.title === 'string' && entry.title ? entry.title : entry.slug,
+      kind: typeof entry.kind === 'string' ? entry.kind : '',
+      stage: typeof entry.stage === 'string' ? entry.stage : '',
+      tags: (Array.isArray(entry.tags) ? entry.tags : []).filter(tag => typeof tag === 'string'),
+      updated: typeof entry.updated === 'string' ? entry.updated : '',
+      url: /^https?:\/\/.+/i.test(entry.url || '') ? entry.url : null,
+      body: typeof entry.body === 'string' ? entry.body : '',
+      bytes: Number.isFinite(entry.bytes) ? entry.bytes : null,
+      lines: Number.isFinite(entry.lines) ? entry.lines : null,
+      sha: typeof entry.sha256 === 'string' ? entry.sha256 : '',
+      truncated: entry.truncated === true,
+      links: (Array.isArray(entry.links) ? entry.links : [])
+        .filter(link => typeof link?.domain === 'string' && typeof link?.id === 'string')
+        .map(link => ({
+          domain: link.domain,
+          id: link.id,
+          key: `${link.domain}:${link.id}`,
+          // A state the collector did not publish is a gap it could not prove,
+          // so it reads as 未核对 rather than silently becoming 已核对.
+          state: ENTITY_LINK_STATES.includes(link.state) ? link.state : 'unchecked',
+          url: /^https?:\/\/.+/i.test(link.url || '') ? link.url : null
+        }))
+    }));
+    entityRowCache = { payload, rows };
+    return rows;
+  }
+
+  /** `domain:id` -> the entries that reference it: the reverse side of the board. */
+  function entityIndex() {
+    const payload = state.entities;
+    if (entityIndexCache && entityIndexCache.payload === payload) return entityIndexCache.map;
+    const map = new Map();
+    for (const entry of entityEntries()) {
+      for (const link of entry.links) {
+        if (!map.has(link.key)) map.set(link.key, { key: link.key, domain: link.domain, id: link.id,
+          state: link.state, url: link.url, entries: [] });
+        const group = map.get(link.key);
+        group.entries.push({ slug: entry.slug, title: entry.title });
+        // Several entries can share one object; the object is checked once, so
+        // every listing carries the same state and the first url is enough.
+        if (!group.url && link.url) group.url = link.url;
+      }
+    }
+    entityIndexCache = { payload, map };
+    return map;
+  }
+
+  /** Every object the registry mentions, busiest first, for the reverse lookup. */
+  function entityObjects() {
+    return [...entityIndex().values()].sort((a, b) =>
+      b.entries.length - a.entries.length || a.key.localeCompare(b.key));
+  }
+
+  function entityReferences(key) {
+    return entityIndex().get(key)?.entries || [];
+  }
+
+  /** Links the reader has to look at: a dead id or a source we could not check. */
+  function entityProblems() {
+    const problems = [];
+    for (const entry of entityEntries()) {
+      for (const link of entry.links) {
+        if (link.state === 'resolved') continue;
+        problems.push({ slug: entry.slug, title: entry.title, domain: link.domain, id: link.id,
+          key: link.key, state: link.state, url: link.url });
+      }
+    }
+    const rank = state => (state === 'unresolved' ? 0 : state === 'unchecked' ? 1 : 2);
+    return problems.sort((a, b) => rank(a.state) - rank(b.state) || a.slug.localeCompare(b.slug) ||
+      a.key.localeCompare(b.key));
+  }
+
+  /** Per source: how much of our own published output the registry mentions. */
+  function entityCoverage() {
+    const payload = state.entities || {};
+    const sources = payload.sources || {};
+    return Object.entries(payload.coverage || {}).map(([domain, row]) => ({
+      domain,
+      available: row?.available === true,
+      total: Number.isFinite(row?.total) ? row.total : 0,
+      registered: Number.isFinite(row?.registered) ? row.registered : 0,
+      missing: (Array.isArray(row?.unregistered) ? row.unregistered : []).filter(id => typeof id === 'string'),
+      missingCount: Number.isFinite(row?.unregistered_count) ? row.unregistered_count : 0,
+      truncated: row?.truncated === true,
+      reason: typeof sources[domain]?.reason === 'string' ? sources[domain].reason : null,
+      capturedAt: sources[domain]?.captured_at || null
+    })).sort((a, b) => b.total - a.total || a.domain.localeCompare(b.domain));
+  }
+
+  /**
+   * Headline numbers come from the collector's own summary and validation, so a
+   * partially loaded board never restates a count the daily run disagrees with.
+   */
+  function entityStats() {
+    const payload = state.entities || {};
+    const summary = payload.summary || {};
+    const validation = payload.validation || {};
+    const byStage = summary.by_stage || {};
+    const active = ENTITY_ACTIVE_STAGES.reduce((sum, stage) => sum + (byStage[stage] || 0), 0);
+    const coverage = entityCoverage().filter(row => row.available);
+    const total = coverage.reduce((sum, row) => sum + row.total, 0);
+    const registered = coverage.reduce((sum, row) => sum + row.registered, 0);
+    return {
+      available: ['ok', 'stale'].includes(payload.status),
+      total: Number.isFinite(summary.total) ? summary.total : entityEntries().length,
+      links: Number.isFinite(summary.links) ? summary.links : entityEntries().reduce((sum, row) => sum + row.links.length, 0),
+      resolved: validation.resolved || 0,
+      unresolved: validation.unresolved || 0,
+      unchecked: validation.unchecked || 0,
+      out_of_scope: validation.out_of_scope || 0,
+      problems: (validation.unresolved || 0) + (validation.unchecked || 0),
+      objects: entityObjects().length,
+      active,
+      coverage: { registered, total, sources: coverage.length },
+      // A source we publish nothing for is not a gap to fill, so it stays out of
+      // the headline and the panel explains it instead.
+      gaps: coverage.filter(row => row.total > 0 && row.registered === 0).map(row => row.domain),
+      warnings: (payload.warnings || []).length,
+      errors: (payload.structural_errors || []).length
+    };
+  }
+
+  /** Filter values the entries actually offer, so no select lists a dead choice. */
+  function entityFacets() {
+    const counts = key => {
+      const tally = new Map();
+      entityEntries().forEach(entry => {
+        const value = entry[key] || 'none';
+        tally.set(value, (tally.get(value) || 0) + 1);
+      });
+      return [...tally].map(([value, count]) => ({ value, count }));
+    };
+    const tags = new Map();
+    entityEntries().forEach(entry => entry.tags.forEach(tag => tags.set(tag, (tags.get(tag) || 0) + 1)));
+    return {
+      kinds: counts('kind'),
+      stages: counts('stage'),
+      tags: [...tags].map(([value, count]) => ({ value, count }))
+        .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value))
+    };
+  }
+
+  /** Entries for the current filters; `entityObject` is the reverse lookup. */
+  function entityFiltered() {
+    const search = state.entitySearch.trim().toLowerCase();
+    const wantedKind = state.entityKind === 'all' ? null : state.entityKind;
+    const wantedStage = state.entityStage === 'all' ? null : state.entityStage;
+    const rows = entityEntries().filter(entry => {
+      if (wantedKind && (entry.kind || 'none') !== wantedKind) return false;
+      if (wantedStage && (entry.stage || 'none') !== wantedStage) return false;
+      if (state.entityTag !== 'all' && !entry.tags.includes(state.entityTag)) return false;
+      if (state.entityObject !== 'all' && !entry.links.some(link => link.key === state.entityObject)) return false;
+      const linkFilter = state.entityLink;
+      if (linkFilter === 'problem' && entry.links.every(link => link.state === 'resolved')) return false;
+      if (linkFilter !== 'all' && linkFilter !== 'problem' &&
+          !entry.links.some(link => link.state === linkFilter)) return false;
+      if (!search) return true;
+      const haystack = [entry.title, entry.slug, entry.tags.join(' '), entry.body,
+        entry.links.map(link => `${link.domain} ${link.id}`).join(' ')].join(' ').toLowerCase();
+      return haystack.includes(search);
+    });
+    const sort = state.entitySort;
+    if (sort === 'links') return rows.sort((a, b) => b.links.length - a.links.length || a.slug.localeCompare(b.slug));
+    if (sort === 'name') return rows.sort((a, b) => a.title.localeCompare(b.title) || a.slug.localeCompare(b.slug));
+    return rows.sort((a, b) => b.updated.localeCompare(a.updated) || a.slug.localeCompare(b.slug));
+  }
+
+  function entityPageCount() {
+    return Math.max(1, Math.ceil(entityFiltered().length / ENTITY_PAGE_SIZE));
+  }
+
+  function entityPage() {
+    const start = (Math.min(Math.max(1, state.entityPage), entityPageCount()) - 1) * ENTITY_PAGE_SIZE;
+    return entityFiltered().slice(start, start + ENTITY_PAGE_SIZE);
+  }
+
   /** Load every dataset. Only a download failure is fatal for the page. */
   async function loadAll() {
     const [downloads] = await Promise.allSettled([
       loadDownloads(), loadScholar(), loadSocial(), loadGitHub(), loadModelScope(),
-      loadConferences(), loadStars()
+      loadConferences(), loadStars(), loadEntities()
     ]);
     if (downloads.status === 'rejected') throw downloads.reason;
     state.status = 'ready';
@@ -1308,6 +1558,19 @@ MO.data = (() => {
     starPageCount,
     starStats,
     starWall,
-    starGraph
+    starGraph,
+    loadEntities,
+    refreshEntitySnapshot,
+    entityEntries,
+    entityFiltered,
+    entityPage,
+    entityPageCount,
+    entityPageSize: () => ENTITY_PAGE_SIZE,
+    entityStats,
+    entityFacets,
+    entityCoverage,
+    entityProblems,
+    entityObjects,
+    entityReferences
   };
 })();

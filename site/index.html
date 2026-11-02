@@ -45,6 +45,7 @@
         <a href="#modelscope"><span class="navglyph">▦</span> ModelScope</a>
         <a href="#conferences"><span class="navglyph">◴</span> 顶会截止</a>
         <a href="#stars"><span class="navglyph">✧</span> 星星墙</a>
+        <a href="#entities"><span class="navglyph">⌗</span> 实体注册表</a>
         <a href="#scholar"><span class="navglyph">✦</span> 学术主页</a>
         <a href="#social"><span class="navglyph">◎</span> 社交媒体</a>
         <a href="#github"><span class="navglyph">◐</span> GitHub 看板</a>
@@ -227,6 +228,41 @@
         <div class="table-scroll"><table class="models-table star-table"><thead><tr><th>仓库</th><th>归属聚类</th><th>语言</th><th>主题</th><th class="align-right">★ Star</th><th class="align-right">最近推送</th><th>状态</th></tr></thead><tbody id="starRows"><tr><td colspan="7" class="no-rows">等待 star 明细</td></tr></tbody></table></div>
         <div id="starPagination" class="pagination" hidden><button class="button secondary" id="starPrev">上一页</button><span id="starPageInfo" class="micro muted">—</span><button class="button secondary" id="starNext">下一页</button></div>
         <div class="table-bottom"><span>说明：每个仓库只归入一个聚类（语言优先，其次足够热门的主题，再次足够热门的账户），因此各聚类数量可以相加；「出现次数」按多标签成员统计，不能相加。star 数、语言与主题都是 GitHub 公开元数据的当前值，取消 star 会体现在次日快照中。</span></div>
+      </section>
+
+      <section id="entities" class="model-section">
+        <div class="section-heading"><div><div class="section-eyebrow">WORKSPACE / ENTITY REGISTRY</div><h2>实体注册表 <span id="entityCountBadge">0</span></h2><p>一条一文件，把模型、数据集、论文与仓库连成可核对的关系网</p></div><div class="section-actions"><a class="button secondary" href="https://github.com/isLinXu/model-observatory/tree/main/entities" target="_blank" rel="noopener noreferrer">entities/ 源文件 ↗</a><button class="button secondary" id="entityRefresh">刷新已发布快照</button><button class="button" id="entityExport" disabled>↓ 导出筛选 CSV</button></div></div>
+        <div class="modelscope-data-status" role="status" aria-live="polite">
+          <p id="entityStatus" class="collection-note">正在读取注册表快照…</p>
+          <p id="entityFreshness" class="micro muted">等待采集时间</p>
+          <p id="entitySnapshotCheckedAt" class="micro muted">尚未成功读取快照</p>
+        </div>
+        <p class="collection-note">注册表只登记关系，不复制任何指标：下载量、粉丝数与引用数仍由各自的看板持有，每个数字只保留一个采集时间。链接状态由每日快照当场核对——「已核对」＝当日快照中确实存在该对象；「断链」＝来源当天回答了我们，却没有这个 ID；「未核对」＝对应来源本次没有可用快照，不是断链；「范围外」＝他人的仓库，本站不核对。本页只读，浏览器回写排在下一批；要改条目请编辑 <code>entities/&lt;slug&gt;.md</code> 并提交，正文按原文展示、不当作 HTML 渲染。</p>
+        <div class="kpis">
+          <div class="kpi accent-kpi"><div class="kpi-label">注册实体 <span class="kpi-symbol teal">⌗</span></div><div id="statEntities" class="kpi-value">—</div><div id="statEntitiesSub" class="kpi-caption">一条一文件，按文件名排序</div></div>
+          <div class="kpi"><div class="kpi-label">关联链接 <span class="kpi-symbol blue">⛓</span></div><div id="statEntityLinks" class="kpi-value">—</div><div id="statEntityLinksSub" class="kpi-caption">四种核对状态的分布</div></div>
+          <div class="kpi"><div class="kpi-label">自有对象已登记 <span class="kpi-symbol">◧</span></div><div id="statEntityCoverage" class="kpi-value">—</div><div id="statEntityCoverageSub" class="kpi-caption">分母只算本站发布的对象</div></div>
+          <div class="kpi"><div class="kpi-label">进行中实体 <span class="kpi-symbol">◷</span></div><div id="statEntityActive" class="kpi-value">—</div><div id="statEntityActiveSub" class="kpi-caption">提案 / 训练 / 评测 / 投稿</div></div>
+        </div>
+        <div class="dashboard-grid">
+          <div class="panel entity-coverage-panel"><div class="panel-head"><div><div class="panel-overline">COVERAGE &amp; WORK QUEUE</div><h2>来源覆盖</h2><p id="entityCoverageNote">等待注册表数据</p></div><span class="mini-icon">◧</span></div><div id="entityCoverageList" class="entity-cov-list"><div class="chart-empty">等待注册表数据</div></div><div class="top-footer">DENOMINATORS COME FROM EACH SOURCE'S OWN DAILY SNAPSHOT <span>● RELATIONSHIPS ONLY</span></div></div>
+          <div class="panel entity-problem-panel"><div class="panel-head"><div><div class="panel-overline">BROKEN &amp; UNCHECKED LINKS</div><h2>断链与未核对</h2><p id="entityProblemNote">等待注册表数据</p></div><span class="mini-icon">⚑</span></div><div id="entityProblems" class="entity-problem-list"><div class="chart-empty">等待注册表数据</div></div><div class="chart-footer"><span class="muted micro">「未核对」不会被写成断链：采集失败与目标消失是两件事，混在一起只会让读者忽略提示。</span></div></div>
+        </div>
+        <div class="table-toolbar">
+          <label class="search-box"><span>⌕</span><input id="entitySearch" placeholder="搜索实体名、标签、正文或对象 ID" aria-label="搜索注册表条目" autocomplete="off"></label>
+          <select id="entityKind" aria-label="实体类型"><option value="all">全部类型</option></select>
+          <select id="entityStage" aria-label="实体阶段"><option value="all">全部阶段</option></select>
+          <select id="entityTag" aria-label="实体标签"><option value="all">全部标签</option></select>
+          <select id="entityLink" aria-label="链接状态"><option value="all">全部核对状态</option><option value="problem">仅含问题链接</option><option value="unresolved">含断链</option><option value="unchecked">含未核对</option><option value="out_of_scope">含范围外</option><option value="resolved">含已核对</option></select>
+          <select id="entityObject" aria-label="反查对象"><option value="all">反查：全部对象</option></select>
+          <select id="entitySort" aria-label="条目排序"><option value="updated">按更新时间</option><option value="links">按关联数量</option><option value="name">按实体名称</option></select>
+          <button class="button secondary" id="entityFilterReset">重置筛选</button>
+          <span class="toolbar-spacer"></span><span id="entityTableCount" class="micro muted">—</span>
+        </div>
+        <p id="entityReverseNote" class="micro muted">反向链接：点条目行里的关联对象，或选择上方「反查对象」，即可看到哪个实体引用了这个模型、数据集或仓库。</p>
+        <div class="table-scroll"><table class="models-table entity-table"><thead><tr><th>实体</th><th>类型与阶段</th><th>关联对象</th><th>标签</th><th class="align-right">核对</th><th class="align-right">更新</th><th>正文</th></tr></thead><tbody id="entityRows"><tr><td colspan="7" class="no-rows">等待注册表数据</td></tr></tbody></table></div>
+        <div id="entityPagination" class="pagination" hidden><button class="button secondary" id="entityPrev">上一页</button><span id="entityPageInfo" class="micro muted">—</span><button class="button secondary" id="entityNext">下一页</button></div>
+        <div class="table-bottom"><span>说明：状态统计来自每日采集当场核对的结果，与条目清单同一批次；覆盖率的分母是各来源当日快照里本站自有的对象（GitHub 只算账户发布的非 fork 仓库，学术档案按论文标题别名匹配），未登记清单每源最多列出一部分，其余以计数说明。注册表不搬运任何数值指标，条目正文只保留在源文件与快照的截断副本中。</span></div>
       </section>
 
       <section id="scholar" class="model-section">

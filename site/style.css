@@ -630,7 +630,55 @@ select { height: 40px; background: var(--input-bg); border: 1px solid var(--inpu
 .detail-collections > div { border-left: 2px solid var(--line-3); padding-left: 12px; margin-top: 14px; }
 .detail-collections a { font-size: 12px; color: var(--blue); }
 .detail-collections p { font-size: 11px; line-height: 1.8; color: var(--muted); overflow-wrap: anywhere; }
+
+/* --- Entity registry board ------------------------------------------------ */
+/* The registry owns relationships, not metrics, so its two audit panels are
+   lists and bars rather than another trend chart. */
+
+.entity-cov-list, .entity-problem-list { display: grid; gap: 11px; padding-top: 4px; }
+.entity-cov-row, .entity-problem { border: 1px solid var(--line-2); border-radius: var(--radius-sm); background: var(--surface-2); padding: 11px 13px; }
+.entity-cov-row.off { border-style: dashed; }
+.entity-cov-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; font-size: 12px; }
+.entity-cov-head b { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--txt-strong); }
+.entity-domain { font-weight: 660; color: var(--txt-soft); }
+.entity-cov-bar { height: 5px; margin: 8px 0 7px; border-radius: 999px; background: var(--surface-3); overflow: hidden; }
+.entity-cov-bar i { display: block; height: 100%; border-radius: inherit; background: var(--chart-1); }
+.entity-cov-meta, .entity-cov-missing { line-height: 1.7; overflow-wrap: anywhere; }
+.entity-cov-missing { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; margin-top: 8px; }
+.entity-problem { display: grid; grid-template-columns: 68px minmax(0, 1fr); gap: 11px; align-items: start; border-left: 3px solid var(--orange); }
+.entity-problem.unchecked { border-left-color: var(--faint); }
+.entity-problem.out_of_scope { border-left-color: var(--blue); }
+.entity-problem-body { display: grid; gap: 4px; min-width: 0; }
+.entity-problem-link, .entity-detail-text > div:first-child { font-size: 11.5px; color: var(--txt-soft); overflow-wrap: anywhere; }
+.entity-problem-why, .entity-problem-from { line-height: 1.65; overflow-wrap: anywhere; }
+.entity-problem-from .button.text-button { padding: 0; font-size: 10px; color: var(--blue); }
+.entity-table code, .entity-problem code { font-size: 10.5px; color: var(--muted); overflow-wrap: anywhere; }
+.entity-state { font-weight: 650; }
+.entity-state.entity-resolved { background: var(--state-ok-bg); border-color: transparent; color: var(--state-ok-txt); }
+.entity-state.entity-unresolved { background: var(--state-alert-bg); border-color: transparent; color: var(--state-alert-txt); }
+.entity-state.entity-unchecked { background: var(--state-missing-bg); border-color: transparent; color: var(--state-missing-txt); }
+.entity-link { max-width: 330px; white-space: normal; text-align: left; overflow-wrap: anywhere; cursor: pointer; }
+.entity-link:hover { border-color: var(--chart-1); color: var(--txt-strong); }
+.entity-link.entity-flag { border-style: dashed; }
+.entity-table td:first-child { min-width: 190px; max-width: 300px; white-space: normal; overflow-wrap: anywhere; }
+.entity-table .model-link { white-space: normal; text-align: left; }
+.entity-links, .entity-tags { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; max-width: 380px; }
+.entity-tags .chip[data-entity-tag] { cursor: pointer; }
+.entity-check .chip { margin-left: 4px; }
+.entity-updated { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.entity-row.open > td { background: var(--surface-2); }
+.entity-detail > td { background: var(--surface-2); border-top: 0; }
+.entity-detail-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 18px; padding: 4px 2px 8px; }
+.entity-detail-main, .entity-detail-links { display: grid; gap: 9px; align-content: start; min-width: 0; }
+.entity-detail-item { display: grid; grid-template-columns: 68px minmax(0, 1fr); gap: 10px; align-items: start; border-left: 2px solid var(--line-3); padding: 7px 0 7px 10px; }
+.entity-detail-text { display: grid; gap: 3px; min-width: 0; }
+.entity-detail-text > div { overflow-wrap: anywhere; line-height: 1.6; }
+.entity-detail-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+/* The registry body is the Markdown source verbatim: escaping it and keeping the
+   line breaks is what makes the snapshot comparable with the file in git. */
+.entity-body { margin: 0; max-height: 260px; overflow: auto; padding: 13px 15px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-3); color: var(--txt-soft); font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace; font-size: 11px; line-height: 1.7; white-space: pre-wrap; word-break: break-word; }
 @media (max-width: 700px) {
+  .entity-detail-grid, .entity-problem, .entity-detail-item { grid-template-columns: 1fr; }
   .collection-scope { padding: 15px; scroll-margin-top: 120px; }
   .collection-controls label { flex-basis: 100%; }
   .collection-controls select { flex-basis: 100%; max-width: none; }

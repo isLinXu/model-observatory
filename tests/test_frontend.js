@@ -684,7 +684,8 @@ function publishedPayloads(collections) {
     './data/modelscope.json': modelscopeSnapshot(),
     './data/modelscope_history.json': modelscopeHistory(),
     './data/conferences.json': conferencePayload([conference('Keep', [conferenceEvent('AI/keep:keep26:paper:1')])]),
-    './data/stars.json': starSnapshot()
+    './data/stars.json': starSnapshot(),
+    './data/entities.json': entityPayload([entityEntry('youtu-ft-v1')])
   };
 }
 
@@ -712,7 +713,7 @@ test('loadAll tolerates collection failure and preserves published membership th
       });
       data.state.modelCollection = hasFallback ? 'gatilin/saved' : 'unassigned';
       await data.loadAll();
-      assert.equal(requested.length, 14);
+      assert.equal(requested.length, 15, 'first paint now includes the registry index');
       assert.equal(data.state.status, 'ready');
       assert.equal(data.state.modelSource, 'live');
       assert.equal(data.state.modelRefreshError, null);
@@ -1209,7 +1210,7 @@ test('loadAll loads both optional ModelScope files with the versioned author/sou
     const beforeHistory = plain(history);
     const data = loadData(publishedFetch(payloads, requested));
     await data.loadAll();
-    assert.equal(requested.length, 14);
+    assert.equal(requested.length, 15, 'the registry index is first-paint data');
     assert.equal(requested.filter(url => url === './data/modelscope.json').length, 1);
     assert.equal(requested.filter(url => url === './data/modelscope_history.json').length, 1);
     assert.equal(data.state.modelscope, latest);
@@ -1927,6 +1928,48 @@ function starDetail(rows = [starRow('a/one')], extra = {}) {
     schema_version: 1, source: { id: 'github', login: 'isLinXu' },
     captured_at: '2026-10-31T02:23:00Z', count: rows.length, rows, ...extra
   };
+}
+
+function entityLink(domain, id, extra = {}) {
+  return { domain, id, state: 'resolved', url: `https://example.invalid/${domain}/${id}`, ...extra };
+}
+
+function entityEntry(slug, extra = {}) {
+  return {
+    slug, title: slug.replace(/-/g, ' '), kind: 'project', stage: 'training', tags: ['demo'],
+    updated: '2026-10-30', links: [entityLink('hf_model', `gatilin/${slug}`)],
+    bytes: 200, lines: 6, sha256: 'abc123def456', truncated: false,
+    url: `https://github.com/isLinXu/model-observatory/blob/main/entities/${slug}.md`,
+    body: `# ${slug}\n\n正文说明`, ...extra
+  };
+}
+
+function entityPayload(entries = [entityEntry('one')], extra = {}) {
+  const links = entries.flatMap(entry => entry.links);
+  const counted = state => links.filter(link => link.state === state).length;
+  const tally = key => entries.reduce((map, entry) => {
+    const value = entry[key] || '未标注';
+    map[value] = (map[value] || 0) + 1;
+    return map;
+  }, {});
+  return {
+    schema_version: 1,
+    source: { id: 'registry', directory: 'entities', repo: 'isLinXu/model-observatory', branch: 'main',
+      url: 'https://github.com/isLinXu/model-observatory/tree/main/entities' },
+    status: 'ok', error: null, captured_at: '2026-10-31T02:23:00Z', last_attempt_at: '2026-10-31T02:23:00Z',
+    summary: { total: entries.length, links: links.length, by_kind: tally('kind'), by_stage: tally('stage'), tags: [] },
+    validation: { resolved: counted('resolved'), unresolved: counted('unresolved'),
+      unchecked: counted('unchecked'), out_of_scope: counted('out_of_scope') },
+    coverage: {}, sources: {},
+    changes: { status: 'compared', added: [], removed: [], revised: [], added_count: 0,
+      removed_count: 0, revised_count: 0, truncated: false },
+    entries, structural_errors: [], warnings: [], ...extra
+  };
+}
+
+function seedEntities(data, entries, extra = {}) {
+  data.state.entities = entityPayload(entries, extra);
+  return data.state.entities;
 }
 
 const confTitles = data => Array.from(data.conferenceRows(CONF_NOW), row => row.title);
@@ -2850,6 +2893,459 @@ test('the star board pulls the detail on viewport entry, filters the wall, and e
   const filtered = parseCsv(await view.blobs.at(-1).text()).slice(1);
   assert.deepEqual(filtered.map(row => row[0]), ['b/old'], 'the export follows the active filter');
 });
+
+// --- Entity registry board ---------------------------------------------------
+
+test('the registry index is first-paint data and a missing file degrades that board alone', async () => {
+  const payloads = publishedPayloads();
+  const requested = [];
+  const data = loadData(publishedFetch(payloads, requested));
+  await data.loadAll();
+  assert.equal(requested.filter(url => url === './data/entities.json').length, 1,
+    'the reverse lookup needs the whole index, so the board cannot wait for a scroll event');
+  assert.equal(data.state.entities.status, 'ok');
+  assert.equal(data.state.entityRefreshError, null);
+  assert.match(data.state.entitySnapshotCheckedAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/);
+  assert.deepEqual(plain(data.entityEntries().map(row => row.slug)), ['youtu-ft-v1']);
+  assert.equal(data.entityStats().resolved, 1);
+
+  const missing = publishedPayloads();
+  delete missing['./data/entities.json'];
+  const other = loadData(publishedFetch(missing));
+  await other.loadAll();
+  assert.equal(other.state.entities.status, 'unavailable');
+  assert.equal(other.state.entities.source.id, 'registry');
+  assert.deepEqual(plain(other.entityEntries()), []);
+  assert.match(other.state.entities.error, /HTTP 404/);
+  assert.equal(other.entityStats().available, false);
+  assert.equal(other.state.status, 'ready', 'a missing registry must not sink the page');
+  assert.equal(other.state.conferences.status, 'ok');
+
+  const foreign = publishedPayloads();
+  foreign['./data/entities.json'] = entityPayload([entityEntry('one')], { source: { id: 'gitlab' } });
+  const third = loadData(publishedFetch(foreign));
+  await third.loadEntities();
+  assert.equal(third.state.entities.status, 'unavailable');
+  assert.match(third.state.entities.error, /格式或数据来源不兼容/);
+
+  const keep = publishedPayloads();
+  const fourth = loadData(publishedFetch(keep));
+  await fourth.loadEntities();
+  const snapshot = fourth.state.entities, checkedAt = fourth.state.entitySnapshotCheckedAt;
+  keep['./data/entities.json'] = entityPayload([], { schema_version: 0 });
+  await assert.rejects(fourth.refreshEntitySnapshot(), /格式或数据来源不兼容/);
+  assert.equal(fourth.state.entities, snapshot, 'a rejected refresh keeps the last good index');
+  assert.equal(fourth.state.entitySnapshotCheckedAt, checkedAt, 'a failed read is not logged as a successful one');
+  assert.match(fourth.state.entityRefreshError, /格式或数据来源不兼容/);
+  fourth.state.entityKind = 'project';
+  const refreshed = entityPayload([entityEntry('other')]);
+  keep['./data/entities.json'] = refreshed;
+  assert.equal(await fourth.refreshEntitySnapshot(), refreshed);
+  assert.equal(fourth.state.entities, refreshed);
+  assert.equal(fourth.state.entityRefreshError, null, 'a successful read clears the previous read failure');
+});
+
+test('registry rows only trust the link states and urls the collector published', () => {
+  const data = loadData();
+  seedEntities(data, [entityEntry('odd', {
+    title: '',
+    bytes: '200', lines: null, sha256: 42, truncated: 'yes', url: 'ftp://example.invalid/odd.md',
+    tags: ['demo', 7],
+    links: [
+      entityLink('hf_model', 'gatilin/odd', { state: 'maybe' }),
+      { domain: 'gh_repo', id: 'isLinXu/odd', state: 'resolved', url: 'javascript:alert(1)' },
+      { domain: 'scholar', id: 'me', state: 'unchecked' },
+      { id: 'no-domain' }
+    ]
+  })]);
+  const [row] = data.entityEntries();
+  assert.equal(row.title, 'odd', 'an entry with no published title falls back to its slug');
+  assert.equal(row.url, null, 'a non-http source url never becomes a link');
+  assert.deepEqual(plain(row.tags), ['demo'], 'only text tags survive');
+  assert.equal(row.bytes, null, 'a counter the collector wrote as text is not a number');
+  assert.equal(row.lines, null);
+  assert.equal(row.sha, '', 'the digest is only published as text');
+  assert.equal(row.truncated, false);
+  assert.deepEqual(plain(row.links.map(link => [link.domain, link.state, link.url])), [
+    ['hf_model', 'unchecked', 'https://example.invalid/hf_model/gatilin/odd'],
+    ['gh_repo', 'resolved', null],
+    ['scholar', 'unchecked', null]
+  ], 'an unknown state reads as 未核对, never as 已核对');
+  assert.equal(data.entityProblems().length, 2, 'a link with no url is a gap, not a dead end');
+  assert.equal(data.entityStats().errors, 0);
+});
+
+test('registry filters combine kind, stage, tag, link state, search and the reverse object', () => {
+  const data = loadData();
+  seedEntities(data, [
+    entityEntry('alpha', { kind: 'project', stage: 'training', tags: ['ft', 'vision'], updated: '2026-10-30',
+      links: [entityLink('hf_model', 'gatilin/shared'), entityLink('gh_repo', 'isLinXu/alpha', { state: 'unresolved' })] }),
+    entityEntry('beta', { kind: 'model', stage: 'shipped', tags: ['ft'], updated: '2026-10-29',
+      links: [entityLink('hf_model', 'gatilin/shared', { state: 'unchecked' })] }),
+    entityEntry('gamma', { kind: null, stage: null, tags: [], updated: '2026-10-28', links: [],
+      body: '只有正文里出现的一句话' }),
+    entityEntry('delta', { kind: 'dataset', stage: 'proposal', tags: ['data'], updated: '2026-11-01',
+      links: [entityLink('template', 'tmpls/a', { state: 'out_of_scope' })] })
+  ]);
+  const slugs = () => plain(data.entityFiltered().map(row => row.slug));
+  assert.deepEqual(slugs(), ['delta', 'alpha', 'beta', 'gamma'], 'newest update first, then slug');
+
+  data.state.entityKind = 'model';
+  assert.deepEqual(slugs(), ['beta']);
+  data.state.entityKind = 'none';
+  assert.deepEqual(slugs(), ['gamma'], 'an unlabeled entry is filterable as 未标注');
+  data.state.entityKind = 'all';
+  data.state.entityStage = 'shipped';
+  assert.deepEqual(slugs(), ['beta']);
+  data.state.entityStage = 'all';
+  data.state.entityTag = 'ft';
+  assert.deepEqual(slugs(), ['alpha', 'beta']);
+  data.state.entityTag = 'all';
+  data.state.entityLink = 'problem';
+  assert.deepEqual(slugs(), ['delta', 'alpha', 'beta'], 'a resolved-only entry stays out of the audit');
+  data.state.entityLink = 'unchecked';
+  assert.deepEqual(slugs(), ['beta'], 'one state at a time is still selectable');
+  data.state.entityLink = 'resolved';
+  assert.deepEqual(slugs(), ['alpha'], 'only an entry that claims a checked object matches');
+  data.state.entityLink = 'all';
+  data.state.entitySearch = ' vision ';
+  assert.deepEqual(slugs(), ['alpha'], 'search trims and matches tags');
+  data.state.entitySearch = '一句话';
+  assert.deepEqual(slugs(), ['gamma'], 'the published body is searchable');
+  data.state.entitySearch = 'template';
+  assert.deepEqual(slugs(), ['delta'], 'link domains are searchable too');
+  data.state.entitySearch = 'gatilin/shared';
+  assert.deepEqual(slugs(), ['alpha', 'beta']);
+  data.state.entitySearch = 'nothing matches this';
+  assert.deepEqual(slugs(), []);
+  data.state.entitySearch = '';
+  data.state.entityObject = 'hf_model:gatilin/shared';
+  assert.deepEqual(slugs(), ['alpha', 'beta'], 'the reverse lookup is a filter, not a separate page');
+  data.state.entitySort = 'links';
+  assert.deepEqual(slugs(), ['alpha', 'beta'], 'most links first, then slug');
+  data.state.entitySort = 'name';
+  assert.deepEqual(plain(data.entityFiltered().map(row => row.title)), ['alpha', 'beta']);
+
+  const facets = data.entityFacets();
+  assert.deepEqual(plain(facets.kinds), [
+    { value: 'project', count: 1 }, { value: 'model', count: 1 }, { value: 'none', count: 1 }, { value: 'dataset', count: 1 }
+  ]);
+  assert.deepEqual(plain(facets.stages.map(item => item.value)), ['training', 'shipped', 'none', 'proposal']);
+  assert.deepEqual(plain(facets.tags), [{ value: 'ft', count: 2 }, { value: 'data', count: 1 }, { value: 'vision', count: 1 }]);
+});
+
+test('registry paging shows eight entries and clamps to what the filter leaves', () => {
+  const data = loadData();
+  seedEntities(data, Array.from({ length: 20 }, (_, index) => entityEntry(`entry-${index}`, {
+    updated: `2026-11-${String(index + 1).padStart(2, '0')}`,
+    links: index % 3 === 0 ? [] : [entityLink('hf_model', `gatilin/model-${index}`)]
+  })));
+  assert.equal(data.entityPageSize(), 8);
+  assert.equal(data.entityPageCount(), 3);
+  assert.deepEqual(plain(data.entityPage().map(row => row.slug)),
+    ['entry-19', 'entry-18', 'entry-17', 'entry-16', 'entry-15', 'entry-14', 'entry-13', 'entry-12']);
+  data.state.entityPage = 3;
+  assert.deepEqual(plain(data.entityPage().map(row => row.slug)), ['entry-3', 'entry-2', 'entry-1', 'entry-0']);
+  data.state.entityPage = 9;
+  assert.equal(data.entityPage()[0].slug, 'entry-3', 'a stale page number clamps to the last page');
+  data.state.entityPage = 0;
+  assert.equal(data.entityPage()[0].slug, 'entry-19', 'and never below the first');
+
+  data.state.entityPage = 1;
+  data.state.entitySort = 'links';
+  assert.deepEqual(plain(data.entityFiltered().slice(13).map(row => row.slug)),
+    ['entry-0', 'entry-12', 'entry-15', 'entry-18', 'entry-3', 'entry-6', 'entry-9'],
+    'linkless entries sort last instead of disappearing');
+  data.state.entitySort = 'updated';
+  data.state.entityObject = 'hf_model:gatilin/model-19';
+  assert.equal(data.entityPageCount(), 1);
+  assert.deepEqual(plain(data.entityFiltered().map(row => row.slug)), ['entry-19']);
+});
+
+test('the reverse index groups references per object and the audit ranks dead links first', () => {
+  const data = loadData();
+  seedEntities(data, [
+    entityEntry('alpha', { links: [entityLink('hf_model', 'gatilin/shared'),
+      entityLink('gh_repo', 'isLinXu/ghost', { state: 'unresolved', url: null })] }),
+    entityEntry('beta', { links: [entityLink('hf_model', 'gatilin/shared', { state: 'unresolved', url: null })] }),
+    entityEntry('gamma', { links: [entityLink('template', 'tmpls/a', { state: 'out_of_scope' }),
+      entityLink('scholar', 'me', { state: 'unchecked' })] })
+  ]);
+  assert.deepEqual(plain(data.entityObjects().map(item => [item.key, item.entries.length])), [
+    ['hf_model:gatilin/shared', 2], ['gh_repo:isLinXu/ghost', 1], ['scholar:me', 1], ['template:tmpls/a', 1]
+  ], 'busiest objects first, then key');
+  assert.deepEqual(plain(data.entityReferences('hf_model:gatilin/shared').map(item => item.slug)), ['alpha', 'beta']);
+  assert.deepEqual(plain(data.entityReferences('nothing:here')), [], 'an unlisted object has no references');
+  const shared = data.entityObjects().find(item => item.key === 'hf_model:gatilin/shared');
+  assert.equal(shared.state, 'resolved', 'the object keeps the state the collector published, not the worst claim');
+  assert.equal(shared.entries[1].title, 'beta');
+
+  assert.deepEqual(plain(data.entityProblems().map(item => [item.state, item.slug, item.key])), [
+    ['unresolved', 'alpha', 'gh_repo:isLinXu/ghost'],
+    ['unresolved', 'beta', 'hf_model:gatilin/shared'],
+    ['unchecked', 'gamma', 'scholar:me'],
+    ['out_of_scope', 'gamma', 'template:tmpls/a']
+  ], 'a dead id is listed before an unverified one, which is before an out-of-scope one');
+  const stats = data.entityStats();
+  assert.equal(stats.resolved, 1);
+  assert.equal(stats.unresolved, 2);
+  assert.equal(stats.problems, 3);
+  assert.equal(stats.objects, 4);
+});
+
+test('registry headline numbers come from the collector and skip sources with no snapshot', () => {
+  const data = loadData();
+  seedEntities(data, [entityEntry('alpha', { stage: 'evaluating' }), entityEntry('beta', { stage: 'archived' })], {
+    coverage: {
+      hf_model: { available: true, total: 155, registered: 6, unregistered: ['gatilin/x'], unregistered_count: 149, truncated: true },
+      hf_space: { available: false, total: 0, registered: 0, unregistered: [], unregistered_count: 0, truncated: false },
+      ms_model: { available: true, total: 314, registered: 0, unregistered: [], unregistered_count: 314, truncated: true }
+    },
+    sources: {
+      hf_model: { available: true, captured_at: '2026-11-02T03:18:55Z', reason: null },
+      hf_space: { available: false, captured_at: null, reason: '本站还没有 Space 来源，无法核对' },
+      ms_model: { available: true, captured_at: '2026-11-02T03:19:15Z', reason: null }
+    },
+    warnings: ['one odd field'], structural_errors: ['alpha has no kind']
+  });
+  const stats = data.entityStats();
+  assert.equal(stats.total, 2);
+  assert.equal(stats.links, 2);
+  assert.equal(stats.active, 1, 'shipped and archived entries are finished work');
+  assert.deepEqual(plain(stats.coverage), { registered: 6, total: 469, sources: 2 });
+  assert.deepEqual(plain(stats.gaps), ['ms_model'], 'a source we register nothing for is a gap to fill');
+  assert.equal(stats.errors, 1);
+  assert.equal(stats.warnings, 1);
+  assert.deepEqual(plain(data.entityCoverage().map(row => row.domain)), ['ms_model', 'hf_model', 'hf_space'],
+    'the largest denominators lead');
+  const space = data.entityCoverage().find(row => row.domain === 'hf_space');
+  assert.equal(space.available, false);
+  assert.equal(space.reason, '本站还没有 Space 来源，无法核对', 'the reason lives in the sources block');
+
+  // A board reading a failed index must not restate any count itself.
+  const empty = loadData();
+  empty.state.entities = { status: 'unavailable', source: { id: 'registry' }, entries: [], error: 'HTTP 503' };
+  assert.deepEqual(plain(empty.entityStats()), {
+    available: false, total: 0, links: 0, resolved: 0, unresolved: 0, unchecked: 0, out_of_scope: 0,
+    problems: 0, objects: 0, active: 0, coverage: { registered: 0, total: 0, sources: 0 },
+    gaps: [], warnings: 0, errors: 0
+  });
+});
+
+test('the entity board escapes registry text and keeps every link state on screen', () => {
+  const longId = 'isLinXu/long-repository-name-that-will-not-fit-the-column-either';
+  const data = loadData();
+  seedEntities(data, [
+    entityEntry('danger', { title: '<b>危险</b>', tags: ['<i>tag</i>'],
+      links: [entityLink('hf_model', '<gatilin/x>', { state: 'unresolved', url: null })] }),
+    entityEntry('wide', { truncated: true, bytes: 900, lines: 40, body: '# 标题\n\n<i>原样展示</i>', links: [
+      entityLink('template', 'tmpls/a', { state: 'out_of_scope' }),
+      entityLink('scholar', 'me', { state: 'unchecked' }),
+      entityLink('gh_repo', longId),
+      entityLink('conf', 'ccf-ai/aaai27:paper:1'),
+      entityLink('hf_dataset', 'gatilin/ds')
+    ] })
+  ], {
+    coverage: {
+      hf_space: { available: false, total: 0, registered: 0, unregistered: [], unregistered_count: 0, truncated: false },
+      hf_model: { available: true, total: 155, registered: 6,
+        unregistered: Array.from({ length: 8 }, (_, index) => `gatilin/missing-${index}`), unregistered_count: 149, truncated: true }
+    },
+    sources: {
+      hf_space: { available: false, captured_at: null, reason: '<none>' },
+      scholar: { available: false, captured_at: null, reason: '学术档案快照不可用' },
+      hf_model: { available: true, captured_at: '2026-11-02T03:18:55Z', reason: null }
+    },
+    structural_errors: ['wide has no stage'], warnings: ['one odd field']
+  });
+  const view = loadModelView(data);
+  view.render.renderEntities();
+
+  const rows = view.element('entityRows').innerHTML;
+  assert.doesNotMatch(rows, /<b>危险<\/b>|<i>tag<\/i>|<i>原样展示<\/i>|<gatilin|x>/);
+  assert.match(rows, /&lt;b&gt;危险&lt;\/b&gt;/);
+  assert.doesNotMatch(rows, /href="javascript:/, 'only http(s) urls reach the page');
+  assert.doesNotMatch(rows, /原样展示|class="entity-body"/, 'the prose only ships in the expanded row');
+  for (const [state, label] of [['unresolved', '断链'], ['unchecked', '未核对'],
+                                ['out_of_scope', '范围外'], ['resolved', '已核对']]) {
+    assert.match(rows, new RegExp(`entity-${state}"[^>]*>${label} \\d<`), `${label} stays visible`);
+  }
+  assert.ok(rows.includes(`${longId.slice(0, 44)}…`), 'a long id is clamped, not wrapped away');
+  assert.match(rows, /entity-more">\+2</, 'the fourth and fifth objects are counted, not hidden');
+
+  data.state.entityOpen = 'wide';
+  view.render.renderEntityTable();
+  const detail = view.element('entityRows').innerHTML;
+  assert.match(detail, /class="entity-body"/);
+  assert.match(detail, /&lt;i&gt;原样展示&lt;\/i&gt;/, 'the prose is placed in the page as text, never as HTML');
+  assert.match(detail, /正文在采集中被截断：源文件共 900 字节 \/ 40 行/);
+  assert.doesNotMatch(detail, /正文摘要 sha256/, 'a truncated body never claims a whole-file digest');
+  assert.match(detail, /在 GitHub 编辑源文件 ↗/);
+  assert.match(detail, /本页只读；回写排在下一批/);
+  assert.match(detail, /反向链接：1 个实体引用该对象/);
+  assert.match(detail, /学术档案快照不可用/, 'an unchecked link explains which source was missing');
+
+  data.state.entityOpen = 'danger';
+  view.render.renderEntityTable();
+  assert.match(view.element('entityRows').innerHTML,
+    /源文件 200 字节 \/ 6 行 · 正文摘要 sha256 abc123def456/, 'an intact body shows its size and digest');
+
+  const problems = view.element('entityProblems').innerHTML;
+  assert.match(problems, /entity-problem unresolved/, 'the dead link leads the list');
+  assert.match(problems, /data-entity-open="(danger|wide)"/);
+  assert.equal(data.entityProblems().length, 3);
+
+  const coverage = view.element('entityCoverageList').innerHTML;
+  assert.match(coverage, /本来源无可用快照：&lt;none&gt;/);
+  assert.match(coverage, /另有 141 项未列出/, 'the hidden tail of the gap list is counted');
+  assert.equal((coverage.match(/gatilin\/missing-/g) || []).length, 6, 'only six missing ids are printed');
+  assert.match(view.element('entityCoverageNote').textContent,
+    /1 \/ 2 个来源当日可用 · 分母是本站自有对象 · 未登记对象合计 149 个/);
+
+  assert.match(view.element('entityStatus').textContent, /1 条结构错误按未标注处理/);
+  assert.match(view.element('entityStatus').textContent, /1 条字段告警/);
+  assert.match(view.element('entityStatus').textContent, /采集于 2026-10-31 02:23/);
+  assert.equal(view.element('entityExport').disabled, false);
+  assert.equal(view.element('entityFilterReset').disabled, true);
+  assert.match(view.element('statEntityLinksSub').textContent, /已核对 3 · 断链 1 · 未核对 1 · 范围外 1/);
+  assert.match(view.element('statEntityCoverageSub').textContent, /1 个来源当日可用 · 每个来源都有条目/);
+
+  // A refreshed index can drop the object the reader was tracing.
+  data.state.entityObject = 'hf_model:gatilin/gone';
+  data.state.entityKind = 'dataset';
+  view.render.renderEntities();
+  assert.equal(data.state.entityObject, 'all', 'a reverse target that left the index is released');
+  assert.equal(data.state.entityKind, 'all', 'a facet no entry still offers is released too');
+
+  const broken = loadData();
+  broken.state.entities = { status: 'unavailable', source: { id: 'registry' }, entries: [], error: 'HTTP 503' };
+  const brokenView = loadModelView(broken);
+  brokenView.render.renderEntities();
+  assert.equal(brokenView.element('entityExport').disabled, true, 'nothing to export from an unavailable index');
+  assert.match(brokenView.element('entityStatus').textContent, /暂不可用/);
+  assert.match(brokenView.element('entityRows').innerHTML, /注册表还没有条目，或快照读取失败/);
+  assert.match(brokenView.element('entityCoverageList').innerHTML, /等待注册表数据/);
+  assert.match(brokenView.element('entityProblems').innerHTML, /没有断链/);
+});
+
+test('entity filters, the reverse lookup, the audit jump and CSV export stay on the published snapshot', async () => {
+  const payloads = publishedPayloads();
+  payloads['./data/entities.json'] = entityPayload([
+    ...Array.from({ length: 12 }, (_, index) => entityEntry(`entry-${String(index + 1).padStart(2, '0')}`)),
+    entityEntry('ghost', { links: [entityLink('hf_model', 'gatilin/ghost', { state: 'unresolved', url: null })] }),
+    entityEntry('=drop', { title: '+sheet', tags: ['-tag'], links: [entityLink('hf_model', '@evil/id')] }),
+    entityEntry('shared', { tags: ['demo', 'ft'], links: [entityLink('hf_model', 'gatilin/entry-01')] })
+  ]);
+  const requested = [];
+  const data = loadData(publishedFetch(payloads, requested));
+  await data.loadAll();
+
+  const view = loadModelView({ ...data, loadAll: async () => {} });
+  const toasts = [];
+  view.context.MO.theme = { init() {} };
+  const booted = deferred();
+  view.context.MO.templates = { init: async () => { booted.resolve(); } };
+  view.context.MO.render = Object.fromEntries(Object.entries(view.render).map(([name, render]) =>
+    [name, /^renderEntit/.test(name) ? render
+      : name === 'showToast' ? message => toasts.push(message) : () => {}]));
+  view.run('app.js');
+  await booted.promise;
+  view.render.renderEntities();
+
+  const entityCalls = () => requested.filter(url => url === './data/entities.json').length;
+  assert.equal(entityCalls(), 1, 'the index arrives with the first paint');
+  assert.equal(view.element('entityTableCount').textContent, '15 / 15 ENTRIES');
+  assert.equal((view.element('entityRows').innerHTML.match(/class="entity-row/g) || []).length, 8,
+    'one page shows eight entries');
+  assert.equal(view.element('entityPagination').hidden, false);
+  assert.equal(view.element('entityPageInfo').textContent, '1 / 2');
+  assert.equal(view.element('entityPrev').disabled, true);
+
+  view.element('entityNext').events.click();
+  assert.equal(view.element('entityPageInfo').textContent, '2 / 2');
+  assert.match(view.element('entityRows').innerHTML, /data-entity-open="ghost"/);
+
+  const change = (id, value, event = 'change') => view.element(id).events[event]({ target: { value } });
+  change('entitySearch', 'entry-11', 'input');
+  assert.equal(view.element('entityTableCount').textContent, '1 / 15 ENTRIES');
+  assert.equal(view.element('entityPageInfo').textContent, '1 / 1', 'a narrowing filter returns to page one');
+  assert.equal(view.element('entityFilterReset').disabled, false);
+
+  view.element('entityProblems').events.click({ target: {
+    closest: selector => selector === '[data-entity-open]' ? { dataset: { entityOpen: 'ghost' } } : null } });
+  assert.equal(data.state.entitySearch, '', 'the audit jump gives way rather than showing nothing');
+  assert.equal(data.state.entityOpen, 'ghost');
+  assert.equal(data.state.entityPage, 2, 'the row the reader asked for is on screen, not paginated away');
+  assert.match(view.element('entityRows').innerHTML, /正文（按源文件原文展示）/);
+  view.element('entityProblems').events.click({ target: {
+    closest: selector => selector === '[data-entity-open]' ? { dataset: { entityOpen: 'ghost' } } : null } });
+  assert.equal(data.state.entityOpen, null);
+  assert.equal(data.state.entityPage, 1);
+
+  const chip = key => ({ target: { closest: selector =>
+    selector === '[data-entity-open]' ? null : selector === '[data-entity-object]' ? { dataset: { entityObject: key } } : null } });
+  view.element('entityRows').events.click(chip('hf_model:gatilin/entry-01'));
+  assert.equal(data.state.entityObject, 'hf_model:gatilin/entry-01');
+  assert.equal(view.element('entityTableCount').textContent, '2 / 15 ENTRIES · 反查中');
+  assert.match(view.element('entityReverseNote').textContent, /引用该对象的实体 2 个：entry 01、shared/);
+  view.element('entityRows').events.click(chip('hf_model:gatilin/entry-01'));
+  assert.equal(data.state.entityObject, 'all', 'the same chip clears the reverse lookup');
+  change('entityObject', 'hf_model:gatilin/ghost');
+  assert.equal(view.element('entityTableCount').textContent, '1 / 15 ENTRIES · 反查中');
+
+  const tag = name => ({ target: { closest: selector =>
+    selector === '[data-entity-tag]' ? { dataset: { entityTag: name } } : null } });
+  view.element('entityFilterReset').events.click();
+  view.element('entityRows').events.click(tag('demo'));
+  assert.equal(data.state.entityTag, 'demo');
+  assert.equal(view.element('entityTableCount').textContent, '14 / 15 ENTRIES');
+  view.element('entityRows').events.click(tag('demo'));
+  assert.equal(data.state.entityTag, 'all');
+
+  await view.element('entityRefresh').events.click();
+  assert.equal(entityCalls(), 2, 'refresh re-reads the index only');
+  assert.equal(requested.filter(url => url === './data/stars.json').length, 1, 'no other board is refetched');
+  assert.equal(view.element('entityRefresh').textContent, '刷新已发布快照');
+  assert.equal(view.element('entityRefresh').disabled, false);
+  assert.equal(view.element('entityRefresh').getAttribute('aria-busy'), null);
+  assert.match(toasts.at(-1), /本页只读，不会触发后台采集，也不会修改任何条目/);
+  assert.match(view.element('entityFreshness').textContent, /最近读取 .*UTC（读取不触发采集，本页只读）/);
+
+  const snapshot = data.state.entities, checkedAt = data.state.entitySnapshotCheckedAt;
+  payloads['./data/entities.json'] = entityPayload([], { source: { id: 'notion' } });
+  await view.element('entityRefresh').events.click();
+  assert.equal(data.state.entities, snapshot, 'a rejected refresh keeps the index already on screen');
+  assert.equal(data.state.entitySnapshotCheckedAt, checkedAt);
+  assert.match(toasts.at(-1), /注册表快照读取失败：.*保留上次数据/);
+  assert.match(view.element('entityStatus').textContent, /快照读取失败，保留上次数据/);
+
+  const parseCsv = text => text.replace(/^﻿/, '').split('\r\n').map(row =>
+    Array.from(row.matchAll(/"((?:[^"]|"")*)"/g), match => match[1].replace(/""/g, '"')));
+  view.element('entityFilterReset').events.click();
+  view.element('entityExport').onclick();
+  assert.equal(view.blobs.at(-1).type, 'text/csv;charset=utf-8');
+  const [header, ...csvRows] = parseCsv(await view.blobs.at(-1).text());
+  assert.deepEqual(header, ['slug', 'title', 'kind', 'stage', 'tags', 'updated', 'link_count', 'link_domains',
+    'link_ids', 'link_states', 'link_urls', 'source_url', 'body_bytes', 'body_lines', 'body_sha256',
+    'body_truncated', 'snapshot_captured_at']);
+  assert.equal(csvRows.length, 15, 'CSV exports every filter match, not only the visible page');
+  assert.equal(csvRows[0][0], "'=drop", 'a formula-leading slug is neutralised');
+  assert.equal(csvRows[0][1], "'+sheet", 'a formula-leading title is neutralised');
+  assert.equal(csvRows[0][4], "'-tag", 'a formula-leading tag is neutralised');
+  assert.equal(csvRows[0][8], "'@evil/id", 'a formula-leading object id is neutralised');
+  assert.equal(csvRows[0][9], 'resolved');
+  assert.ok(!csvRows.some(row => row.some(cell => cell.includes('正文说明'))),
+    'the prose stays in git, where Markdown keeps its formatting');
+  change('entitySearch', 'entry-0', 'input');
+  view.element('entityExport').onclick();
+  const scoped = parseCsv(await view.blobs.at(-1).text()).slice(1);
+  assert.deepEqual(scoped.map(row => row[0]),
+    ['entry-01', 'entry-02', 'entry-03', 'entry-04', 'entry-05', 'entry-06', 'entry-07', 'entry-08', 'entry-09',
+      'shared'],
+    'the export follows the active filter, not the visible page');
+  assert.ok(scoped.at(-1)[8].includes('entry-01'), 'shared matches through the object it references');
+});
+
 
 
 

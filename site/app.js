@@ -387,6 +387,78 @@
     }
   }
 
+  function exportEntityCsv() {
+    const payload = data.state.entities || {};
+    const header = ['slug', 'title', 'kind', 'stage', 'tags', 'updated', 'link_count', 'link_domains',
+      'link_ids', 'link_states', 'link_urls', 'source_url', 'body_bytes', 'body_lines', 'body_sha256',
+      'body_truncated', 'snapshot_captured_at'];
+    const rows = data.entityFiltered().map(entry => [
+      entry.slug, entry.title, entry.kind, entry.stage, entry.tags.join('; '), entry.updated,
+      entry.links.length, entry.links.map(link => link.domain).join('; '),
+      entry.links.map(link => link.id).join('; '), entry.links.map(link => link.state).join('; '),
+      entry.links.map(link => link.url || '').join('; '), entry.url, entry.bytes, entry.lines,
+      entry.sha, entry.truncated, payload.captured_at
+    ]);
+    const date = String(payload.captured_at || '').slice(0, 10) || 'latest';
+    // Only the relationships are exported; the prose stays in git, where a
+    // Markdown body keeps its formatting and its history.
+    download(`entity-registry-${date}.csv`,
+      '\uFEFF' + [header, ...rows].map(row => row.map(value => csvEscape(csvCell(value))).join(',')).join('\r\n'),
+      'text/csv;charset=utf-8');
+  }
+
+  /** Re-read the published registry index; the board is read-only by design. */
+  async function refreshEntities() {
+    const button = $('entityRefresh');
+    if (button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = '读取已发布快照…';
+    try {
+      const payload = await data.refreshEntitySnapshot();
+      render.showToast(payload.status === 'ok'
+        ? '已读取注册表快照；本页只读，不会触发后台采集，也不会修改任何条目。'
+        : '已读取注册表快照，但后台最近一次索引未成功；页面继续显示上次数据。');
+    } catch (error) {
+      render.showToast(`注册表快照读取失败：${error.message}。保留上次数据。`);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.textContent = '刷新已发布快照';
+      render.renderEntities();
+    }
+  }
+
+  /**
+   * Open one entry's prose and full link list. The audit panel links straight to
+   * an entry that the current filters may hide, so the filters give way rather
+   * than silently showing nothing.
+   */
+  function openEntityEntry(slug) {
+    const state = data.state;
+    state.entityOpen = state.entityOpen === slug ? null : slug;
+    if (!state.entityOpen) {
+      state.entityPage = 1;
+    } else {
+      if (!data.entityFiltered().some(row => row.slug === slug)) {
+        Object.assign(state, { entitySearch: '', entityKind: 'all', entityStage: 'all',
+          entityTag: 'all', entityLink: 'all', entityObject: 'all' });
+      }
+      const index = data.entityFiltered().findIndex(row => row.slug === slug);
+      if (index >= 0) state.entityPage = Math.floor(index / data.entityPageSize()) + 1;
+    }
+    render.renderEntities();
+    return state.entityOpen;
+  }
+
+  /** Clicking a link chip asks the reverse question: who else references it? */
+  function selectEntityObject(key) {
+    const state = data.state;
+    state.entityObject = state.entityObject === key ? 'all' : key;
+    state.entityPage = 1;
+    render.renderEntities();
+  }
+
   function bind() {
     $('modelscopeRefresh').addEventListener('click', () => refreshModelScope());
     $('modelscopeLiveRefresh').addEventListener('click', () => refreshModelScope(true));
@@ -497,6 +569,61 @@
     $('starExport').onclick = exportStarCsv;
     bindStarWall();
     watchStarSection();
+    // Entity registry: filters and the reverse lookup only touch this board.
+    for (const [id, key, eventName] of [
+      ['entitySearch', 'entitySearch', 'input'], ['entityKind', 'entityKind', 'change'],
+      ['entityStage', 'entityStage', 'change'], ['entityTag', 'entityTag', 'change'],
+      ['entityLink', 'entityLink', 'change'], ['entityObject', 'entityObject', 'change'],
+      ['entitySort', 'entitySort', 'change']]) {
+      $(id).addEventListener(eventName, event => {
+        data.state[key] = event.target.value;
+        data.state.entityPage = 1;
+        render.renderEntityStatus();
+        render.renderEntityReverseNote();
+        render.renderEntityTable();
+      });
+    }
+    $('entityFilterReset').addEventListener('click', () => {
+      Object.assign(data.state, {
+        entitySearch: '', entityKind: 'all', entityStage: 'all', entityTag: 'all',
+        entityLink: 'all', entityObject: 'all', entitySort: 'updated', entityOpen: null, entityPage: 1
+      });
+      render.renderEntities();
+    });
+    // A link chip is a question in both directions: filter by the object, or open
+    // the entry that claims it.
+    $('entityRows').addEventListener('click', event => {
+      const open = event.target.closest('[data-entity-open]');
+      if (open) {
+        openEntityEntry(open.dataset.entityOpen);
+        return;
+      }
+      const object = event.target.closest('[data-entity-object]');
+      if (object) {
+        selectEntityObject(object.dataset.entityObject);
+        return;
+      }
+      const tag = event.target.closest('[data-entity-tag]');
+      if (tag) {
+        data.state.entityTag = data.state.entityTag === tag.dataset.entityTag ? 'all' : tag.dataset.entityTag;
+        data.state.entityPage = 1;
+        render.renderEntities();
+      }
+    });
+    $('entityProblems').addEventListener('click', event => {
+      const open = event.target.closest('[data-entity-open]');
+      if (open) openEntityEntry(open.dataset.entityOpen);
+    });
+    $('entityPrev').addEventListener('click', () => {
+      data.state.entityPage--;
+      render.renderEntityTable();
+    });
+    $('entityNext').addEventListener('click', () => {
+      data.state.entityPage++;
+      render.renderEntityTable();
+    });
+    $('entityRefresh').addEventListener('click', refreshEntities);
+    $('entityExport').onclick = exportEntityCsv;
     $('collectionFilter').addEventListener('change', event => selectCollection(event.target.value));
     $('collectionReset').addEventListener('click', () => selectCollection('all'));
     $('collectionRefresh').addEventListener('click', refreshCollections);
@@ -675,6 +802,7 @@
     render.renderModelScopeBoard();
     render.renderConferences();
     render.renderStars();
+    render.renderEntities();
   }
 
   async function boot() {
@@ -696,6 +824,7 @@
       try { render.renderModelScopeBoard(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderConferences(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderStars(); } catch (secondaryError) { console.error(secondaryError); }
+      try { render.renderEntities(); } catch (secondaryError) { console.error(secondaryError); }
     }
     // The template library is independent of the download data, so it loads
     // on its own and a failure here never blocks the other boards.
