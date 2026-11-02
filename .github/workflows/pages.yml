@@ -125,6 +125,24 @@ jobs:
       - name: Index the skill and prompt library
         run: python scripts/collect_templates.py --repo "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME"
 
+      # The entity registry is read from the working tree and cross-checked
+      # against the snapshots written above, so it stays last among the
+      # collectors. It needs no network and no token: a structural error in an
+      # entry has already failed the offline suite, and a target that moved is
+      # published as a broken link rather than hiding the run.
+      - name: Index the entity registry
+        run: python scripts/collect_entities.py --repo "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME"
+
+      - name: Report entity registry size
+        shell: bash
+        run: |
+          if [ -f data/entities.json ]; then
+            echo "entities: $(wc -c <data/entities.json) bytes"
+          fi
+          if [ -f data/entities.json ] && [ "$(wc -c <data/entities.json)" -gt 204800 ]; then
+            echo "::warning::data/entities.json is over 200 KB; the board loads it eagerly - keep entries to relationships and move long prose to the Markdown source"
+          fi
+
       - name: Commit historical snapshots
         shell: bash
         run: |
@@ -135,7 +153,8 @@ jobs:
           for snapshot in latest history scholar scholar_history social social_history \
                           github github_history templates templates_history \
                           modelscope modelscope_history conferences \
-                          stars stars_repos stars_history; do
+                          stars stars_repos stars_history \
+                          entities entities_history; do
             [ -f "data/${snapshot}.json" ] && git add "data/${snapshot}.json"
           done
           if ! git diff --cached --quiet; then
