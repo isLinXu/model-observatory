@@ -1,1 +1,1 @@
-{"schema_version":1,"updated_at":"2026-11-01T14:16:28Z","retention_days":1100,"snapshots":[{"date":"2026-11-01","captured_at":"2026-11-01T14:16:28Z","total":5127,"added":0,"removed":0,"active_90d":1596,"languages":51}]}
+{"schema_version":1,"updated_at":"2026-11-02T03:16:52Z","retention_days":1100,"snapshots":[{"date":"2026-11-01","captured_at":"2026-11-01T14:16:28Z","total":5127,"added":0,"removed":0,"active_90d":1596,"languages":51},{"date":"2026-11-02","captured_at":"2026-11-02T03:16:52Z","total":5128,"added":2,"removed":1,"active_90d":1592,"languages":51}]}
