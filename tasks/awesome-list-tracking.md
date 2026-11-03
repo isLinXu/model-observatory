@@ -17,7 +17,8 @@ updated: 2026-11-03
 
 ## 后续（2026-11-03 审核留下）
 
-- 待办：明天的日常采集会第一次发布带 `sizes` 的快照，页面当场显示「快照 x KB／预算 120 KB」；今天的快照还没有这个字段，页面按缺失降级。同一批待补的还有 `measured.recent`、`newest_month_age_days`、`skipped_no_*` 三拆与 `fetches.max_files`／`budget_hit`，以及历史里的 `tracked`——浏览器实测确认今日快照下这些行整条不出现（不写 0），卡片里就看不到「条目年龄」那一段。
+- 已做（2026-11-03）：日常采集的首次 CI 运行把 `sizes` 与 `recent` 都发布出来了——索引 68,266 B／预算 120 KB、台账 92,388 B／200 KB，六行全部带年龄分桶，`skipped` 三拆生效（`awesome-native-multimodal-models` 本轮 193 行按「无链接」归账），`paper-list` 的最新归档月距今 2 个月，历史里 `tracked: 6` 与 `retention` 都在。页面不再走缺失降级。
+- 待办：`isLinXu/awesome-native-multimodal-models` 本轮 193 行「认不出链接列」——值得抽查那几行是真的表格行还是分节标题被误判；若是格式差异，按清单调行准入而不是抬计数。
 - 已做（2026-11-03）：单文件 2.5 MB 撞线不再静默切片——`measured.byte_capped` 与 `files[].truncated` 落在载荷里，告警与卡片都写「实测条目数是下限」，前端「需关注」筛选把它列成一条原因（最大实档 1,073,876 B，仍未撞）。
 - 已做（2026-11-03）：`Fetcher.text` 记下每次的失败原因（`no_budget` / `missing` / `http`），`fetches.budget_hit`、`fetches.max_files` 与 `measured.topics_not_attempted` 进载荷；「本轮没问到」和「服务器说没有」不再是同一个 404。`skipped` 同时拆成 `skipped_no_title` / `skipped_no_link` / `skipped_no_signal` 三个可对数的原因，报告类清单按会议或日期认出的行不再被当成非条目（`unlinked_rows` 单独公布）。新加的 `measured.recent` 年龄分桶与 `newest_month_age_days` 只用已下载的字节算，不多打一次请求。
 - 已做（2026-11-03）：卡片明细多了一行「实体注册表」——列出把这份仓库登记为 `gh_repo` 对象的实体条目与对象状态，点 chip 到注册表反查；这一行只说关系，不抄任何计数。没登记的写「还没有条目登记这份仓库」，注册表还没载入就说不载入，不写 0。
