@@ -1173,7 +1173,7 @@
         selectEntityObject(registry.dataset.awesomeRegistry);
         render.showToast(`已在实体注册表里反查 ${registry.dataset.awesomeRegistry}：` +
           '关系归那个栏目，条目数与节奏仍在这里。');
-        document.getElementById('registry')?.scrollIntoView?.({ block: 'start' });
+        $('entities').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
         return;
       }
       const focus = event.target.closest('[data-awesome-focus]');

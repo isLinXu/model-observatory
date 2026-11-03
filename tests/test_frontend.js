@@ -493,7 +493,7 @@ function fakeElement() {
   const classes = new Set();
   return {
     innerHTML: '', textContent: '', value: '', events: {}, attributes: {}, disabled: false,
-    dataset: {}, classes,
+    dataset: {}, classes, scrolled: [],
     classList: {
       add: (...names) => names.forEach(name => classes.add(name)),
       remove: (...names) => names.forEach(name => classes.delete(name)),
@@ -508,7 +508,10 @@ function fakeElement() {
     setAttribute(name, value) { this.attributes[name] = String(value); },
     getAttribute(name) { return this.attributes[name] ?? null; },
     removeAttribute(name) { delete this.attributes[name]; },
-    click() {}, remove() {}
+    click() {}, remove() {},
+    // A browser element always answers this; the fake records instead of moving a
+    // viewport, so a test can name the section a click is supposed to reach.
+    scrollIntoView(options) { this.scrolled.push(options || {}); }
   };
 }
 
@@ -5311,6 +5314,12 @@ test('one list can be read on its own, and its registry entry links back instead
     assert.equal(data.state.entityObject, 'gh_repo:isLinXu/own',
       'the chip asks the reverse question in the registry board');
     assert.match(app.toasts.at(-1), /关系归那个栏目/);
+    // The toast claims the registry answered, so the page has to carry the reader
+    // to it: `entities` is the section id index.html gives that board, and the
+    // harness reports prefers-reduced-motion, which asks for an instant jump.
+    const jumped = view.element('entities').scrolled;
+    assert.equal(jumped.length, 1, 'the chip scrolls the entity registry section into view');
+    assert.equal(jumped[0].behavior, 'auto');
 
     click('[data-awesome-focus]', { awesomeFocus: 'isLinXu/own' });
     assert.equal(data.state.awesomeFocus, 'isLinXu/own');
