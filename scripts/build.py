@@ -22,13 +22,17 @@ def build():
             raise FileNotFoundError(f"{src} missing: run python scripts/collect.py first")
         shutil.copy2(src, data_dir / filename)
     # Secondary panels (academic, social, GitHub, templates, ModelScope,
-    # conferences, stars, entity registry) are optional: the site degrades
-    # gracefully when any of them is absent.
+    # conferences, stars, entity registry, task board, list tracking) are
+    # optional: the site degrades gracefully when any of them is absent.
+    # data/awesome_ledger.json is deliberately not copied: the collector reads
+    # it back from the repository the next day, and no browser ever asks for it.
     for filename in ["scholar.json", "scholar_history.json", "social.json", "social_history.json",
                      "github.json", "github_history.json", "templates.json", "templates_history.json",
                      "modelscope.json", "modelscope_history.json", "conferences.json",
                      "stars.json", "stars_repos.json", "stars_history.json",
-                     "entities.json", "entities_history.json"]:
+                     "entities.json", "entities_history.json",
+                     "tasks.json", "tasks_history.json",
+                     "awesome.json", "awesome_history.json"]:
         src = ROOT / "data" / filename
         if src.is_file():
             shutil.copy2(src, data_dir / filename)
