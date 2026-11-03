@@ -1,0 +1,48 @@
+[
+  {
+    "sha": "c0ffee112233445566778899aabbccddeeff0011",
+    "node_id": "C_kwDOc0ffee112233",
+    "commit": {
+      "author": {
+        "name": "github-actions[bot]",
+        "email": "github-actions[bot]@users.noreply.github.com",
+        "date": "2026-11-02T04:04:22Z"
+      },
+      "committer": {
+        "name": "github-actions[bot]",
+        "email": "github-actions[bot]@users.noreply.github.com",
+        "date": "2026-11-02T04:04:22Z"
+      },
+      "message": "ci: daily paper update 2026-11-02",
+      "tree": {
+        "sha": "c0ffee1100000000000000000000000000000000"
+      },
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/isLinXu/paper-list/commits/c0ffee112233445566778899aabbccddeeff0011",
+    "html_url": "https://github.com/isLinXu/paper-list/commit/c0ffee112233445566778899aabbccddeeff0011",
+    "author": {
+      "login": "github-actions[bot]",
+      "id": 1,
+      "type": "Bot",
+      "site_admin": false,
+      "html_url": "https://github.com/github-actions[bot]"
+    },
+    "committer": {
+      "login": "github-actions[bot]",
+      "type": "Bot"
+    },
+    "parents": [
+      {
+        "sha": "0000000000000000000000000000000000000000"
+      }
+    ]
+  }
+]

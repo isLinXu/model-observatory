@@ -1,0 +1,48 @@
+[
+  {
+    "sha": "aa11bb22cc33dd44ee55ff660077112233445566",
+    "node_id": "C_kwDOaa11bb22cc33",
+    "commit": {
+      "author": {
+        "name": "github-actions[bot]",
+        "email": "github-actions[bot]@users.noreply.github.com",
+        "date": "2026-11-02T08:01:00Z"
+      },
+      "committer": {
+        "name": "github-actions[bot]",
+        "email": "github-actions[bot]@users.noreply.github.com",
+        "date": "2026-11-02T08:01:00Z"
+      },
+      "message": "chore: auto-update 2026-11-02 (docs touched: 5)",
+      "tree": {
+        "sha": "aa11bb2200000000000000000000000000000000"
+      },
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/isLinXu/awesome-visual-reasoning/commits/aa11bb22cc33dd44ee55ff660077112233445566",
+    "html_url": "https://github.com/isLinXu/awesome-visual-reasoning/commit/aa11bb22cc33dd44ee55ff660077112233445566",
+    "author": {
+      "login": "github-actions[bot]",
+      "id": 1,
+      "type": "Bot",
+      "site_admin": false,
+      "html_url": "https://github.com/github-actions[bot]"
+    },
+    "committer": {
+      "login": "github-actions[bot]",
+      "type": "Bot"
+    },
+    "parents": [
+      {
+        "sha": "0000000000000000000000000000000000000000"
+      }
+    ]
+  }
+]

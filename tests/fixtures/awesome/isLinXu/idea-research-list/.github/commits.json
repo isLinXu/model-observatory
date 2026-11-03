@@ -1,0 +1,48 @@
+[
+  {
+    "sha": "d00d00112233445566778899aabbccddeeff0011",
+    "node_id": "C_kwDOd00d00112233",
+    "commit": {
+      "author": {
+        "name": "hertz",
+        "email": "hertz@users.noreply.github.com",
+        "date": "2026-09-18T08:38:27Z"
+      },
+      "committer": {
+        "name": "hertz",
+        "email": "hertz@users.noreply.github.com",
+        "date": "2026-09-18T08:38:27Z"
+      },
+      "message": "docs: 新增 04 论文清单与图鉴分册（全量清单/49 图图鉴/时间线）",
+      "tree": {
+        "sha": "d00d001100000000000000000000000000000000"
+      },
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/isLinXu/idea-research-list/commits/d00d00112233445566778899aabbccddeeff0011",
+    "html_url": "https://github.com/isLinXu/idea-research-list/commit/d00d00112233445566778899aabbccddeeff0011",
+    "author": {
+      "login": "hertz",
+      "id": 1,
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/hertz"
+    },
+    "committer": {
+      "login": "hertz",
+      "type": "User"
+    },
+    "parents": [
+      {
+        "sha": "0000000000000000000000000000000000000000"
+      }
+    ]
+  }
+]

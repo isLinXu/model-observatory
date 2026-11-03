@@ -1,0 +1,48 @@
+[
+  {
+    "sha": "7d2f0c1e5a6b7c8d9e0f1a2b3c4d5e6f708192a3",
+    "node_id": "C_kwDO7d2f0c1e5a6b",
+    "commit": {
+      "author": {
+        "name": "isLinXu",
+        "email": "isLinXu@users.noreply.github.com",
+        "date": "2026-03-06T07:04:14Z"
+      },
+      "committer": {
+        "name": "isLinXu",
+        "email": "isLinXu@users.noreply.github.com",
+        "date": "2026-03-06T07:04:14Z"
+      },
+      "message": "update",
+      "tree": {
+        "sha": "7d2f0c1e00000000000000000000000000000000"
+      },
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/isLinXu/awesome-native-multimodal-models/commits/7d2f0c1e5a6b7c8d9e0f1a2b3c4d5e6f708192a3",
+    "html_url": "https://github.com/isLinXu/awesome-native-multimodal-models/commit/7d2f0c1e5a6b7c8d9e0f1a2b3c4d5e6f708192a3",
+    "author": {
+      "login": "isLinXu",
+      "id": 1,
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/isLinXu"
+    },
+    "committer": {
+      "login": "isLinXu",
+      "type": "User"
+    },
+    "parents": [
+      {
+        "sha": "0000000000000000000000000000000000000000"
+      }
+    ]
+  }
+]

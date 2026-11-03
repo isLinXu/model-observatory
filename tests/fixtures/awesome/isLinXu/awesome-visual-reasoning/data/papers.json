@@ -1,0 +1,247 @@
+{
+  "updated": "2026-11-02T07:58:24Z",
+  "papers": {
+    "2610.31762": {
+      "title": "See What I Need, Dream What I Want: A Navigation Foundation Model on a Self-Constructed Representation Space",
+      "published": "2026-10-22",
+      "url": "https://arxiv.org/abs/2610.31762",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 3.0,
+      "primary_category": "cs.RO",
+      "first_seen": "2026-10-22"
+    },
+    "2610.29934": {
+      "title": "ToM2Vec: Continuous Theory-of-Mind Tokens for Multi-Agent Coordination",
+      "published": "2026-10-21",
+      "url": "https://arxiv.org/abs/2610.29934",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 4.5,
+      "primary_category": "",
+      "first_seen": "2026-10-21"
+    },
+    "2610.26854": {
+      "title": "Physical Words: A Vocabulary for Structuring Latent Reasoning in Robot Manipulation",
+      "published": "2026-10-19",
+      "url": "https://arxiv.org/abs/2610.26854",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 6.0,
+      "primary_category": "cs.RO",
+      "first_seen": "2026-10-19"
+    },
+    "2610.21182": {
+      "title": "Does Latent Chain-of-Thought Actually Reason? A Single, Unifying Taxonomy for Latent Reasoning",
+      "published": "2026-10-15",
+      "url": "https://arxiv.org/abs/2610.21182",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 15.0,
+      "primary_category": "cs.AI",
+      "first_seen": "2026-10-15"
+    },
+    "2610.20352": {
+      "title": "ReferFlow: Beyond Final-Target Localization for Complex Referring Expressions",
+      "published": "2026-10-14",
+      "url": "https://arxiv.org/abs/2610.20352",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 3.5,
+      "primary_category": "cs.CV",
+      "first_seen": "2026-10-14"
+    },
+    "2610.19220": {
+      "title": "Riding the Fixed-Point Curve: Image Classification in the Continuous Thought Machine",
+      "published": "2026-10-13",
+      "url": "https://arxiv.org/abs/2610.19220",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 6.0,
+      "primary_category": "cs.LG",
+      "first_seen": "2026-10-13"
+    },
+    "2610.17983": {
+      "title": "Breaking the Average: Overcoming Convergent Defaults in Robotic Manipulation via Diagnostic Chain-of-Thought and Structured Guidance",
+      "published": "2026-10-13",
+      "url": "https://arxiv.org/abs/2610.17983",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 3.0,
+      "primary_category": "cs.RO",
+      "first_seen": "2026-10-13"
+    },
+    "2610.14265": {
+      "title": "Thinking with Images without Coordinates",
+      "published": "2026-10-09",
+      "url": "https://arxiv.org/abs/2610.14265",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 7.5,
+      "primary_category": "cs.CV",
+      "first_seen": "2026-10-09"
+    },
+    "2610.12090": {
+      "title": "Recompose and Refine Latent Reasoning Flows for Vision-Language-Action Models",
+      "published": "2026-10-08",
+      "url": "https://arxiv.org/abs/2610.12090",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 6.0,
+      "primary_category": "cs.AI",
+      "first_seen": "2026-10-08"
+    },
+    "2610.09876": {
+      "title": "Think Before You Paint: Recursive Latent Reasoning for Diffusion Models",
+      "published": "2026-10-07",
+      "url": "https://arxiv.org/abs/2610.09876",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 7.5,
+      "primary_category": "cs.AI",
+      "first_seen": "2026-10-07"
+    },
+    "2610.09418": {
+      "title": "Spatial Latent Reasoning for Embodied Reference Understanding",
+      "published": "2026-10-07",
+      "url": "https://arxiv.org/abs/2610.09418",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 6.0,
+      "primary_category": "cs.CV",
+      "first_seen": "2026-10-07"
+    },
+    "2610.07175": {
+      "title": "CALR: Continuous Anchored Latent Reasoning via Render-of-Thought Compression",
+      "published": "2026-10-05",
+      "url": "https://arxiv.org/abs/2610.07175",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 7.5,
+      "primary_category": "cs.CV",
+      "first_seen": "2026-10-05"
+    },
+    "2610.04864": {
+      "title": "Enhancing Long-Video VLM Embeddings with Query-Aware Streaming Latent Reasoning",
+      "published": "2026-10-04",
+      "url": "https://arxiv.org/abs/2610.04864",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 6.0,
+      "primary_category": "cs.CV",
+      "first_seen": "2026-10-04"
+    },
+    "2610.01917": {
+      "title": "MoLE: Mixture of Latent Experts for Complementary Visual Reasoning",
+      "published": "2026-10-01",
+      "url": "https://arxiv.org/abs/2610.01917",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 7.5,
+      "primary_category": "cs.CV",
+      "first_seen": "2026-10-01"
+    },
+    "2609.40305": {
+      "title": "Looped Diffusion Transformer",
+      "published": "2026-09-30",
+      "url": "https://arxiv.org/abs/2609.40305",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 3.0,
+      "primary_category": "cs.CV",
+      "first_seen": "2026-09-30"
+    },
+    "2609.34563": {
+      "title": "Rethinking Latent Visual Reasoning: Grounding Latent Reasoning in Visual Evidence",
+      "published": "2026-09-28",
+      "url": "https://arxiv.org/abs/2609.34563",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 14.5,
+      "primary_category": "cs.CV",
+      "first_seen": "2026-09-28"
+    },
+    "2609.34079": {
+      "title": "GenoMorph: Pathway-Grounded Genomic Disease Reasoning via Adaptive Latent Computation",
+      "published": "2026-09-28",
+      "url": "https://arxiv.org/abs/2609.34079",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 3.0,
+      "primary_category": "cs.AI",
+      "first_seen": "2026-09-28"
+    },
+    "2609.33402": {
+      "title": "VaME: Exploring Variational Latent Reasoning for Multimodal Embeddings",
+      "published": "2026-09-27",
+      "url": "https://arxiv.org/abs/2609.33402",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 7.5,
+      "primary_category": "cs.CV",
+      "first_seen": "2026-09-27"
+    },
+    "2609.33271": {
+      "title": "Next Thoughts Are Distributions: Generative Autoregressive Reasoning in the Latent Space",
+      "published": "2026-09-27",
+      "url": "https://arxiv.org/abs/2609.33271",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 6.0,
+      "primary_category": "cs.AI",
+      "first_seen": "2026-09-27"
+    },
+    "2609.30783": {
+      "title": "Skip the Talk, Re-Focus on Vision: Latent Reasoning for Reasoning Segmentation in Multimodal Large Language Models",
+      "published": "2026-09-25",
+      "url": "https://arxiv.org/abs/2609.30783",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 7.5,
+      "primary_category": "cs.CV",
+      "first_seen": "2026-09-25"
+    },
+    "2609.29457": {
+      "title": "Industrial Anomaly Detection via Defect-Grounded Reasoning in Visual Latent Space",
+      "published": "2026-09-24",
+      "url": "https://arxiv.org/abs/2609.29457",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 7.0,
+      "primary_category": "cs.CV",
+      "first_seen": "2026-09-24"
+    },
+    "2609.20398": {
+      "title": "Schema-Anchored Latent Reasoning for Semantic Parsing-Based Knowledge Base Question Answering",
+      "published": "2026-09-17",
+      "url": "https://arxiv.org/abs/2609.20398",
+      "categories": [
+        "latent-visual-reasoning"
+      ],
+      "score": 10.5,
+      "primary_category": "cs.CL",
+      "first_seen": "2026-09-17"
+    }
+  }
+}

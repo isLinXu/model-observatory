@@ -1,0 +1,94 @@
+[
+  {
+    "sha": "43710053dd9a387be0d781fa20f1894472d2ab78",
+    "node_id": "C_kwDO43710053dd9a",
+    "commit": {
+      "author": {
+        "name": "github-actions[bot]",
+        "email": "github-actions[bot]@users.noreply.github.com",
+        "date": "2026-11-02T04:02:49Z"
+      },
+      "committer": {
+        "name": "github-actions[bot]",
+        "email": "github-actions[bot]@users.noreply.github.com",
+        "date": "2026-11-02T04:02:49Z"
+      },
+      "message": "auto: daily paper update 2026-11-02 [multi-source]",
+      "tree": {
+        "sha": "4371005300000000000000000000000000000000"
+      },
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/isLinXu/awesome-agent-world-model/commits/43710053dd9a387be0d781fa20f1894472d2ab78",
+    "html_url": "https://github.com/isLinXu/awesome-agent-world-model/commit/43710053dd9a387be0d781fa20f1894472d2ab78",
+    "author": {
+      "login": "github-actions[bot]",
+      "id": 1,
+      "type": "Bot",
+      "site_admin": false,
+      "html_url": "https://github.com/github-actions[bot]"
+    },
+    "committer": {
+      "login": "github-actions[bot]",
+      "type": "Bot"
+    },
+    "parents": [
+      {
+        "sha": "0000000000000000000000000000000000000000"
+      }
+    ]
+  },
+  {
+    "sha": "11a11111bb22cc33dd44ee55ff66778899001122",
+    "node_id": "C_kwDO11a11111bb22",
+    "commit": {
+      "author": {
+        "name": "github-actions[bot]",
+        "email": "github-actions[bot]@users.noreply.github.com",
+        "date": "2026-11-01T04:01:11Z"
+      },
+      "committer": {
+        "name": "github-actions[bot]",
+        "email": "github-actions[bot]@users.noreply.github.com",
+        "date": "2026-11-01T04:01:11Z"
+      },
+      "message": "auto: daily paper update 2026-11-01 [multi-source]",
+      "tree": {
+        "sha": "11a1111100000000000000000000000000000000"
+      },
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/isLinXu/awesome-agent-world-model/commits/11a11111bb22cc33dd44ee55ff66778899001122",
+    "html_url": "https://github.com/isLinXu/awesome-agent-world-model/commit/11a11111bb22cc33dd44ee55ff66778899001122",
+    "author": {
+      "login": "github-actions[bot]",
+      "id": 1,
+      "type": "Bot",
+      "site_admin": false,
+      "html_url": "https://github.com/github-actions[bot]"
+    },
+    "committer": {
+      "login": "github-actions[bot]",
+      "type": "Bot"
+    },
+    "parents": [
+      {
+        "sha": "0000000000000000000000000000000000000000"
+      }
+    ]
+  }
+]
