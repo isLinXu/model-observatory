@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
 import re
@@ -472,6 +473,18 @@ def update_history(history: dict, models: list[dict], at: dt.datetime, datasets:
     suffix = f" ({dropped} weekly buckets kept for older dates)" if dropped else ""
     print(f"History now holds {len(snapshots)} snapshots{suffix}", file=sys.stderr)
     return {"schema_version": SCHEMA_VERSION, "author": history["author"], "updated_at": capture, "snapshots": snapshots}
+
+
+def blob_sha(data: bytes) -> str:
+    """The git blob SHA-1 of these bytes, which is what the Contents API reports.
+
+    The indexers that publish a hand-maintained directory (entities, tasks) ship
+    this id with every entry: the browser needs a baseline that survives a round
+    trip through GitHub, and a blob id is computable here from the file we just
+    read and comparable against ``GET /repos/.../contents`` before a push.
+    """
+    header = f"blob {len(data)}\0".encode("utf-8")
+    return hashlib.sha1(header + data).hexdigest()
 
 
 def atomic_json_write(path: Path, value: Any) -> None:
