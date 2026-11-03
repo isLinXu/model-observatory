@@ -119,6 +119,87 @@ jobs:
         continue-on-error: true
         run: python scripts/collect_conferences.py --data-dir data
 
+      # Six public research lists are read over raw.githubusercontent, plus one
+      # small commits query per list to learn when that file last changed. They
+      # are third-party content in other people's repositories: a list that
+      # cannot be read keeps its last good row and is published as stale, so
+      # this step must never block the boards above or the indexes below.
+      - name: Capture the tracked awesome lists
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/collect_awesome.py --data-dir data
+
+      # The id ledger is the only part that grows with other people's listings,
+      # so its size is reported instead of silently accepted. The collector never
+      # fails the pipeline over somebody else's repository, which means a run that
+      # quietly read three of six lists would otherwise only be visible to whoever
+      # opens the page. These warnings are the side channel: same facts, same words.
+      - name: Report list tracking sizes
+        shell: bash
+        run: |
+          for name in awesome awesome_ledger awesome_history; do
+            file="data/${name}.json"
+            if [ -f "$file" ]; then
+              echo "${name}: $(wc -c <"$file") bytes"
+            fi
+          done
+          if [ -f data/awesome.json ] && [ "$(wc -c <data/awesome.json)" -gt 122880 ]; then
+            echo "::warning::data/awesome.json is over 120 KB even after the collector cut samples; the run's warnings say how far - lower SAMPLE_LIMIT, or stop tracking a list"
+          fi
+          if [ -f data/awesome_ledger.json ] && [ "$(wc -c <data/awesome_ledger.json)" -gt 204800 ]; then
+            echo "::warning::data/awesome_ledger.json is over 200 KB; remembered ids are what grew - lower LEDGER_ID_LIMIT and the diff becomes an explicit lower bound"
+          fi
+          python - <<'PY'
+          import json, pathlib
+
+          def warn(message):
+              print(f"::warning::{message}")
+
+          index = pathlib.Path("data/awesome.json")
+          if not index.exists():
+              warn("data/awesome.json is missing: the list-tracking board has nothing to publish")
+          else:
+              payload = json.loads(index.read_text(encoding="utf-8"))
+              summary = payload.get("summary") or {}
+              status = payload.get("status")
+              if status != "ok":
+                  warn(f"list tracking status is {status}: {summary.get('repos_ok', 0)} of "
+                       f"{summary.get('repos', 0)} lists read today; the rest carry their last "
+                       f"snapshot and are labelled 沿用上次 / 本次未读取")
+              rows = payload.get("repos") or []
+              for row in rows:
+                  if row.get("not_attempted"):
+                      warn(f"{row.get('id')}: this run never fetched it (fetch budget or --only); "
+                           f"its numbers are carried and last_attempt_at did not move")
+                  elif row.get("status") not in (None, "ok"):
+                      warn(f"{row.get('id')}: status {row.get('status')} - {row.get('error') or 'no reason given'}")
+              capped = [row.get("id") for row in rows
+                        if (row.get("measured") or {}).get("byte_capped")]
+              if capped:
+                  warn(f"{', '.join(capped)}: a file was cut at MAX_BYTES, so measured entries are a "
+                       f"lower bound - raise MAX_BYTES or stop tracking that file")
+              fetches = payload.get("fetches") or {}
+              used, limit = fetches.get("files"), fetches.get("max_files")
+              if fetches.get("budget_hit"):
+                  warn(f"the run spent all {limit} fetches and did not reach every tracked list")
+              elif isinstance(used, int) and isinstance(limit, int) and used >= 0.8 * limit:
+                  warn(f"{used} of {limit} fetches used: within 20% of MAX_FETCHES, "
+                       f"another source or a growing file count will start skipping lists")
+              sizes = payload.get("sizes") or {}
+              for key, label in (("payload_bytes", "data/awesome.json"),
+                                 ("ledger_bytes", "data/awesome_ledger.json")):
+                  value = sizes.get(key)
+                  budget = sizes.get(f"{key[:-6]}_budget_bytes")
+                  if isinstance(value, int) and isinstance(budget, int) and value >= 0.8 * budget:
+                      warn(f"{label} is at {value // 1024} KB of a {budget // 1024} KB budget; "
+                           f"check the run's warnings before the next list is added")
+              baselines = [row.get("id") for row in rows if (row.get("diff") or {}).get("baseline")]
+              if baselines:
+                  warn(f"{len(baselines)} lists are still building a baseline "
+                       f"({', '.join(baselines)}): their added/removed is not a change yet")
+          PY
+
       # The template library is read from the working tree, so this step never
       # fails because of the network. A missing templates/ directory is
       # reported in the payload while the previous index is preserved.
@@ -143,6 +224,24 @@ jobs:
             echo "::warning::data/entities.json is over 200 KB; the board loads it eagerly - keep entries to relationships and move long prose to the Markdown source"
           fi
 
+      # The task board is read from the working tree and cross-checked against
+      # the registry and the conference index written above, so it runs last.
+      # Like the registry it needs no network and no token; a card that points
+      # at a research object which is gone is published as a broken reference,
+      # while a missing sibling index leaves it unverified.
+      - name: Index the task board
+        run: python scripts/collect_tasks.py --repo "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME"
+
+      - name: Report task board size
+        shell: bash
+        run: |
+          if [ -f data/tasks.json ]; then
+            echo "tasks: $(wc -c <data/tasks.json) bytes"
+          fi
+          if [ -f data/tasks.json ] && [ "$(wc -c <data/tasks.json)" -gt 122880 ]; then
+            echo "::warning::data/tasks.json is over 120 KB; the canvas fetches the whole board to draw edges - keep cards to structure and acceptance notes, and move long prose to the Markdown source"
+          fi
+
       - name: Commit historical snapshots
         shell: bash
         run: |
@@ -154,7 +253,8 @@ jobs:
                           github github_history templates templates_history \
                           modelscope modelscope_history conferences \
                           stars stars_repos stars_history \
-                          entities entities_history; do
+                          entities entities_history tasks tasks_history \
+                          awesome awesome_history awesome_ledger; do
             [ -f "data/${snapshot}.json" ] && git add "data/${snapshot}.json"
           done
           if ! git diff --cached --quiet; then
