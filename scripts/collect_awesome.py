@@ -1516,7 +1516,7 @@ def report(payload: dict) -> str:
             + "\n".join(lines) + carried)
 
 
-def main(argv: list[str] | None = None) -> int:
+def main(argv: list[str] | None = None, *, at: dt.datetime | None = None) -> int:
     parser = argparse.ArgumentParser(description="Track the public awesome lists as content")
     parser.add_argument("--data-dir", type=Path, default=ROOT / "data")
     parser.add_argument("--offline", type=Path, default=None,
@@ -1534,7 +1534,7 @@ def main(argv: list[str] | None = None) -> int:
     if not sources:
         print("没有匹配的清单：--only 需要写 owner/name", file=sys.stderr)
         return 2
-    at = dt.datetime.now(dt.timezone.utc)
+    at = utc(at if at is not None else dt.datetime.now(dt.timezone.utc))
     try:
         if args.check:
             payload = collect(at, sources=sources, offline_dir=args.offline,

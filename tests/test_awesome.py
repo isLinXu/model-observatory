@@ -966,7 +966,7 @@ class PublishTest(CopyOfFixtures):
         root = tempfile.mkdtemp()
         self.addCleanup(shutil.rmtree, root, True)
         with patch("builtins.print") as spoken:
-            code = ca.main(["--offline", str(FIXTURES), "--data-dir", root])
+            code = ca.main(["--offline", str(FIXTURES), "--data-dir", root], at=at())
         printed = ca.report(ca.load(pathlib.Path(root) / "awesome.json"))
         self.assertIn("停更 1 个", spoken.call_args_list[0][0][0])
         self.assertEqual(code, 0)
@@ -976,6 +976,22 @@ class PublishTest(CopyOfFixtures):
         summary = ca.load(pathlib.Path(root) / "awesome.json")["summary"]
         self.assertIn(f"实测 {summary['entries_measured']} 条（自有）+ "
                       f"{summary['entries_upstream']} 条（上游）", printed)
+
+    def test_the_command_line_stall_count_follows_the_clock_not_the_calendar(self):
+        # `isLinXu/idea-research-list` sits exactly on STALL_AFTER_DAYS at noon on
+        # 2026-11-02, so the recorded lists answer a different question one day
+        # later. The count is a function of the `at` the caller passes, which is
+        # why the command line takes one at all: an assertion that read the wall
+        # clock turned this suite red the day the fixtures crossed the line.
+        def first_line(at_value):
+            root = tempfile.mkdtemp()
+            self.addCleanup(shutil.rmtree, root, True)
+            with patch("builtins.print") as calls:
+                ca.main(["--offline", str(FIXTURES), "--data-dir", root], at=at_value)
+            return calls.call_args_list[0][0][0]
+
+        self.assertIn("停更 1 个", first_line(at()))
+        self.assertIn("停更 2 个", first_line(at(day="2026-11-03")))
 
     def test_an_unknown_repository_name_is_refused_before_anything_is_read(self):
         root = tempfile.mkdtemp()
