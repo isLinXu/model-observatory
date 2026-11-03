@@ -8,10 +8,11 @@
  *   3. pushing those drafts to GitHub through the Contents API, so the
  *      Markdown under templates/ stays the single source of truth.
  *
- * Token handling: the personal access token lives in sessionStorage only and is
- * sent exclusively to api.github.com. Nothing is proxied through this site,
- * which is static and has no backend. Without a token the library still
- * browses and exports; only the write-back is disabled.
+ * Token handling lives in MO.repo: the personal access token is kept in
+ * sessionStorage only and is sent exclusively to api.github.com. Nothing is
+ * proxied through this site, which is static and has no backend. Without a
+ * token the library still browses, copies and exports; only the write-back is
+ * disabled, and the sync panel says so.
  */
 window.MO = window.MO || {};
 
@@ -21,12 +22,11 @@ MO.templates = (() => {
   const { esc, fmt, timestamp } = MO.format;
   const charts = MO.charts;
   const data = MO.data;
+  const repo = MO.repo;
 
   const $ = id => document.getElementById(id);
 
-  const TOKEN_KEY = 'mo.templates.token';
   const DRAFT_KEY = 'mo.templates.drafts';
-  const API = 'https://api.github.com';
 
   const KIND_LABEL = { skill: 'Skill', prompt: 'Prompt' };
 
@@ -42,66 +42,10 @@ MO.templates = (() => {
     selected: null,
     draft: null,
     drafts: {},
-    repo: { owner: '', name: '', branch: 'main' },
-    token: '',
     status: 'loading',
     sync: { state: 'idle', message: '' },
     revealToken: false
   };
-
-  // --- Storage -------------------------------------------------------------
-  // Browser storage can throw in private modes, so every access is guarded;
-  // the board stays fully usable as a read-only library in that case.
-
-  function readStore(key, fallback) {
-    try {
-      const raw = localStorage.getItem(key);
-      return raw ? JSON.parse(raw) : fallback;
-    } catch (error) {
-      return fallback;
-    }
-  }
-
-  function writeStore(key, value) {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-      return true;
-    } catch (error) {
-      return false;
-    }
-  }
-
-  function clearStore(key) {
-    try {
-      localStorage.removeItem(key);
-    } catch (error) {
-      /* nothing to clean up */
-    }
-  }
-
-  function readSession(key) {
-    try {
-      return sessionStorage.getItem(key) || '';
-    } catch (error) {
-      return '';
-    }
-  }
-
-  function writeSession(key, value) {
-    try {
-      sessionStorage.setItem(key, value);
-    } catch (error) {
-      /* Keep the token in memory for this page. */
-    }
-  }
-
-  function clearSession(key) {
-    try {
-      sessionStorage.removeItem(key);
-    } catch (error) {
-      /* nothing to clean up */
-    }
-  }
 
   // --- Derived data --------------------------------------------------------
 
@@ -152,16 +96,6 @@ MO.templates = (() => {
     return lines.join('\n') + (entry.body || '');
   }
 
-  /** UTF-8 safe base64: btoa alone throws on any non-Latin-1 character. */
-  function toBase64(text) {
-    const bytes = new TextEncoder().encode(text);
-    let binary = '';
-    for (let index = 0; index < bytes.length; index += 0x8000) {
-      binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
-    }
-    return btoa(binary);
-  }
-
   function slugify(value) {
     const slug = String(value || '').trim().toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
@@ -174,57 +108,15 @@ MO.templates = (() => {
     return `templates/${folder}/${entry.slug}.md`;
   }
 
-  // --- GitHub --------------------------------------------------------------
-
-  function headers(extra) {
-    return {
-      Accept: 'application/vnd.github+json',
-      'X-GitHub-Api-Version': '2022-11-28',
-      ...(state.token ? { Authorization: `Bearer ${state.token}` } : {}),
-      ...extra
-    };
-  }
-
-  async function apiGet(path) {
-    const response = await fetch(`${API}${path}`, { headers: headers() });
-    if (response.status === 404) return null;
-    if (!response.ok) throw new Error(`GitHub API ${response.status}`);
-    return response.json();
-  }
-
-  /** Blob sha of the existing file, or null when it does not exist yet. */
-  async function fileSha(path) {
-    const file = await apiGet(`/repos/${state.repo.owner}/${state.repo.name}/contents/${path}`);
-    return file ? file.sha : null;
-  }
-
-  async function pushFile(path, content, message) {
-    const sha = await fileSha(path);
-    const response = await fetch(`${API}/repos/${state.repo.owner}/${state.repo.name}/contents/${path}`, {
-      method: 'PUT',
-      headers: headers({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({ message, content: toBase64(content), branch: state.repo.branch, ...(sha ? { sha } : {}) })
-    });
-    if (!response.ok) {
-      const detail = await response.json().catch(() => ({}));
-      throw new Error(detail.message || `GitHub API ${response.status}`);
-    }
-    return response.json();
-  }
-
-  function requireToken() {
-    if (!state.token) throw new Error('请先填写 GitHub Token');
-    if (!state.repo.owner || !state.repo.name) throw new Error('仓库信息缺失');
-  }
-
   // --- Rendering: board chrome -------------------------------------------
 
   function renderSummary() {
     const stats = summary();
     $('templateCountBadge').textContent = fmt(stats.total);
     $('statTemplatesTotal').textContent = fmt(stats.total);
+    const target = repo.coordinates();
     $('statTemplatesTotalSub').textContent = state.library?.library
-      ? `源仓库 ${state.repo.owner}/${state.repo.name}`
+      ? `源仓库 ${target.owner}/${target.name}`
       : '暂无模版索引';
     $('statTemplatesSkills').textContent = fmt(stats.skills);
     $('statTemplatesSkillsSub').textContent = '可复用的技能定义';
@@ -482,7 +374,7 @@ MO.templates = (() => {
       return null;
     }
     state.drafts[entry.id] = entry;
-    const persisted = writeStore(DRAFT_KEY, state.drafts);
+    const persisted = repo.writeLocal(DRAFT_KEY, state.drafts);
     state.draft = entry;
     $('templateFormPreview').textContent = toMarkdown(entry);
     renderDraftBadge();
@@ -492,7 +384,7 @@ MO.templates = (() => {
 
   function discardDraft(id) {
     delete state.drafts[id];
-    writeStore(DRAFT_KEY, state.drafts);
+    repo.writeLocal(DRAFT_KEY, state.drafts);
     renderDraftBadge();
     renderList();
   }
@@ -520,7 +412,7 @@ MO.templates = (() => {
   }
 
   async function syncDrafts() {
-    requireToken();
+    repo.requireToken();
     const ids = Object.keys(state.drafts);
     if (!ids.length) {
       setSync('idle', '没有需要推送的草稿');
@@ -531,7 +423,14 @@ MO.templates = (() => {
     for (const id of ids) {
       const entry = state.drafts[id];
       try {
-        await pushFile(pathFor(entry), toMarkdown(entry), `feat(templates): ${entry.kind} ${entry.slug}`);
+        // No baseline here: a template draft is the whole file, composed from
+        // scratch, so there is nothing older to protect. MO.repo still refuses
+        // the push when the token or the repository is missing.
+        await repo.pushFile({
+          path: pathFor(entry),
+          content: toMarkdown(entry),
+          message: `feat(templates): ${entry.kind} ${entry.slug}`
+        });
         done.push(id);
       } catch (error) {
         setSync('error', `${entry.name} 推送失败：${error.message}`);
@@ -539,22 +438,23 @@ MO.templates = (() => {
       }
     }
     done.forEach(id => delete state.drafts[id]);
-    writeStore(DRAFT_KEY, state.drafts);
-    setSync('done', `已推送 ${done.length} 个模版到 ${state.repo.owner}/${state.repo.name}@${state.repo.branch}。GitHub Actions 会自动重建索引。`);
+    repo.writeLocal(DRAFT_KEY, state.drafts);
+    const target = repo.coordinates();
+    setSync('done', `已推送 ${done.length} 个模版到 ${target.owner}/${target.name}@${target.branch}。GitHub Actions 会自动重建索引。`);
     renderDraftBadge();
     renderList();
   }
 
   function verifyToken() {
     try {
-      requireToken();
+      repo.requireToken();
     } catch (error) {
       setSync('error', error.message);
       return;
     }
     setSync('syncing', '正在校验 Token…');
-    apiGet('/user')
-      .then(user => setSync('idle', `已连接 ${user.login}，可推送草稿`))
+    repo.verifyToken()
+      .then(user => setSync('idle', `已连接 ${user?.login || '未知账户'}，可推送草稿`))
       .catch(error => setSync('error', `校验失败：${error.message}`));
   }
 
@@ -563,7 +463,7 @@ MO.templates = (() => {
   function exportBundle() {
     const payload = {
       exported_at: new Date().toISOString(),
-      library: state.library?.library || state.repo,
+      library: state.library?.library || repo.coordinates(),
       templates: Object.values(state.drafts)
     };
     const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' });
@@ -590,12 +490,7 @@ MO.templates = (() => {
       state.history = Array.isArray(history.snapshots)
         ? [...history.snapshots].sort((a, b) => a.date.localeCompare(b.date))
         : [];
-      const repo = library.library || {};
-      state.repo = {
-        owner: String(repo.repo || '').split('/')[0] || 'isLinXu',
-        name: String(repo.repo || '').split('/')[1] || 'model-observatory',
-        branch: repo.branch || 'main'
-      };
+      repo.adopt(library.library || {});
       state.status = 'ready';
     } catch (error) {
       console.warn('模版索引读取失败：', error);
@@ -604,13 +499,8 @@ MO.templates = (() => {
       state.history = [];
       state.status = 'ready';
     }
-    state.drafts = readStore(DRAFT_KEY, {}) || {};
-    const legacyToken = readStore(TOKEN_KEY, '') || '';
-    state.token = readSession(TOKEN_KEY) || legacyToken;
-    if (legacyToken) {
-      writeSession(TOKEN_KEY, legacyToken);
-      clearStore(TOKEN_KEY);
-    }
+    state.drafts = repo.readLocal(DRAFT_KEY, {}) || {};
+    repo.token();
   }
 
   async function refresh() {
@@ -623,6 +513,7 @@ MO.templates = (() => {
       state.library = library;
       state.entries = Array.isArray(library.templates) ? library.templates : [];
       state.history = Array.isArray(history.snapshots) ? history.snapshots : state.history;
+      repo.adopt(library.library || {});
     } catch (error) {
       MO.render.showToast('索引刷新失败：' + error.message);
     }
@@ -647,7 +538,7 @@ MO.templates = (() => {
   function renderTokenField() {
     const field = $('templateToken');
     if (document.activeElement !== field) {
-      field.value = state.token;
+      field.value = repo.coordinates().token;
     }
     field.type = state.revealToken ? 'text' : 'password';
     $('templateTokenToggle').textContent = state.revealToken ? '隐藏' : '显示';
@@ -733,8 +624,7 @@ MO.templates = (() => {
     $('templateFormClose').addEventListener('click', closeComposer);
 
     $('templateToken').addEventListener('input', event => {
-      state.token = event.target.value.trim();
-      writeSession(TOKEN_KEY, state.token);
+      repo.setToken(event.target.value);
     });
     $('templateTokenToggle').addEventListener('click', () => {
       state.revealToken = !state.revealToken;
@@ -742,9 +632,7 @@ MO.templates = (() => {
     });
     $('templateTokenVerify').addEventListener('click', verifyToken);
     $('templateTokenClear').addEventListener('click', () => {
-      state.token = '';
-      clearStore(TOKEN_KEY);
-      clearSession(TOKEN_KEY);
+      repo.clearToken();
       renderTokenField();
       setSync('idle', 'Token 已从本地清除');
     });

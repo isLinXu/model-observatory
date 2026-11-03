@@ -489,21 +489,39 @@ test('scoped history sums and deltas use current membership, retaining negative 
 
 // Minimal DOM and download sink: run the actual renderer and app event bindings,
 // while leaving unrelated panels, chart drawing, and boot-time networking out.
+function fakeElement() {
+  const classes = new Set();
+  return {
+    innerHTML: '', textContent: '', value: '', events: {}, attributes: {}, disabled: false,
+    dataset: {}, classes,
+    classList: {
+      add: (...names) => names.forEach(name => classes.add(name)),
+      remove: (...names) => names.forEach(name => classes.delete(name)),
+      toggle: (name, on) => {
+        const show = on === undefined ? !classes.has(name) : Boolean(on);
+        if (show) classes.add(name); else classes.delete(name);
+        return show;
+      },
+      contains: name => classes.has(name)
+    },
+    addEventListener(type, listener) { this.events[type] = listener; },
+    setAttribute(name, value) { this.attributes[name] = String(value); },
+    getAttribute(name) { return this.attributes[name] ?? null; },
+    removeAttribute(name) { delete this.attributes[name]; },
+    click() {}, remove() {}
+  };
+}
+
+function elementFactory(map = new Map()) {
+  return id => {
+    if (!map.has(id)) map.set(id, fakeElement());
+    return map.get(id);
+  };
+}
+
 function loadModelView(data, globals = {}) {
   const elements = new Map();
-  const element = id => {
-    if (!elements.has(id)) elements.set(id, {
-      innerHTML: '', textContent: '', value: '', events: {}, attributes: {}, disabled: false,
-      dataset: {},
-      classList: { add() {}, remove() {}, toggle() {} },
-      addEventListener(type, listener) { this.events[type] = listener; },
-      setAttribute(name, value) { this.attributes[name] = String(value); },
-      getAttribute(name) { return this.attributes[name] ?? null; },
-      removeAttribute(name) { delete this.attributes[name]; },
-      click() {}, remove() {}
-    });
-    return elements.get(id);
-  };
+  const element = elementFactory(elements);
   const blobs = [];
   const chartCalls = [];
   const context = {
@@ -518,7 +536,14 @@ function loadModelView(data, globals = {}) {
         starWall(node, model, opts) { chartCalls.push({ name: 'starWall', node, model, opts }); },
         starGraph(node, graph, opts) { chartCalls.push({ name: 'starGraph', node, graph, opts }); },
         starColor: index => `var(--chart-${index % 5 + 1})`
-      }
+      },
+      // app.js boots the write-back panel next to the board itself. A test that
+      // cares what the panel was asked to do replaces these methods and records.
+      registry: {
+        init: async () => {}, renderDrafts() {}, open: async slug => slug,
+        pathFor: slug => `entities/${slug}.md`, state: { sync: {} }
+      },
+      tasksync: { init: async () => {}, renderPanel() {} }
     },
     document: {
       getElementById: element, querySelectorAll: () => [], addEventListener() {},
@@ -527,6 +552,13 @@ function loadModelView(data, globals = {}) {
     Blob,
     URL: { createObjectURL(blob) { blobs.push(blob); return 'blob:local-test'; }, revokeObjectURL() {} },
     setTimeout(callback) { callback(); },
+    // The task canvas is the one section the page reads lazily, so a harness
+    // that never scrolls owes it no request. Boards that test the canvas build
+    // their own observer; here it only has to exist.
+    IntersectionObserver: class {
+      observe() {}
+      disconnect() {}
+    },
     ...globals
   };
   context.window = context;
@@ -537,6 +569,10 @@ function loadModelView(data, globals = {}) {
   };
   run('format.js');
   run('render.js');
+  // app.js binds the canvas pointer handlers, so the modules behind them have
+  // to be the real ones here too - a stub board would let a broken binding pass.
+  run('repo.js');
+  run('board.js');
   return { context, element, blobs, chartCalls, run, render: context.MO.render };
 }
 
@@ -1938,7 +1974,10 @@ function entityEntry(slug, extra = {}) {
   return {
     slug, title: slug.replace(/-/g, ' '), kind: 'project', stage: 'training', tags: ['demo'],
     updated: '2026-10-30', links: [entityLink('hf_model', `gatilin/${slug}`)],
-    bytes: 200, lines: 6, sha256: 'abc123def456', truncated: false,
+    bytes: 200, lines: 6, sha256: 'abc123def456',
+    // The page only ever compares this string against the live one, so a fixture
+    // needs a distinct value per entry rather than a real git hash.
+    blob_sha: `sha-${slug}`, truncated: false,
     url: `https://github.com/isLinXu/model-observatory/blob/main/entities/${slug}.md`,
     body: `# ${slug}\n\n正文说明`, ...extra
   };
@@ -1955,7 +1994,11 @@ function entityPayload(entries = [entityEntry('one')], extra = {}) {
   return {
     schema_version: 1,
     source: { id: 'registry', directory: 'entities', repo: 'isLinXu/model-observatory', branch: 'main',
-      url: 'https://github.com/isLinXu/model-observatory/tree/main/entities' },
+      url: 'https://github.com/isLinXu/model-observatory/tree/main/entities',
+      kinds: ['project', 'model', 'dataset', 'paper'],
+      stages: ['proposal', 'training', 'evaluating', 'submitting', 'shipped', 'archived'],
+      domains: ['hf_model', 'hf_dataset', 'hf_collection', 'hf_space', 'ms_model', 'gh_repo',
+        'scholar', 'conf', 'template'] },
     status: 'ok', error: null, captured_at: '2026-10-31T02:23:00Z', last_attempt_at: '2026-10-31T02:23:00Z',
     summary: { total: entries.length, links: links.length, by_kind: tally('kind'), by_stage: tally('stage'), tags: [] },
     validation: { resolved: counted('resolved'), unresolved: counted('unresolved'),
@@ -2789,22 +2832,30 @@ test('the star board pulls the detail on viewport entry, filters the wall, and e
 
   const detailCalls = () => requested.filter(url => url === './data/stars_repos.json').length;
   assert.equal(detailCalls(), 0, 'first paint must not download the detail file');
-  assert.equal(observers.length, 1);
-  assert.equal(observers[0].target, view.element('stars'));
-  assert.equal(observers[0].options.rootMargin, '300px 0px');
+  // Three sections read on entry: the star detail, the task canvas and the paper
+  // lists. None of them is asked for before the reader gets near it.
+  assert.deepEqual(observers.map(observer => observer.target),
+    [view.element('stars'), view.element('tasks'), view.element('awesome')]);
+  const observers0 = observers;
+  const starObserver = observers0[0];
+  assert.equal(starObserver.options.rootMargin, '300px 0px');
+  assert.equal(observers[1].options.rootMargin, '300px 0px');
+  assert.equal(observers[2].options.rootMargin, '300px 0px');
+  assert.equal(requested.filter(url => url === './data/tasks.json').length, 0,
+    'the canvas is not downloaded while it is still below the fold');
 
-  observers[0].callback([{ isIntersecting: false }]);
+  starObserver.callback([{ isIntersecting: false }]);
   assert.equal(detailCalls(), 0, 'leaving the section must not fetch');
-  observers[0].callback([{ isIntersecting: true }]);
+  starObserver.callback([{ isIntersecting: true }]);
   await nextTurn();
   await nextTurn();
   assert.equal(detailCalls(), 1);
-  assert.equal(observers[0].disconnected, 1, 'the observer stops after the first entry');
+  assert.equal(starObserver.disconnected, 1, 'the observer stops after the first entry');
   assert.equal(data.state.starDetailStatus, 'ready');
   assert.match(toasts.at(-1), /已加载 3 个 star 仓库明细/);
   assert.equal(view.element('starExport').disabled, false);
   assert.equal(view.chartCalls.filter(call => call.name === 'starWall').at(-1).model.total, 3);
-  observers[0].callback([{ isIntersecting: true }]);
+  starObserver.callback([{ isIntersecting: true }]);
   await nextTurn();
   assert.equal(detailCalls(), 1, 'a second entry does not refetch');
 
@@ -3181,7 +3232,8 @@ test('the entity board escapes registry text and keeps every link state on scree
   assert.match(detail, /正文在采集中被截断：源文件共 900 字节 \/ 40 行/);
   assert.doesNotMatch(detail, /正文摘要 sha256/, 'a truncated body never claims a whole-file digest');
   assert.match(detail, /在 GitHub 编辑源文件 ↗/);
-  assert.match(detail, /本页只读；回写排在下一批/);
+  assert.match(detail, /data-entity-edit="wide"/, 'the expanded row offers in-page write-back');
+  assert.doesNotMatch(detail, /本页只读/, 'the board no longer claims to be read-only');
   assert.match(detail, /反向链接：1 个实体引用该对象/);
   assert.match(detail, /学术档案快照不可用/, 'an unchecked link explains which source was missing');
 
@@ -3193,6 +3245,7 @@ test('the entity board escapes registry text and keeps every link state on scree
   const problems = view.element('entityProblems').innerHTML;
   assert.match(problems, /entity-problem unresolved/, 'the dead link leads the list');
   assert.match(problems, /data-entity-open="(danger|wide)"/);
+  assert.match(problems, /data-entity-edit="(danger|wide)"/, 'a dead link offers the edit that fixes it');
   assert.equal(data.entityProblems().length, 3);
 
   const coverage = view.element('entityCoverageList').innerHTML;
@@ -3302,14 +3355,41 @@ test('entity filters, the reverse lookup, the audit jump and CSV export stay on 
   view.element('entityRows').events.click(tag('demo'));
   assert.equal(data.state.entityTag, 'all');
 
+  let draftRenders = 0;
+  view.context.MO.registry.renderDrafts = () => { draftRenders += 1; };
   await view.element('entityRefresh').events.click();
   assert.equal(entityCalls(), 2, 'refresh re-reads the index only');
+  assert.equal(draftRenders, 1, 'the local draft list follows the refreshed index');
   assert.equal(requested.filter(url => url === './data/stars.json').length, 1, 'no other board is refetched');
   assert.equal(view.element('entityRefresh').textContent, '刷新已发布快照');
   assert.equal(view.element('entityRefresh').disabled, false);
   assert.equal(view.element('entityRefresh').getAttribute('aria-busy'), null);
-  assert.match(toasts.at(-1), /本页只读，不会触发后台采集，也不会修改任何条目/);
-  assert.match(view.element('entityFreshness').textContent, /最近读取 .*UTC（读取不触发采集，本页只读）/);
+  assert.match(toasts.at(-1), /刷新只读取已发布文件，不会触发后台采集，也不会修改任何条目/);
+  assert.match(view.element('entityFreshness').textContent, /最近读取 .*UTC（读取不触发采集）/);
+
+  // The row's edit button is the one write path on this board: it hands the slug
+  // to the panel and does not toggle the row closed underneath it.
+  const edits = [];
+  view.context.MO.registry.open = async slug => { edits.push(slug); return slug; };
+  view.element('entityRows').events.click({ target: {
+    closest: selector => (selector === '[data-entity-edit]' ? { dataset: { entityEdit: 'ghost' } } : null)
+  } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(edits, ['ghost']);
+  assert.equal(data.state.entityOpen, 'ghost', 'the row opens so the link states stay visible');
+  assert.match(toasts.at(-1), /entities\/ghost\.md 的远端原文/);
+
+  // Without a token the panel refuses and says why; the board itself is untouched.
+  view.context.MO.registry.open = async () => {
+    view.context.MO.registry.state.sync = { message: '请先填写 GitHub Token（仅需 Contents 读写权限）' };
+    return null;
+  };
+  view.element('entityRows').events.click({ target: {
+    closest: selector => (selector === '[data-entity-edit]' ? { dataset: { entityEdit: 'shared' } } : null)
+  } });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.match(toasts.at(-1), /回写暂不可用：请先填写 GitHub Token/);
+  assert.equal(data.state.entityOpen, 'shared', 'the entry still opens for reading');
 
   const snapshot = data.state.entities, checkedAt = data.state.entitySnapshotCheckedAt;
   payloads['./data/entities.json'] = entityPayload([], { source: { id: 'notion' } });
@@ -3346,7 +3426,1913 @@ test('entity filters, the reverse lookup, the audit jump and CSV export stay on 
   assert.ok(scoped.at(-1)[8].includes('entry-01'), 'shared matches through the object it references');
 });
 
+// --- Write-back: MO.repo and the registry editor ----------------------------
+
+const SOURCE_TEXT = ['---', 'title: Youtu-FT-V1', 'kind: project', 'stage: training',
+  'tags: [ft, vlm]', 'updated: 2026-11-02', 'links:', '  - hf_model:gatilin/Youtu-FT-V1', '---',
+  '# Youtu-FT-V1', '', '训练中的合并分支，中文说明留在源文件里。', ''].join('\n');
+
+const b64 = text => Buffer.from(text, 'utf8').toString('base64');
+const unb64 = value => Buffer.from(value, 'base64').toString('utf8');
+const contentsRoute = (slug, method = 'GET') =>
+  `${method} /repos/isLinXu/model-observatory/contents/entities/${slug}.md`;
+// The Contents API answer this site cares about: the blob SHA and the file body.
+const fileReply = (sha, text = SOURCE_TEXT) =>
+  jsonResponse({ sha, content: b64(text), last_commit: null });
+
+function fakeStorage(initial = {}) {
+  const store = { ...initial };
+  return {
+    store,
+    getItem: key => (key in store ? store[key] : null),
+    setItem: (key, value) => { store[key] = String(value); },
+    removeItem: key => { delete store[key]; }
+  };
+}
+
+// repo.js is the only code on this site that sends a credential anywhere, so the
+// harness hands it the browser pieces a vm lacks - storage, base64, text codecs
+// and fetch - and then reads back exactly what it did with them. Every request
+// is recorded, so a test can fail on a URL rather than on a message.
+function loadWriteBackView({ payload = null, token = '', session = {}, routes = {} } = {}) {
+  const index = payload || entityPayload([entityEntry('one', {
+    blob_sha: 'sha-a', body: '快照里的截断正文', truncated: true
+  })]);
+  const local = fakeStorage();
+  const tab = fakeStorage(token ? { 'mo.repo.token': token, ...session } : session);
+  const requests = [];
+  const fetchImpl = async (target, options = {}) => {
+    const url = String(target);
+    const method = options.method || 'GET';
+    requests.push({ url, method, headers: options.headers || {},
+      body: typeof options.body === 'string' ? JSON.parse(options.body) : null });
+    if (url.startsWith('https://api.github.com')) {
+      const reply = routes[`${method} ${url.slice('https://api.github.com'.length)}`];
+      if (!reply) throw new Error(`测试没有准备 ${method} ${url} 的响应`);
+      return reply;
+    }
+    return jsonResponse(index);
+  };
+  const data = loadData(fetchImpl);
+  data.state.entities = index;
+  const element = elementFactory(new Map());
+  const context = {
+    console: { ...console, warn() {} },
+    document: { getElementById: element, querySelectorAll: () => [], addEventListener() {},
+      createElement: () => ({ click() {}, remove() {} }), body: { append() {} } },
+    localStorage: local, sessionStorage: tab, fetch: fetchImpl,
+    TextEncoder, TextDecoder,
+    btoa: binary => Buffer.from(binary, 'binary').toString('base64'),
+    atob: value => Buffer.from(value, 'base64').toString('binary'),
+    MO: { data }
+  };
+  context.window = context;
+  vm.createContext(context);
+  const run = name => {
+    const filename = path.join(__dirname, '..', 'site', name);
+    vm.runInContext(fs.readFileSync(filename, 'utf8'), context, { filename });
+  };
+  run('format.js');
+  run('repo.js');
+  run('registry.js');
+  return { data, element, requests, routes, local, tab, repo: context.MO.repo,
+    registry: context.MO.registry, ready: context.MO.registry.init() };
+}
+
+// Typing and clicking, so the bindings are what is under test.
+function type(view, text) {
+  view.element('entityFormText').events.input({ target: { value: text } });
+}
+
+test('the write-back token stays in the tab and only travels toward api.github.com', async () => {
+  const view = loadWriteBackView({ token: 'ghp-secret', routes: { [contentsRoute('one')]: fileReply('sha-a') } });
+  await view.ready;
+  await view.registry.open('one');
+  type(view, `${SOURCE_TEXT}改一条关系\n`);
+  view.element('entityFormSave').events.click();
+
+  assert.equal(view.tab.store['mo.repo.token'], 'ghp-secret', 'sessionStorage holds it for this tab');
+  assert.equal(view.local.store['mo.repo.token'], undefined, 'never mirrored into storage that outlives the tab');
+  const drafts = JSON.parse(view.local.store['mo.entities.drafts']);
+  assert.deepEqual(Object.keys(drafts.one).sort(), ['baseline', 'savedAt', 'text']);
+  assert.ok(!JSON.stringify(drafts).includes('ghp-secret'), 'no draft file ever carries the credential');
+  assert.deepEqual(view.requests.map(request => request.url),
+    ['https://api.github.com/repos/isLinXu/model-observatory/contents/entities/one.md']);
+  assert.equal(view.requests[0].headers.Authorization, 'Bearer ghp-secret');
+
+  // The token field is the only place it is typed, and clearing must take effect
+  // at once rather than after the next request.
+  view.element('entityToken').events.input({ target: { value: '  typed-token  ' } });
+  assert.equal(view.repo.coordinates().token, 'typed-token');
+  assert.equal(view.tab.store['mo.repo.token'], 'typed-token', 'trimmed before it is stored');
+  view.element('entityTokenClear').events.click();
+  assert.equal(view.repo.coordinates().token, '', 'the panel stops being able to write immediately');
+  assert.equal(view.tab.store['mo.repo.token'], undefined);
+  assert.equal(view.element('entityToken').value, '');
+});
+
+test('without a token the editor explains itself and asks the network for nothing', async () => {
+  const view = loadWriteBackView();
+  await view.ready;
+  assert.equal(await view.registry.open('one'), null);
+  assert.equal(view.requests.length, 0, 'no request means no credential can leak');
+  assert.equal(view.registry.state.slug, null, 'no editor was opened');
+  assert.match(view.element('entitySyncMessage').textContent,
+    /请先填写 GitHub Token.*条目仍可浏览、搜索与导出/s);
+});
+
+test('a token left behind by the library board is moved to the shared store, not copied', async () => {
+  const view = loadWriteBackView({ session: { 'mo.templates.token': 'legacy-token' } });
+  await view.ready;
+  assert.equal(view.repo.coordinates().token, 'legacy-token');
+  assert.equal(view.tab.store['mo.repo.token'], 'legacy-token');
+  assert.equal(view.tab.store['mo.templates.token'], undefined, 'the old key is emptied');
+  assert.equal(view.local.store['mo.templates.token'], undefined);
+});
+
+test('the editor holds the remote source file, not the truncated copy the index published', async () => {
+  const view = loadWriteBackView({ token: 't', routes: {
+    [contentsRoute('one')]: fileReply('sha-a'),
+    [contentsRoute('one', 'PUT')]: jsonResponse({ commit: { sha: 'commit-1' } })
+  } });
+  await view.ready;
+  await view.registry.open('one');
+  assert.equal(view.element('entityFormText').value, SOURCE_TEXT,
+    'the whole file is on screen, so a push cannot lose the tail of a long entry');
+  assert.equal(view.registry.state.baseline, 'sha-a', 'and the baseline is the SHA of that file');
+  assert.equal(view.element('entityFormPath').textContent, 'entities/one.md');
+  assert.equal(view.element('entityFormIssues').textContent, '结构与采集器的 --check 一致。');
+
+  view.element('entityFormPush').events.click();
+  await nextTurn();
+  const put = view.requests.find(request => request.method === 'PUT');
+  assert.equal(unb64(put.body.content), SOURCE_TEXT, 'pushed verbatim, with no edit made');
+  assert.equal(put.body.sha, 'sha-a');
+  assert.equal(put.body.branch, 'main');
+  assert.equal(put.body.message, 'docs(entities): 更新 one 条目');
+  assert.match(view.element('entitySyncMessage').textContent, /次日采集会重建索引/);
+});
+
+test('a push whose baseline no longer matches the remote is refused until a person overwrites', async () => {
+  const view = loadWriteBackView({ token: 't', routes: {
+    [contentsRoute('one')]: fileReply('sha-a'),
+    [contentsRoute('one', 'PUT')]: jsonResponse({ commit: { sha: 'commit-1' } })
+  } });
+  await view.ready;
+  await view.registry.open('one');
+  type(view, `${SOURCE_TEXT}我还没推的改动\n`);
+  view.element('entityFormSave').events.click();
+  // Somebody else edits the file between the draft and the push.
+  view.routes[contentsRoute('one')] = fileReply('sha-b', `${SOURCE_TEXT}别人的改动\n`);
+
+  view.element('entityFormPush').events.click();
+  await nextTurn();
+  assert.equal(view.requests.some(request => request.method === 'PUT'), false, 'the write never happened');
+  assert.equal(view.registry.state.conflict.sha, 'sha-b');
+  assert.match(view.element('entityConflictNote').textContent, /远端当前是 sha-b，草稿基线是 sha-a/);
+  assert.equal(view.element('entityFormConflict').classes.has('hidden'), false, 'the choice is offered');
+
+  // The ordinary push button refuses again: overwriting has to be asked for.
+  view.element('entityFormPush').events.click();
+  await nextTurn();
+  assert.equal(view.requests.some(request => request.method === 'PUT'), false);
+
+  await view.element('entityConflictForce').events.click();
+  const put = view.requests.find(request => request.method === 'PUT');
+  assert.equal(put.body.sha, 'sha-b', 'the overwrite is applied to the version actually on the branch');
+  assert.equal(unb64(put.body.content), `${SOURCE_TEXT}我还没推的改动\n`,
+    'an explicit overwrite sends what the author was shown, not what they typed first');
+  assert.equal(view.registry.state.conflict, null);
+  assert.equal(view.registry.state.drafts.one, undefined, 'a pushed draft stops being pending');
+});
+
+test('the two gentle choices keep the remote version and the un-pushed words apart', async () => {
+  const view = loadWriteBackView({ token: 't', routes: {
+    [contentsRoute('one')]: fileReply('sha-a'),
+    [contentsRoute('one', 'PUT')]: jsonResponse({ commit: { sha: 'commit-1' } })
+  } });
+  await view.ready;
+  await view.registry.open('one');
+  type(view, `${SOURCE_TEXT}我还没推的改动\n`);
+  view.element('entityFormSave').events.click();
+  view.routes[contentsRoute('one')] = fileReply('sha-b', `${SOURCE_TEXT}别人的改动\n`);
+  await view.registry.push('one');
+
+  // 重读原文与索引: re-base on the branch, keep the draft that refuses.
+  await view.element('entityConflictReload').events.click();
+  assert.equal(view.registry.state.baseline, 'sha-b', 'the editor now points at the version on the branch');
+  assert.equal(view.element('entityFormText').value, `${SOURCE_TEXT}别人的改动\n`);
+  assert.equal(view.registry.state.conflict, null);
+  assert.equal(view.registry.state.drafts.one.text, `${SOURCE_TEXT}我还没推的改动\n`,
+    'the un-pushed words are kept instead of dropped');
+  assert.equal(view.registry.state.drafts.one.baseline, 'sha-a',
+    'and that draft still refuses until it is re-based too');
+
+  // 以远端为准: the draft is thrown away on purpose.
+  await view.registry.push('one');
+  assert.equal(view.registry.state.conflict.sha, 'sha-b');
+  await view.element('entityConflictKeepRemote').events.click();
+  assert.equal(view.registry.state.drafts.one, undefined);
+  assert.equal(JSON.parse(view.local.store['mo.entities.drafts']).one, undefined);
+  assert.match(view.element('entitySyncMessage').textContent, /已丢弃本地草稿/);
+  assert.equal(view.requests.filter(request => request.method === 'PUT').length, 0,
+    'neither choice wrote anything');
+});
+
+test('the editor catches the structural mistakes the collector would fail the run on', async () => {
+  const view = loadWriteBackView();
+  await view.ready;
+  const check = text => view.registry.issues(text, 'one');
+  assert.equal(check(SOURCE_TEXT).length, 0, 'the seed-shaped file passes');
+  assert.ok(check(SOURCE_TEXT.replace('hf_model:', 'hf_modal:'))
+    .some(note => note.includes('hf_modal') && note.includes('不是本站核对的域名')),
+  'a mistyped prefix is an error here, not a link that quietly stops being checked');
+  assert.ok(check(SOURCE_TEXT.replace('kind: project', 'kind: projectx'))
+    .some(note => note.includes('projectx')), 'an unknown kind is named');
+  assert.ok(check(SOURCE_TEXT.replace('updated: 2026-11-02', 'updated: 2026-11-2'))
+    .some(note => note.includes('YYYY-MM-DD')));
+  assert.ok(check(SOURCE_TEXT.replace('- hf_model:', '-  hf_model:').replace('links:', 'links2:'))
+    .some(note => note.includes('不在 links: 之下')));
+  assert.ok(check(SOURCE_TEXT.replace('tags: [ft, vlm]', 'owner: me'))
+    .some(note => note.includes('六个字段')));
+  assert.ok(check(SOURCE_TEXT.replace('  - hf_model:gatilin/Youtu-FT-V1', '  - hf_model'))
+    .some(note => note.includes('domain:id')));
+  assert.ok(check(`${SOURCE_TEXT.split('\n').slice(0, -4).join('\n')}\n`)
+    .some(note => note.includes('正文为空')));
+  assert.ok(check(SOURCE_TEXT.replace(/^---/, '')).some(note => note.includes('front matter')));
+  assert.ok(view.registry.issues(SOURCE_TEXT, 'One Two').some(note => note.includes('小写')),
+    'the file name is checked too');
+  // hf_space is a prefix the collector accepts but cannot yet prove, so the
+  // editor must not call it a typo.
+  assert.equal(check(SOURCE_TEXT.replace('- hf_model:', '- hf_space:')).length, 0);
+
+  // A snapshot published before the vocabulary existed cannot invent errors.
+  const bare = loadWriteBackView({ payload: entityPayload([entityEntry('one')], { source: { id: 'registry' } }) });
+  assert.equal(bare.registry.issues(SOURCE_TEXT, 'one').length, 0,
+    'no published list, no vocabulary claims');
+});
+
+test('repo.js refuses any target that would turn the page into an arbitrary fetch', async () => {
+  const view = loadWriteBackView({ token: 't' });
+  await view.ready;
+  await assert.rejects(() => view.repo.apiGet('https://evil.invalid/leak'), /必须以 \/ 开头/);
+  await assert.rejects(() => view.repo.pushFile({ path: '../secrets', content: 'x', message: 'x' }),
+    /不能跳出所在目录/);
+  assert.equal(view.requests.length, 0, 'refused before any socket was opened');
+  assert.equal(view.repo.contentsPath('entities/中文名 带空格.md'),
+    '/repos/isLinXu/model-observatory/contents/entities/%E4%B8%AD%E6%96%87%E5%90%8D%20%E5%B8%A6%E7%A9%BA%E6%A0%BC.md',
+    'a name cannot escape its folder');
+});
+
+test('a rejected push reports GitHub sentence, not the request that carried the token', async () => {
+  const view = loadWriteBackView({ token: 't', routes: {
+    [contentsRoute('one')]: fileReply('sha-a'),
+    'PUT /repos/isLinXu/model-observatory/contents/entities/one.md':
+      jsonResponse({ message: 'this branch is not codebase accessible' }, { status: 403 })
+  } });
+  await view.ready;
+  await view.registry.open('one');
+  type(view, `${SOURCE_TEXT}改一条关系\n`);
+  await view.element('entityFormPush').events.click();
+  assert.match(view.element('entitySyncMessage').textContent, /推送失败：this branch is not codebase accessible/);
+  assert.ok(!JSON.stringify(view.registry.state).includes('Bearer'), 'no header text is kept on screen');
+  assert.equal(view.registry.state.drafts.one.text, `${SOURCE_TEXT}改一条关系\n`,
+    'a failed push keeps the draft so nothing typed is lost');
+});
+
+test('a brand new entry is created rather than refused for having no baseline', async () => {
+  const view = loadWriteBackView({ token: 't', routes: {
+    [contentsRoute('brand-new')]: jsonResponse({ message: 'Not Found' }, { status: 404 }),
+    [contentsRoute('brand-new', 'PUT')]: jsonResponse({ commit: { sha: 'commit-new' } })
+  } });
+  await view.ready;
+  await view.registry.open('brand-new');
+  assert.match(view.element('entitySyncMessage').textContent, /远端还没有 entities\/brand-new\.md/);
+  type(view, SOURCE_TEXT);
+  await view.element('entityFormPush').events.click();
+  const put = view.requests.find(request => request.method === 'PUT');
+  assert.equal(put.body.sha, undefined, 'a create carries no sha at all');
+  assert.equal(put.body.branch, 'main');
+});
 
 
 
+
+
+
+// --- Task board: the canvas -----------------------------------------------
+
+// One task is one file, so the fixture speaks the collector's field names. The
+// camelCase the page uses is what taskRows() makes of them, never what is on
+// disk - a test that wrote `blobSha` here would be testing a file format the
+// daily run does not produce.
+const TASK_DEADLINE_ID = 'AI/cvpr:cvpr27:paper:1';
+// The countdown is measured against the wall clock, so the fixture deadline sits
+// thirty days out instead of being a date that would silently rot next month.
+const TASK_DEADLINE_UTC = new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 19) + 'Z';
+
+function taskFile(slug, extra = {}) {
+  return {
+    slug, title: `任务 ${slug}`, status: 'doing', parent: null, depends: [], tags: [],
+    entity: null, ddl: null, entity_state: null, ddl_state: null, updated: '2026-11-01',
+    reason: '', bytes: 180, lines: 8, sha256: `sha-${slug}`, blob_sha: `blob-${slug}`,
+    truncated: false,
+    url: `https://github.com/isLinXu/model-observatory/blob/main/tasks/${slug}.md`,
+    body: `# 任务 ${slug}\n\n正文`, ...extra
+  };
+}
+
+// The summary, the graph and the reference tally are derived here the same way
+// collect_tasks.py derives them, so a fixture that disagrees with its own tasks
+// array is a bug in the test rather than a second opinion.
+function taskPayload(tasks, extra = {}) {
+  const edges = [];
+  tasks.forEach(task => {
+    if (task.parent) edges.push({ from: task.slug, to: task.parent, type: 'parent' });
+    (task.depends || []).forEach(target => edges.push({ from: task.slug, to: target, type: 'depends' }));
+  });
+  const byStatus = tasks.reduce((map, task) => {
+    const key = task.status || 'untriaged';
+    map[key] = (map[key] || 0) + 1;
+    return map;
+  }, {});
+  const refs = key => TASK_REF_FIXTURES.reduce((map, kind) => {
+    const value = key(kind);
+    if (value) map[value] = (map[value] || 0) + 1;
+    return map;
+  }, { resolved: 0, unresolved: 0, missing_index: 0 });
+  return {
+    schema_version: 1,
+    source: { id: 'tasks', directory: 'tasks', repo: 'isLinXu/model-observatory', branch: 'main',
+      url: `https://github.com/isLinXu/model-observatory/tree/main/tasks` },
+    status: 'ok', error: null,
+    captured_at: '2026-11-02T01:00:00Z', last_attempt_at: '2026-11-02T01:00:00Z',
+    summary: {
+      total: tasks.length, edges: edges.length,
+      roots: tasks.filter(task => !task.parent).length,
+      blocked: byStatus.blocked || 0, by_status: byStatus
+    },
+    validation: {
+      parent_missing: tasks.filter(task => task.parent &&
+        !tasks.some(other => other.slug === task.parent)).length,
+      depends_missing: tasks.reduce((sum, task) => sum + (task.depends || [])
+        .filter(target => !tasks.some(other => other.slug === target)).length, 0),
+      self_edges: tasks.filter(task => (task.depends || []).includes(task.slug)).length,
+      cycles: 0,
+      refs: { entity: refs(kind => tasks.find(task => task.slug === kind)?.entity_state),
+        ddl: refs(kind => tasks.find(task => task.slug === kind)?.ddl_state) }
+    },
+    sources: {
+      entity: { file: 'entities.json', available: true, captured_at: '2026-11-02T01:00:00Z', reason: null },
+      ddl: { file: 'conferences.json', available: true, captured_at: '2026-11-02T01:00:00Z', reason: null }
+    },
+    graph: { edges, dropped: [], truncated: false },
+    changes: { status: 'initial' },
+    warnings: [], structural_errors: [], tasks, ...extra
+  };
+}
+
+const TASK_REF_FIXTURES = ['resolved', 'unresolved', 'missing_index'];
+
+function loadBoardView({ tasks = null, payload = null, entities = [], token = '', routes = {},
+  awesome = null, history, globals = {} } = {}) {
+  const index = payload || taskPayload(tasks || [
+    taskFile('parent', { status: 'doing' }),
+    taskFile('child', { status: 'proposal', parent: 'parent' }),
+    taskFile('waiter', { status: 'blocked', depends: ['child'], reason: '等 child 收敛' })
+  ]);
+  const local = fakeStorage();
+  const tab = fakeStorage(token ? { 'mo.repo.token': token } : {});
+  const blobs = [];
+  const anchors = [];
+  const requests = [];
+  // data.js resolves the Link header with `new URL`, while app.js exports with
+  // `URL.createObjectURL`, so the harness needs both halves on one constructor.
+  class TestURL extends URL {
+    static createObjectURL(blob) { blobs.push(blob); return 'blob:local-test'; }
+    static revokeObjectURL() {}
+  }
+  const fetchImpl = async (target, options = {}) => {
+    const url = String(target);
+    const method = options.method || 'GET';
+    requests.push({ url, method, headers: options.headers || {},
+      body: typeof options.body === 'string' ? JSON.parse(options.body) : null });
+    if (url.startsWith('https://api.github.com')) {
+      // Every write test names the routes it expects; an unexpected request is
+      // an error, not a silently undefined reply a push would paper over.
+      const reply = routes[`${method} ${url.slice('https://api.github.com'.length)}`];
+      if (!reply) throw new Error(`测试没有准备 ${method} ${url} 的响应`);
+      return reply;
+    }
+    if (url.includes('/data/awesome_history.json')) {
+      // A missing history costs the trend line and nothing else, so the harness
+      // serves an empty one unless a test names what it wants back.
+      if (history === null) throw new Error(`测试没有准备清单历史：${url}`);
+      return jsonResponse(history === undefined
+        ? { schema_version: 1, source: { id: 'awesome' }, snapshots: [] } : history);
+    }
+    if (url.includes('/data/tasks.json')) return jsonResponse(index);
+    if (url.includes('/data/awesome.json')) {
+      // The paper-list board is only served when a test asks for it, so a panel
+      // that never reached the fold cannot quietly depend on a missing reply.
+      if (!awesome) throw new Error(`测试没有准备论文清单快照：${url}`);
+      return jsonResponse(awesome);
+    }
+    throw new Error(`测试没有准备 ${url} 的响应`);
+  };
+  const element = elementFactory(new Map());
+  // One context for the whole section, exactly like the page: taskDeadline asks
+  // MO.format for the countdown, so a harness that loads data.js on its own
+  // would be testing a module graph the browser never builds.
+  const context = {
+    console: { ...console, warn() {} },
+    document: { getElementById: element, querySelectorAll: () => [], addEventListener() {},
+      createElement: () => { const created = fakeElement(); anchors.push(created); return created; },
+      body: { append() {}, style: {} } },
+    localStorage: local, sessionStorage: tab, fetch: fetchImpl, URL: TestURL, AbortSignal, Blob,
+    TextEncoder, TextDecoder,
+    btoa: binary => Buffer.from(binary, 'binary').toString('base64'),
+    atob: value => Buffer.from(value, 'base64').toString('binary'),
+    matchMedia: () => ({ matches: true }),
+    setTimeout: callback => callback(),
+    ...globals
+  };
+  context.window = context;
+  vm.createContext(context);
+  const run = name => {
+    const filename = path.join(__dirname, '..', 'site', name);
+    vm.runInContext(fs.readFileSync(filename, 'utf8'), context, { filename });
+  };
+  ['format.js', 'charts.js', 'data.js', 'repo.js', 'board.js', 'render.js', 'tasksync.js'].forEach(run);
+  const data = context.MO.data;
+  data.state.tasks = index;
+  data.state.conferences = conferencePayload([
+    conference('CVPR', [conferenceEvent(TASK_DEADLINE_ID, { utc: TASK_DEADLINE_UTC })])
+  ]);
+  data.state.entities = entityPayload(entities);
+  return { data, element, context, run, blobs, anchors, requests, local, tab,
+    board: context.MO.board, render: context.MO.render, tasksync: context.MO.tasksync,
+    repo: context.MO.repo };
+}
+
+// The bindings only exist once app.js has booted, and boot awaits the whole
+// page's data. The section under test keeps its own renderers real - the markup
+// *is* the claim - while every other board and the write-back panels are
+// stubbed, and toasts are collected instead of painted.
+async function startApp(view, keep, {
+  IntersectionObserver = class { observe() {} disconnect() {} } } = {}) {
+  const toasts = [];
+  const booted = deferred();
+  // The page always ships an observer, so the harness hands app.js one that
+  // never fires: a test that forgot to trigger the read would then fail on the
+  // snapshot it did not ask for, not on a canvas that loaded too early.
+  view.context.IntersectionObserver = IntersectionObserver;
+  view.context.MO.theme = { init() {} };
+  view.context.MO.templates = { init: async () => {} };
+  view.context.MO.data = { ...view.data, loadAll: async () => {} };
+  view.data.state.latest = view.data.state.latest || { models: [] };
+  view.context.MO.registry = { init: async () => { booted.resolve(); } };
+  view.context.MO.render = Object.fromEntries(Object.entries(view.render).map(([name, fn]) => [
+    name,
+    keep.some(prefix => name.startsWith(prefix)) ? fn
+      : name === 'showToast' ? message => toasts.push(message) : () => {}
+  ]));
+  view.run('app.js');
+  await booted.promise;
+  return { toasts };
+}
+
+const startTaskApp = (view, options) => startApp(view, ['renderTask'], options);
+const startAwesomeApp = (view, options) => startApp(view, ['renderAwesome'], options);
+
+const canvasPoint = (x, y, extra = {}) => ({ clientX: x, clientY: y, pointerId: 7, preventDefault() {}, ...extra });
+
+function taskCanvas(view, cards = []) {
+  const canvas = view.element('taskCanvas');
+  canvas.getBoundingClientRect = () => ({ left: 0, top: 0 });
+  canvas.scrollLeft = 0;
+  canvas.scrollTop = 0;
+  canvas.querySelectorAll = () => cards;
+  return canvas;
+}
+
+test('the canvas paints one card per task in its own lane and draws the edges the index drew', () => {
+  const view = loadBoardView();
+  view.board.load();
+  view.render.renderTasks();
+  const canvas = view.element('taskCanvas').innerHTML;
+  assert.equal((canvas.match(/data-task-card="/g) || []).length, 3);
+  assert.equal((canvas.match(/data-task-lane="/g) || []).length, 6,
+    'an empty 未标注 lane is not a lane the reader has to look for');
+  assert.match(canvas, /data-task-card="waiter"[^>]*style="left:594px;top:60px"/);
+  assert.match(canvas, /⚑ 等 child 收敛/);
+  assert.match(canvas, /↳ parent/);
+  // The layer is painted inside the canvas, not left beside it: the canvas writes
+  // its own innerHTML on every repaint, so a node it owns would be gone by the
+  // second one and the page would crash on a null the moment a card is dragged.
+  const layerStart = canvas.indexOf('<svg id="taskEdgeLayer"');
+  assert.ok(layerStart >= 0, 'the line layer travels with the canvas markup');
+  const edges = canvas.slice(layerStart, canvas.indexOf('</svg>') + 6);
+  assert.match(edges, /viewBox="0 0 1988 \d+"/);
+  assert.equal((edges.match(/task-edge-parent/g) || []).length, 1);
+  assert.equal((edges.match(/task-edge-depends/g) || []).length, 1);
+  assert.match(edges, /marker-end="url\(#task-arrow-parent\)"/);
+  assert.match(edges, /<title>child 拆自 parent<\/title>/);
+  view.render.renderTasks();
+  assert.equal((view.element('taskCanvas').innerHTML.match(/<svg id="taskEdgeLayer"/g) || []).length, 1,
+    'one layer per repaint');
+  assert.equal(view.element('taskCanvasSize').textContent,
+    '3 / 3 张卡在同屏 · 2 条连线 · 卡片座标只存本机');
+  assert.equal(view.element('statTaskEdges').textContent, '2');
+  assert.equal(view.element('taskCountBadge').textContent, '3');
+  assert.equal(view.element('taskLanes').textContent,
+    '提案 → 进行中 → 受阻 → 待验收 → 已完成 → 已放弃 → 未标注');
+});
+
+test('a task whose status the collector could not read falls to 未标注, not to the first lane', () => {
+  const view = loadBoardView({ tasks: [taskFile('mystery', { status: null })] });
+  view.board.load();
+  view.render.renderTasks();
+  const canvas = view.element('taskCanvas').innerHTML;
+  assert.match(canvas, /data-task-lane="untriaged"/);
+  assert.match(canvas, /class="task-card" data-task-card="mystery"/);
+  assert.match(canvas, /task-untriaged">未标注</);
+  assert.match(view.element('taskStatus').textContent,
+    /1 个任务落在「未标注」道，需要补 status/);
+});
+
+test('a card position is furniture while a lane change is a draft that has to be pushed', () => {
+  const view = loadBoardView({ tasks: [taskFile('one')] });
+  view.board.load();
+  view.render.renderTasks();
+  assert.equal(view.board.rows().filter(row => row.dirty).length, 0);
+  assert.equal(view.element('taskDraftBadge').textContent, '无本地改动');
+
+  view.board.move('one', { x: 640, y: 220 });
+  view.render.renderTasks();
+  assert.equal(view.board.draftSummary().total, 0, '摆放不是改动：它永远不会进仓库');
+  assert.equal(view.board.draftSummary().positions, 1);
+  assert.match(view.element('taskCanvas').innerHTML, /is-placed/);
+  assert.match(view.element('taskCanvas').innerHTML, /data-task-card="one" style="left:640px;top:220px"/);
+  assert.equal(view.element('taskDraftBadge').textContent, '无本地改动');
+  assert.equal(JSON.parse(view.local.store['mo.board.layout']).one.x, 640);
+  assert.ok(!JSON.stringify(view.local.store['mo.board.layout']).includes('doing'),
+    'the layout file holds coordinates and nothing about the work');
+
+  view.board.setStatus('one', 'review');
+  view.render.renderTasks();
+  assert.equal(view.board.draftSummary().total, 1);
+  assert.equal(view.element('taskDraftBadge').textContent, '1 张卡待推送');
+  assert.match(view.element('taskDraftBadge').title, /座标 1 张只留在本机/);
+  const canvas = view.element('taskCanvas').innerHTML;
+  assert.match(canvas, /class="task-card is-draft is-placed"/);
+  assert.match(canvas, /本地改动/);
+  assert.deepEqual(JSON.parse(view.local.store['mo.board.edits']).edits.one, { status: 'review' });
+  assert.match(view.element('taskStatus').textContent, /1 张卡有本地改动，尚未推送/);
+});
+
+test('a card dragged out of a lane and back is not a change', () => {
+  const view = loadBoardView({ tasks: [taskFile('one', { status: 'doing' })] });
+  view.board.load();
+  assert.equal(view.board.setStatus('one', 'review').changed, true);
+  assert.equal(view.board.patchOf('one') !== null, true);
+  assert.equal(view.board.setStatus('one', 'doing').changed, true);
+  assert.equal(view.board.patchOf('one'), null, 'back to what the index says is no draft');
+  assert.equal(view.board.draftSummary().total, 0);
+  view.render.renderTasks();
+  assert.doesNotMatch(view.element('taskCanvas').innerHTML, /is-draft/);
+});
+
+test('the canvas refuses the edges the collector would drop, and says why out loud', () => {
+  const view = loadBoardView({ tasks: [
+    taskFile('a', { status: 'doing' }),
+    taskFile('b', { status: 'proposal', parent: 'a' }),
+    taskFile('c', { status: 'blocked', depends: ['b'] })
+  ] });
+  view.board.load();
+  const selfLink = view.board.connect('a', 'a');
+  assert.equal(selfLink.ok, false);
+  assert.equal(selfLink.changed, false);
+  assert.equal(selfLink.reason, 'a 不能连到自己。');
+  assert.deepEqual(view.board.connect('a', 'ghost').reason, '目标 ghost 不在看板上。');
+  assert.match(view.board.connect('b', 'c').reason, /c 已经能回到 b，这条线会成环/);
+  assert.match(view.board.setParent('a', 'b').reason, /b 已经能回到 a，这条线会成环/);
+  assert.equal(view.board.draftSummary().total, 0, 'a refused line writes nothing');
+
+  const added = view.board.connect('a', 'c');
+  assert.equal(added.ok, true);
+  assert.equal(view.board.patchOf('a').depends.join(','), 'c');
+  const lines = view.board.edges().lines;
+  const depends = lines.find(edge => edge.type === 'depends' && edge.from === 'a');
+  assert.equal(depends.draft, true, 'a line only this browser drew is marked as such');
+  assert.match(depends.d, /^M -?\d+\.?\d* -?\d+\.?\d* C /);
+});
+
+test('the queue keeps 画布拒绝, 索引拒绝 and 未核对 apart and never calls an unchecked link a 断链', () => {
+  const view = loadBoardView({ tasks: [
+    taskFile('root', { status: 'doing', ddl: TASK_DEADLINE_ID, ddl_state: 'unresolved' }),
+    taskFile('kid', { status: 'proposal', parent: 'ghost', entity: 'mme', entity_state: 'missing_index' })
+  ] });
+  const payload = view.data.state.tasks;
+  payload.graph.dropped = [{ from: 'gone', to: 'nobody', type: 'parent', reason: 'missing' }];
+  payload.structural_errors = ['kid: status「nope」不属于六态词表'];
+  view.render.renderTasks();
+  const queue = view.element('taskQueue').innerHTML;
+  assert.match(queue, /画布拒绝<\/span><div class="entity-detail-text"><code>kid -parent-&gt; ghost/);
+  assert.match(queue, /索引拒绝/);
+  assert.match(queue, /断引用/);
+  assert.match(queue, /ddl AI\/cvpr:cvpr27:paper:1 在当日快照里找不到/);
+  assert.match(queue, /未核对/);
+  assert.match(queue, /来源本次没有可用快照，这不是断链/);
+  assert.match(queue, /结构错误/);
+  assert.match(view.element('taskQueueNote').textContent, /5 条需要看一眼/);
+  assert.equal(view.board.graph().dropped.length, 1);
+  assert.equal(view.board.graph().missingParents, 1);
+});
+
+test('cards escape what the repository says and never turn a non-http url into a link', () => {
+  const view = loadBoardView({ tasks: [taskFile('xss', {
+    title: '<img src=x onerror="bad"> & "quoted"',
+    reason: "javascript:alert(1)",
+    url: 'javascript:alert(1)',
+    body: '<script>steal()</script>'
+  })] });
+  view.board.load();
+  view.render.renderTasks();
+  const canvas = view.element('taskCanvas').innerHTML;
+  assert.ok(!canvas.includes('<img src=x'), 'the title arrives escaped');
+  assert.match(canvas, /&lt;img src=x onerror=&quot;bad&quot;&gt;/);
+  view.data.state.taskOpen = 'xss';
+  view.render.renderTasks();
+  const detail = view.element('taskDetail').innerHTML;
+  assert.ok(!detail.includes('<script>steal'), 'the body copy is never treated as markup');
+  assert.ok(!detail.includes('href="javascript:'), 'a crafted url is not a link');
+  assert.match(detail, /索引没有给出可以打开的源文件链接/);
+  assert.ok(!detail.includes('在 GitHub 打开源文件'), 'nothing is linked that the collector did not publish');
+  view.data.state.taskView = 'list';
+  view.render.renderTasks();
+  const rows = view.element('taskRows').innerHTML;
+  assert.ok(!rows.includes('href="javascript'), 'the list links nothing untrusted');
+  assert.match(rows, /&lt;img src=x/);
+});
+
+test('a ddl card borrows the countdown from the conference board and never keeps a copy', () => {
+  const view = loadBoardView({ tasks: [
+    taskFile('camera', { status: 'doing', ddl: TASK_DEADLINE_ID, ddl_state: 'resolved' })
+  ] });
+  view.board.load();
+  view.render.renderTasks();
+  assert.equal('utc' in view.board.rows()[0], false, 'the row carries an id, not a timestamp');
+  assert.equal(view.board.rows()[0].ddl, TASK_DEADLINE_ID);
+  const canvas = view.element('taskCanvas').innerHTML;
+  assert.match(canvas, /task-ref task-ddl task-ddl-resolved/);
+  assert.match(canvas, /◴ AI\/cvpr:cvpr27:paper:1/);
+  assert.match(canvas, /距截止 \d+ 天/);
+  assert.match(canvas, /title="倒计时取自 conferences\.json，任务卡只保存这个 ID"/);
+  assert.match(view.element('statTaskDeadline').textContent, /\d+ 天$/);
+  assert.match(view.element('statTaskDeadlineSub').textContent, /｜数字归顶会看板所有$/);
+  assert.match(view.element('statTaskDeadlineSub').textContent, /CVPR/);
+});
+
+test('an id the conference board does not know is named as missing, not counted down', () => {
+  const view = loadBoardView({ tasks: [
+    taskFile('ghost', { status: 'doing', ddl: 'AI/cvpr:cvpr27:paper:9', ddl_state: 'unresolved' })
+  ] });
+  view.board.load();
+  view.render.renderTasks();
+  assert.match(view.element('taskCanvas').innerHTML, /顶会目录里没有这个环节 ID/);
+  assert.doesNotMatch(view.element('taskCanvas').innerHTML, /距截止/);
+  assert.equal(view.element('statTaskDeadline').textContent, '—');
+  assert.equal(view.element('statTaskDeadlineSub').textContent, '没有任务挂 ddl 截止时间');
+  // The queue is where an id nobody can resolve has to show up.
+  assert.match(view.element('taskQueue').innerHTML, /断引用/);
+});
+
+test('a task snapshot that could not read its sources says 未核对 instead of guessing', () => {
+  const payload = taskPayload([taskFile('blind', { status: 'doing', entity: 'mme',
+    entity_state: 'missing_index', ddl: TASK_DEADLINE_ID, ddl_state: 'missing_index' })]);
+  payload.sources.ddl = { file: 'conferences.json', available: false, captured_at: null,
+    reason: '顶会采集当日失败' };
+  const view = loadBoardView({ payload, entities: [entityEntry('mme')] });
+  view.data.state.conferences = conferencePayload([], { status: 'unavailable' });
+  view.board.load();
+  view.render.renderTasks();
+  const canvas = view.element('taskCanvas').innerHTML;
+  assert.match(canvas, /task-ddl-missing_index/);
+  assert.match(canvas, /顶会快照本次不可用，未核对/);
+  assert.doesNotMatch(canvas, /距截止/, 'a blind source cannot produce a countdown');
+  // The chip says which side went dark, and the queue refuses to call it a 断链.
+  assert.match(canvas, /未核对——那次采集没有可用快照，所以这里什么都没说。｜顶会采集当日失败/);
+  assert.match(view.element('taskQueue').innerHTML, /未核对[\s\S]*来源本次没有可用快照，这不是断链/);
+});
+
+test('the list view shares the canvas filter, pages twelve at a time and marks local rows', () => {
+  const view = loadBoardView({ tasks: Array.from({ length: 13 }, (unused, index) => taskFile(
+    `t${String(index).padStart(2, '0')}`, { status: index === 0 ? 'blocked' : 'doing',
+      tags: index < 3 ? ['看板'] : [] })) });
+  view.data.state.taskView = 'list';
+  view.board.load();
+  view.render.renderTasks();
+  assert.equal((view.element('taskRows').innerHTML.match(/<tr class="task-row/g) || []).length, 12);
+  assert.equal(view.element('taskPageInfo').textContent, '第 1 / 2 页');
+  assert.equal(view.element('taskNext').disabled, false);
+  assert.equal(view.element('taskPrev').disabled, true);
+  assert.equal(view.element('taskTableCount').textContent, '13 / 13 TASKS · 清单与画布共用同一份筛选');
+  view.data.state.taskPage = 2;
+  view.render.renderTaskList();
+  assert.equal((view.element('taskRows').innerHTML.match(/<tr class="task-row/g) || []).length, 1);
+  assert.equal(view.element('taskNext').disabled, true);
+
+  view.data.state.taskPage = 1;
+  view.data.state.taskTag = '看板';
+  view.data.state.taskView = 'board';
+  view.render.renderTasks();
+  assert.equal(view.board.rows().length, 13, 'the board still knows every card');
+  assert.equal(view.element('taskCanvasSize').textContent,
+    '3 / 13 张卡在同屏 · 0 条连线 · 卡片座标只存本机');
+  view.data.state.taskRef = 'broken';
+  view.render.renderTasks();
+  const hidden = view.element('taskCanvas').innerHTML;
+  assert.equal((hidden.match(/data-task-card="/g) || []).length, 0,
+    'a blocked card with no broken reference is filtered out');
+  assert.equal((hidden.match(/data-task-lane="/g) || []).length, 6,
+    'an empty result still shows the lanes, so the filter has not eaten the board');
+  assert.match(view.element('taskCanvasSize').textContent, /^0 \/ 13 张卡在同屏/);
+
+  view.data.state.taskRef = 'all';
+  view.data.state.taskTag = 'all';
+  view.board.setStatus('t00', 'review');
+  view.render.renderTaskList();
+  assert.match(view.element('taskRows').innerHTML, /task-row is-draft/);
+  assert.match(view.element('taskRows').innerHTML, /task-flag">本地</);
+});
+
+test('a drag onto a card 拆解 the work, a drag into a lane changes 状态, and a refused one says so', async () => {
+  const view = loadBoardView();
+  const app = await startTaskApp(view);
+  const cards = ['parent', 'child', 'waiter'].map(slug => {
+    const card = fakeElement();
+    card.dataset.taskCard = slug;
+    return card;
+  });
+  const canvas = taskCanvas(view, cards);
+  const pointer = (index, x, y, handle = null) => canvasPoint(x, y, { target: {
+    closest: selector => (selector === '[data-task-card]' ? cards[index]
+      : selector === '[data-task-link]' ? handle : null)
+  } });
+
+  // waiter (受阻, x 594) dragged onto child (提案, x 30): a parent line, no relocation.
+  canvas.events.pointerdown(pointer(2, 700, 116));
+  canvas.events.pointermove(pointer(2, 148, 116));
+  assert.match(view.element('taskCanvasSize').textContent,
+    /松手：把 waiter 拆到 child 下面（这条线会写进 waiter 的 parent）/);
+  canvas.events.pointerup(pointer(2, 148, 116));
+  assert.equal(view.board.patchOf('waiter').parent, 'child');
+  assert.match(app.toasts.at(-1), /已拆解：waiter 现在是 child 的子任务。这是本地草稿/);
+  assert.equal(view.board.state.layout.waiter, undefined,
+    'drawing a line is not a request to pile the card on top of its new parent');
+
+  // The same drop the other way round closes a loop, and the canvas refuses it.
+  canvas.events.pointerdown(pointer(1, 148, 116));
+  canvas.events.pointermove(pointer(1, 700, 116));
+  canvas.events.pointerup(pointer(1, 700, 116));
+  assert.match(app.toasts.at(-1), /会成环，画布上拖不出来/);
+  assert.equal(view.board.patchOf('child'), null, 'a refused drag writes nothing');
+
+  // parent (进行中) released over the 待验收 lane: a status draft and a new slot.
+  canvas.events.pointerdown(pointer(0, 400, 116));
+  canvas.events.pointermove(pointer(0, 900, 116));
+  assert.match(view.element('taskCanvasSize').textContent, /松手：落在「待验收」道/);
+  canvas.events.pointerup(pointer(0, 900, 116));
+  assert.equal(view.board.patchOf('parent').status, 'review');
+  assert.match(app.toasts.at(-1), /状态改为「待验收」（本地草稿）/);
+  assert.match(view.element('taskCanvas').innerHTML,
+    /data-task-card="parent" style="left:876px;top:60px"/);
+
+  // A release inside the card's own lane is furniture, not a change.
+  canvas.events.pointerdown(pointer(1, 148, 100));
+  canvas.events.pointermove(pointer(1, 150, 200));
+  canvas.events.pointerup(pointer(1, 150, 200));
+  assert.match(app.toasts.at(-1), /已摆放：卡片座标只存在这台浏览器/);
+  assert.equal(view.board.draftSummary().edited, 2, 'the placement added no draft');
+  assert.equal(view.board.draftSummary().positions, 2);
+
+  // A press that never travelled is a click, and a click never re-lanes anything.
+  canvas.events.pointerdown(pointer(0, 900, 100));
+  canvas.events.pointermove(pointer(0, 902, 100));
+  canvas.events.pointerup(pointer(0, 900, 100));
+  assert.equal(view.data.state.taskView, 'board');
+  assert.equal(view.data.state.taskOpen, 'parent');
+  assert.equal(Object.keys(view.board.patchOf('parent')).join(','), 'status',
+    'a drag that never travelled draws nothing');
+});
+
+test('the link handle draws a 依赖 line and a still click opens the card instead', async () => {
+  const view = loadBoardView();
+  const app = await startTaskApp(view);
+  const cards = ['parent', 'child', 'waiter'].map(slug => {
+    const card = fakeElement();
+    card.dataset.taskCard = slug;
+    return card;
+  });
+  const canvas = taskCanvas(view, cards);
+  const pointer = (index, x, y, handle = null) => canvasPoint(x, y, { target: {
+    closest: selector => (selector === '[data-task-card]' ? cards[index]
+      : selector === '[data-task-link]' ? handle : null)
+  } });
+
+  canvas.events.pointerdown(pointer(0, 400, 116, { dataset: { taskLink: 'parent' } }));
+  canvas.events.pointermove(pointer(0, 700, 116, { dataset: { taskLink: 'parent' } }));
+  assert.match(view.element('taskCanvasSize').textContent,
+    /松手：parent 等待 waiter（这条线会写进 parent 的 depends）/);
+  canvas.events.pointerup(pointer(0, 700, 116));
+  assert.deepEqual(plain(view.board.patchOf('parent').depends), ['waiter']);
+  assert.match(app.toasts.at(-1), /已连上：parent 等待 waiter/);
+  assert.equal(view.board.state.layout.parent, undefined, 'the handle never moves the box');
+
+  // Releasing over empty canvas is not a line, and the readout says so while the
+  // pointer is still down - a lane name would promise a lane change the mode cannot do.
+  canvas.events.pointerdown(pointer(1, 148, 116, { dataset: { taskLink: 'child' } }));
+  canvas.events.pointermove(pointer(1, 1500, 116, { dataset: { taskLink: 'child' } }));
+  assert.match(view.element('taskCanvasSize').textContent,
+    /松手的地方没有卡片：依赖线要落在另一张卡上/);
+  canvas.events.pointerup(pointer(1, 1500, 116));
+  assert.match(app.toasts.at(-1), /松手的地方没有卡片/);
+  assert.equal(view.board.patchOf('child'), null);
+
+  // A press that never moves is a click, and a click opens the card.
+  canvas.events.pointerdown(pointer(2, 700, 116));
+  canvas.events.pointerup(pointer(2, 700, 116));
+  assert.equal(view.data.state.taskOpen, 'waiter');
+  assert.match(view.element('taskDetail').innerHTML, /等 child 收敛/);
+  canvas.events.pointerdown(pointer(2, 700, 116));
+  canvas.events.pointerup(pointer(2, 700, 116));
+  assert.equal(view.data.state.taskOpen, null, 'the same card clicked twice closes itself');
+
+  // The list row and the detail's 撤销 button drive the same two reducers.
+  view.element('taskRows').events.click({ target: {
+    closest: selector => selector === '[data-task-open]' ? { dataset: { taskOpen: 'child' } } : null } });
+  assert.equal(view.data.state.taskOpen, 'child');
+  view.element('taskDetail').events.click({ target: {
+    closest: selector => selector === '[data-task-reset]' ? { dataset: { taskReset: 'parent' } } : null } });
+  assert.equal(view.board.patchOf('parent'), null);
+  assert.match(app.toasts.at(-1), /已丢弃 parent 在本机的改动/);
+});
+
+test('a focused card opens with Enter and with Space, and Space does not scroll past it', async () => {
+  const view = loadBoardView();
+  await startTaskApp(view);
+  const card = fakeElement();
+  card.dataset.taskCard = 'child';
+  let defaulted = false;
+  const press = key => {
+    defaulted = false;
+    view.element('taskCanvas').events.keydown({
+      key, preventDefault() { defaulted = true; },
+      target: { closest: selector => selector === '[data-task-card]' ? card : null }
+    });
+  };
+  press('Tab');
+  assert.equal(view.data.state.taskOpen, null, 'a key that means nothing to a button is left alone');
+  assert.equal(defaulted, false);
+  press('Enter');
+  assert.equal(view.data.state.taskOpen, 'child');
+  assert.match(view.element('taskDetail').innerHTML, /# 任务 child/);
+  assert.equal(defaulted, true);
+  press(' ');
+  assert.equal(view.data.state.taskOpen, null, 'the same card toggled shut by the same key');
+  assert.equal(defaulted, true, 'Space belongs to the card, not to the scrollbar');
+});
+
+test('a new card is a file name first, and the export carries the draft flag behind the formula guard', async () => {
+  const view = loadBoardView({ tasks: [
+    taskFile('draw', { status: 'doing', title: '=SUM(1,2)', reason: '+cmd' })
+  ] });
+  const app = await startTaskApp(view);
+  assert.equal(view.requests.filter(request => request.url.includes('/data/tasks.json')).length, 0,
+    'booting the page asks for the task snapshot no earlier than the reader reaches it');
+
+  view.element('taskNewSlug').value = '任务看板';
+  view.element('taskNewTitle').value = '画布拆分';
+  view.element('taskNewCreate').events.click();
+  assert.match(view.element('taskNewNote').textContent, /文件名需为小写字母、数字与连字符/);
+  assert.equal(view.board.rows().length, 1, 'a name that cannot be a file never becomes a card');
+
+  // A space is not a hyphen: the file name rule is literal, so the canvas says so
+  // instead of inventing a name the author never typed.
+  view.element('taskNewSlug').value = 'Board Canvas';
+  view.element('taskNewCreate').events.click();
+  assert.match(view.element('taskNewNote').textContent, /文件名需为小写字母、数字与连字符/);
+  assert.equal(view.board.rows().length, 1, 'a name with a space in it is still not a file');
+
+  view.element('taskNewSlug').value = 'Board-Canvas';
+  view.element('taskNewTitle').value = '画布拆分';
+  view.element('taskNewCreate').events.click();
+  assert.equal(view.board.rows().length, 2);
+  assert.match(app.toasts.at(-1), /画布上多了一张卡：board-canvas/);
+  const canvas = view.element('taskCanvas').innerHTML;
+  assert.match(canvas, /data-task-card="board-canvas"/);
+  assert.match(canvas, /新建 · 未推送/);
+  assert.equal(view.board.draftSummary().created, 1);
+  assert.equal(view.element('taskDraftBadge').textContent, '1 张卡待推送');
+
+  const patch = view.board.patchFor('board-canvas');
+  assert.equal(patch.create, true);
+  assert.equal(patch.slug, 'board-canvas');
+  assert.equal(patch.title, '画布拆分', 'the file name is latin, the title keeps what the author typed');
+  assert.equal(view.board.patchFor('draw'), null, 'a card nobody edited has nothing to push');
+  view.board.setStatus('board-canvas', 'doing');
+  assert.equal(view.board.patchFor('board-canvas').status, 'doing', 'a draft card edits itself, not an overlay');
+
+  view.element('taskExport').onclick();
+  const text = await view.blobs[0].text();
+  // The export is sorted by what the page shows, so the rows are found by slug
+  // instead of by a position the sort is free to change.
+  const [header, ...records] = text.replace(/^\uFEFF/, '').split('\r\n').map(row =>
+    Array.from(row.matchAll(/"((?:[^"]|"")*)"/g), match => match[1].replace(/""/g, '"')));
+  const bySlug = Object.fromEntries(records.map(row => [row[0], row]));
+  assert.equal(header[0], 'slug');
+  assert.equal(header.length, 17);
+  assert.equal(header[14], 'draft_state', 'three states, because a pushed card is neither local nor clean');
+  assert.equal(bySlug.draw[1], "'=SUM(1,2)", 'a formula stays a string when the csv is opened');
+  assert.equal(bySlug.draw[14], 'none', 'the published card is not a local draft');
+  assert.equal(bySlug['board-canvas'][14], 'local', 'the card only this browser made is marked as one');
+  assert.equal(bySlug['board-canvas'][15], '', 'a draft that never went out carries no push time');
+  assert.equal(bySlug['board-canvas'][2], 'doing');
+  assert.equal(view.anchors.at(-1).download, 'task-board-2026-11-02.csv');
+});
+
+test('the canvas reads its snapshot when the reader reaches it and never re-reads on a second entry', async () => {
+  const observers = [];
+  class IntersectionObserver {
+    constructor(callback, options) { this.callback = callback; this.options = options; observers.push(this); }
+    observe(target) { this.target = target; }
+    disconnect() { this.disconnected = (this.disconnected || 0) + 1; }
+  }
+  const view = loadBoardView({ tasks: [taskFile('one')] });
+  const app = await startTaskApp(view, { IntersectionObserver });
+  assert.equal(view.data.state.taskSnapshotCheckedAt, null);
+  assert.match(view.element('taskCheckedAt').textContent, /尚未成功读取快照/);
+  // Three lazy sections watch the page; the task one is the box under test.
+  const taskObserver = observers.find(observer => observer.target === view.element('tasks'));
+  assert.equal(observers.length, 3, 'the star wall, the canvas and the paper lists each get one watcher');
+  assert.ok(taskObserver, 'the canvas is watched, not downloaded at boot');
+
+  taskObserver.callback([{ isIntersecting: true }]);
+  await nextTurn();
+  await nextTurn();
+  assert.equal(view.requests.filter(request => request.url.includes('/data/tasks.json')).length, 1);
+  assert.equal(taskObserver.disconnected, 1);
+  assert.match(view.element('taskCheckedAt').textContent, /最近成功读取快照 .*采集由每日工作流完成/);
+  assert.match(view.element('taskFreshness').textContent, /读取不触发采集/);
+
+  taskObserver.callback([{ isIntersecting: true }]);
+  await nextTurn();
+  assert.equal(view.requests.filter(request => request.url.includes('/data/tasks.json')).length, 1);
+  assert.equal(app.toasts.length, 0, 'an entry read is not an event that shouts at the reader');
+
+  view.element('taskRefresh').events.click();
+  await nextTurn();
+  await nextTurn();
+  assert.equal(view.requests.filter(request => request.url.includes('/data/tasks.json')).length, 2);
+  assert.match(app.toasts.at(-1), /刷新只读取已发布文件，不会触发后台采集/);
+  assert.equal(view.element('taskRefresh').textContent, '刷新已发布快照', 'the button gives its label back');
+});
+
+// --- Task board: pushing the draft back -----------------------------------
+
+// The file as it sits on the remote. The index only carries a truncated copy of
+// this prose, so the tail sentence is part of the assertions below: a push
+// assembled from the snapshot instead would cut it off, and nobody would see it
+// happen.
+const TASK_REMOTE_TEXT = [
+  '---',
+  'title: 母任务',
+  'status: doing',
+  'parent: index-lost',
+  'entity: mme',
+  'ddl: AI/cvpr:cvpr27:paper:1',
+  'tags: [board, ui]',
+  'updated: 2026-11-01',
+  'reason: 等采集口径定下来',
+  'notes: 采集器不读这个字段',
+  'depends:',
+  '  - collect-tasks',
+  '  - repo-layer',
+  '---',
+  '',
+  '# 母任务',
+  '',
+  '远端的正文比索引里的截断副本长：这一句必须活过一次推送。',
+  ''
+].join('\n');
+
+// The same file after somebody else moved its status - the shape every three-way
+// test below starts from.
+const TASK_REMOTE_MOVED = TASK_REMOTE_TEXT.replace('status: doing', 'status: blocked');
+const WAITER_REMOTE_TEXT = ['---', 'title: 等上游', 'status: blocked', 'depends: [child]',
+  'reason: 等 child 收敛', 'updated: 2026-10-30', '---', '', '# 等上游', '',
+  '被挡住的是口径，不是代码。', ''].join('\n');
+
+const taskRoute = (slug, method = 'GET') =>
+  `${method} /repos/isLinXu/model-observatory/contents/tasks/${slug}.md`;
+const taskReply = (sha, text = TASK_REMOTE_TEXT) =>
+  jsonResponse({ sha, content: b64(text), last_commit: null });
+const taskPutReply = (sha = 'deadbee') => jsonResponse({ commit: { sha } });
+// The Contents API answer for a file that simply is not there.
+const taskMissing = () => jsonResponse({ message: 'Not Found' }, { status: 404 });
+const putsOf = view => view.requests.filter(request => request.method === 'PUT');
+const putOf = view => putsOf(view)[0];
+const written = request => unb64(request.body.content);
+
+test('a push rewrites only the fields the card touched, onto the live source text', () => {
+  const view = loadBoardView();
+  const composed = view.board.compose(
+    { slug: 'parent', status: 'review', depends: ['child'], update: true },
+    TASK_REMOTE_TEXT, { at: '2026-11-02' });
+  assert.ok(composed.ok, composed.reason);
+  assert.deepEqual(plain(composed.notes),
+    ['采集器不读这些字段：notes（保留在文件里，不受本次推送影响）。']);
+  const fields = plain(view.board.fieldsOf(composed.text));
+  assert.deepEqual(fields, { status: 'review', parent: 'index-lost', depends: ['child'] },
+    'the field the canvas never touched keeps what the remote says');
+  assert.match(composed.text, /^updated: 2026-11-02$/m);
+  assert.match(composed.text, /depends: \[child\]/);
+  assert.match(composed.text, /这一句必须活过一次推送/, 'the body is the remote file, not the index copy');
+  assert.match(composed.text, /reason: 等采集口径定下来/);
+  assert.match(composed.text, /entity: mme/);
+  assert.ok(!/^[ \t]+- /m.test(composed.text), 'no orphan list item survives the key it belonged to');
+});
+
+test('compose refuses the drafts the collector would reject tomorrow', () => {
+  const view = loadBoardView();
+  const untriaged = view.board.compose({ slug: 'parent', status: null, update: true }, TASK_REMOTE_TEXT);
+  assert.equal(untriaged.ok, false);
+  assert.match(untriaged.reason, /「未标注」是画布上的道，不是能写进文件的状态/);
+  assert.match(untriaged.reason, /CI 的结构检查/);
+
+  const crowded = view.board.compose({ slug: 'parent', update: true,
+    depends: Array.from({ length: 13 }, (unused, index) => `t${index}`) }, TASK_REMOTE_TEXT);
+  assert.match(crowded.reason, /超过采集器发布的 12 条上限/);
+
+  const headless = view.board.compose({ slug: 'parent', status: 'done', update: true }, '# 只剩正文\n');
+  assert.match(headless.reason, /读不到 --- front matter/);
+
+  const escape = view.board.compose({ slug: '../tasks/x', status: 'done', update: true }, TASK_REMOTE_TEXT);
+  assert.match(escape.reason, /需为小写字母、数字与连字符，不能写成路径或中文/);
+});
+
+test('a local card becomes a file, and a file somebody made first keeps its own prose', () => {
+  const view = loadBoardView();
+  const created = view.board.compose({ slug: 'sub-task', title: '子任务', status: 'proposal',
+    depends: ['parent'], tags: ['board'], body: '# 子任务\n\n拆出来的说明', create: true }, '',
+    { at: '2026-11-02' });
+  assert.ok(created.ok, created.reason);
+  assert.deepEqual(plain(view.board.fieldsOf(created.text)),
+    { status: 'proposal', parent: null, depends: ['parent'] });
+  assert.match(created.text, /title: 子任务/);
+  assert.match(created.text, /tags: \[board\]/);
+  assert.match(created.text, /拆出来的说明/);
+  assert.equal((created.text.match(/^# /gm) || []).length, 1,
+    'one heading, not one from the card and one from the template');
+
+  // Somebody made tasks/sub-task.md between the click and the push.
+  const raced = view.board.compose({ slug: 'sub-task', title: '子任务', status: 'review', create: true },
+    TASK_REMOTE_TEXT, { at: '2026-11-02' });
+  assert.ok(raced.ok, raced.reason);
+  assert.match(raced.notes.join(' '), /远端已有同名文件/);
+  assert.match(raced.text, /这一句必须活过一次推送/, 'the remote prose wins over the local card');
+  assert.equal(view.board.fieldsOf(raced.text).status, 'review');
+
+  assert.equal(view.board.compose({ slug: 'sub-task', title: '子任务', create: true }, '# 只有正文\n').ok, false);
+  assert.match(view.board.compose({ slug: 'sub-task', create: true }, '', { at: '2026-11-02' }).reason,
+    /新建卡没有标题/);
+
+  // What the collector cannot see is said out loud instead of quietly dropped.
+  const bare = '---\ntitle: 小任务\nstatus: doing\n---\n\n# 小任务\n';
+  const blocked = view.board.compose({ slug: 'small', status: 'blocked', update: true }, bare,
+    { at: '2026-11-02' });
+  assert.ok(blocked.ok, blocked.reason);
+  assert.match(blocked.notes.join(' '), /受阻卡没有 reason:/);
+  assert.match(blocked.text, /^updated: 2026-11-02$/m, 'a file with no updated gets one');
+});
+
+test('a push reads the live file, writes only the card fields and remembers the commit', async () => {
+  const view = loadBoardView({ token: 'ghp-test', routes: {
+    [taskRoute('parent')]: taskReply('sha-a'),
+    [taskRoute('parent', 'PUT')]: taskPutReply('deadbee')
+  } });
+  await view.tasksync.init();
+  view.board.setStatus('parent', 'review');
+  view.render.renderTasks();
+  assert.equal(view.board.pushState('parent'), 'pending');
+  assert.equal(view.element('taskDraftBadge').textContent, '1 张卡待推送');
+  assert.match(view.element('taskCanvas').innerHTML, />本地改动</);
+  assert.equal(view.element('taskPushAll').textContent, '按顺序推送全部（1）');
+  assert.equal(view.element('taskPushAll').disabled, false);
+
+  const outcome = await view.tasksync.push('parent');
+  assert.equal(outcome.status, 'pushed');
+  assert.match(outcome.notes.join(' '), /采集器不读这些字段：notes/);
+  const put = putOf(view);
+  assert.equal(put.body.sha, 'sha-a', 'the blob SHA just read is the baseline the write is guarded by');
+  assert.equal(put.body.branch, 'main');
+  assert.equal(put.body.message, 'docs(tasks): 更新 parent 任务卡');
+  assert.equal(put.headers.Authorization, 'Bearer ghp-test');
+  const file = written(put);
+  assert.match(file, /status: review/);
+  assert.match(file, /这一句必须活过一次推送/);
+  assert.match(file, /^updated: \d{4}-\d{2}-\d{2}$/m, 'updated is the date of this change');
+
+  assert.equal(view.board.pushState('parent'), 'pushed');
+  assert.equal(view.board.pendingSlugs().length, 0);
+  assert.deepEqual(plain(view.board.pushedSlugs()), ['parent']);
+  assert.equal(view.board.baseOf('parent').status, 'review',
+    'the version just written is what the next draft is measured against');
+  assert.equal(JSON.parse(view.local.store['mo.board.edits']).bases.parent.status, 'review',
+    'and it survives a reload');
+  assert.match(view.element('taskSyncMessage').textContent, /已推送 tasks\/parent\.md（提交 deadbee）/);
+  view.render.renderTasks();
+  assert.equal(view.element('taskDraftBadge').textContent, '1 张已推送 · 等索引');
+  assert.match(view.element('taskCanvas').innerHTML, />已推送 · 等索引</);
+  assert.match(view.element('taskDraftList').innerHTML, /再推一次/);
+  assert.match(view.element('taskCheckedAt').textContent, /已推送 1 张，次日索引才会反映它们/);
+
+  // A further drag after a push is a new draft, never an amendment of that commit.
+  view.board.setStatus('parent', 'done');
+  assert.equal(view.board.pushState('parent'), 'pending');
+});
+
+test('a remote that moved under the draft is refused, and 以远端为准 leaves the file alone', async () => {
+  const view = loadBoardView({ token: 't', routes: { [taskRoute('parent')]: taskReply('sha-b', TASK_REMOTE_MOVED) } });
+  await view.tasksync.init();
+  view.board.setStatus('parent', 'blocked');
+  const outcome = await view.tasksync.push('parent');
+  assert.equal(outcome.status, 'conflict');
+  assert.deepEqual(plain(outcome.fields), ['status']);
+  assert.equal(view.tasksync.state.conflict.slug, 'parent');
+  assert.equal(putOf(view), undefined, 'nothing is written while the three choices are open');
+  assert.equal(view.element('taskSyncState').textContent, '远端已变');
+  assert.match(view.element('taskSyncMessage').textContent, /状态在远端被改过，推送已挡下/);
+  assert.equal(view.element('taskPushConflict').classes.has('hidden'), false);
+  assert.match(view.element('taskConflictNote').textContent,
+    /状态 — 基线 进行中 \/ 远端 受阻 \/ 你的草稿 受阻/);
+
+  view.element('taskConflictKeepRemote').events.click();
+  assert.equal(view.board.patchOf('parent'), null);
+  assert.equal(view.tasksync.state.conflict, null);
+  assert.equal(putOf(view), undefined, 'the remote file is not touched by the choice that defers to it');
+  assert.match(view.element('taskSyncMessage').textContent,
+    /已以远端为准：parent 的本机改动已丢弃.*远端文件一个字都没动/);
+});
+
+test('按远端重做基线 folds away what the remote already has, then pushes what is still yours', async () => {
+  const view = loadBoardView({ token: 't', routes: {
+    [taskRoute('parent')]: taskReply('sha-b', TASK_REMOTE_MOVED),
+    [taskRoute('parent', 'PUT')]: taskPutReply('cafe111')
+  } });
+  await view.tasksync.init();
+  view.board.setStatus('parent', 'blocked');
+  view.board.connect('parent', 'waiter');
+  const outcome = await view.tasksync.push('parent');
+  assert.equal(outcome.status, 'conflict');
+  assert.deepEqual(plain(outcome.fields), ['status', 'depends']);
+
+  const rebased = await view.tasksync.rebase();
+  assert.deepEqual(plain(rebased.settled), ['status'], 'the status the remote already had stops being a draft');
+  assert.deepEqual(plain(rebased.mine), ['depends']);
+  assert.equal(view.board.patchOf('parent').status, undefined);
+  assert.deepEqual(view.board.patchOf('parent').depends, ['waiter']);
+  assert.equal(view.tasksync.state.conflict, null);
+  assert.match(view.element('taskSyncMessage').textContent,
+    /状态 远端已经是你要的值，已从草稿里去掉；依赖 仍是你的改动/);
+  assert.equal(putOf(view), undefined, 're-basing reads, it does not write');
+
+  const next = await view.tasksync.push('parent');
+  assert.equal(next.status, 'pushed',
+    'with the remote as the base, the same card pushes without asking twice');
+  assert.equal(putOf(view).body.sha, 'sha-b');
+  assert.match(written(putOf(view)), /depends: \[waiter\]/);
+  assert.match(written(putOf(view)), /status: blocked/, 'the remote status is kept, not restored from the stale index');
+});
+
+test('明确覆盖 is the only path that wins a field over somebody else, and it says so', async () => {
+  const view = loadBoardView({ token: 't', routes: {
+    [taskRoute('parent')]: taskReply('sha-b', TASK_REMOTE_MOVED),
+    [taskRoute('parent', 'PUT')]: taskPutReply('feedc0d')
+  } });
+  await view.tasksync.init();
+  view.board.setStatus('parent', 'review');
+  const outcome = await view.tasksync.push('parent');
+  assert.equal(outcome.status, 'conflict', 'the draft wants a different status than the remote now has');
+
+  const forced = await view.tasksync.overwrite();
+  assert.equal(forced.status, 'pushed');
+  assert.equal(putOf(view).body.sha, 'sha-b');
+  assert.match(written(putOf(view)), /status: review/);
+  assert.match(view.element('taskSyncMessage').textContent, /已推送 tasks\/parent\.md（提交 feedc0d）/);
+  assert.equal(view.tasksync.state.conflict, null);
+});
+
+test('拖进未标注道 is a place on the canvas, not something a push is allowed to write', async () => {
+  const view = loadBoardView({ token: 't', routes: { [taskRoute('parent')]: taskReply('sha-a') } });
+  await view.tasksync.init();
+  view.board.setStatus('parent', view.board.UNTRIAGED);
+  const outcome = await view.tasksync.push('parent');
+  assert.equal(outcome.status, 'refused');
+  assert.match(view.element('taskSyncMessage').textContent, /「未标注」是画布上的道/);
+  assert.match(view.element('taskSyncMessage').textContent, /拖回六态之一再推/);
+  assert.equal(putOf(view), undefined);
+  assert.equal(view.board.pushState('parent'), 'pending',
+    'the draft stays, so the reader can still move it somewhere real');
+});
+
+test('a card whose file vanished and a name somebody took first are both refused, not rewritten', async () => {
+  const view = loadBoardView({ token: 't', routes: {
+    [taskRoute('child')]: taskMissing(),
+    [taskRoute('racer')]: taskReply('sha-r', TASK_REMOTE_TEXT)
+  } });
+  await view.tasksync.init();
+  view.board.setStatus('child', 'done');
+  const gone = await view.tasksync.push('child');
+  assert.equal(gone.status, 'missing');
+  assert.match(view.element('taskSyncMessage').textContent, /远端已经没有 tasks\/child\.md/);
+  assert.match(view.element('taskSyncMessage').textContent, /不重建整份文件/);
+
+  view.board.create({ slug: 'Racer', title: '抢先' });
+  const raced = await view.tasksync.push('racer');
+  assert.equal(raced.status, 'exists');
+  assert.match(view.element('taskSyncMessage').textContent, /远端已经有 tasks\/racer\.md/);
+  assert.equal(putsOf(view).length, 0, 'a local card never overwrites a file somebody else made');
+});
+
+test('按顺序推送全部 lands the new card before the line that points at it', async () => {
+  const view = loadBoardView({ token: 't', routes: {
+    [taskRoute('new-part')]: taskMissing(),
+    [taskRoute('new-part', 'PUT')]: taskPutReply('c0ffee'),
+    [taskRoute('waiter')]: taskReply('sha-w', WAITER_REMOTE_TEXT),
+    [taskRoute('waiter', 'PUT')]: taskPutReply('bada55')
+  } });
+  const app = await startTaskApp(view);
+  view.board.create({ slug: 'New-Part', title: '新部件' });
+  view.board.setParent('waiter', 'new-part');
+  assert.deepEqual(plain(view.board.pendingSlugs()), ['waiter', 'new-part'],
+    'the referrer is first in the queue, so the order has to be earned');
+
+  const lone = await view.tasksync.push('waiter');
+  assert.equal(lone.status, 'orphan');
+  assert.match(lone.reason, /new-part 还只在这块画布上/);
+  assert.match(view.element('taskSyncMessage').textContent, /按顺序推送全部/);
+  assert.equal(putOf(view), undefined, 'a lone push never ships a dangling parent');
+
+  await view.element('taskPushAll').events.click();
+  const batch = putsOf(view);
+  assert.deepEqual(batch.map(request => request.url.split('/contents/')[1]),
+    ['tasks/new-part.md', 'tasks/waiter.md'], 'the file that is pointed at lands first');
+  assert.equal(batch[0].body.sha, undefined, 'a create carries no sha');
+  assert.match(written(batch[0]), /title: 新部件/);
+  assert.equal(batch[1].body.sha, 'sha-w');
+  assert.match(written(batch[1]), /parent: new-part/);
+  assert.match(written(batch[1]), /被挡住的是口径/, 'the prose of the file it read survives');
+  assert.deepEqual(plain(view.board.pushedSlugs()), ['waiter', 'new-part']);
+  assert.equal(view.board.draftSummary().waiting, 2);
+  assert.match(view.element('taskSyncMessage').textContent, /已推送 2 张卡/);
+  view.render.renderTasks();
+  assert.equal(view.element('taskDraftBadge').textContent, '2 张已推送 · 等索引');
+  assert.match(view.element('taskCanvas').innerHTML, /新建 · 已推送/,
+    'a card this browser made is now a file, and still says so');
+
+  // The export tells the three states apart, because a pushed card is neither a
+  // local draft nor a clean row.
+  view.element('taskExport').onclick();
+  const [header, ...records] = (await view.blobs[0].text()).replace(/^\uFEFF/, '')
+    .split('\r\n').map(row => Array.from(row.matchAll(/"((?:[^"]|"")*)"/g),
+      match => match[1].replace(/""/g, '"')));
+  const bySlug = Object.fromEntries(records.map(row => [row[0], row]));
+  assert.equal(header[15], 'pushed_at');
+  assert.equal(bySlug['new-part'][14], 'pushed');
+  assert.equal(bySlug.waiter[14], 'pushed');
+  assert.equal(bySlug.parent[14], 'none', 'a card nobody touched is not a draft in the export either');
+  assert.match(bySlug['new-part'][15], /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z$/,
+    'the receipt carries when that commit happened, so a stale badge is checkable');
+  assert.equal(bySlug.parent[15], '');
+  assert.match(bySlug['new-part'][16], /\/tasks\/new-part\.md$/,
+    'a card that became a file points at the file it became');
+  assert.match(app.toasts.at(-1), /批量推送：2 张已推送/, 'one sentence for the whole batch');
+});
+
+test('a create whose file appeared in the meantime is refused instead of silently overwriting', async () => {
+  const view = loadBoardView({ token: 't', routes: { [taskRoute('late')]: taskReply('sha-late') } });
+  view.repo.adopt(view.data.state.tasks.source);
+  await assert.rejects(() => view.repo.pushFile({
+    path: 'tasks/late.md', content: 'x', message: 'docs(tasks): 新建 late 任务卡', baseline: null
+  }), error => {
+    assert.equal(error.conflict, true);
+    assert.equal(error.created, true, 'a create race has to be tellable apart from an edit race');
+    assert.equal(error.remoteSha, 'sha-late');
+    assert.match(error.remoteText, /这一句必须活过一次推送/);
+    assert.match(error.message, /而草稿是按「文件还不存在」写的/);
+    return true;
+  });
+  assert.equal(putOf(view), undefined);
+});
+
+test('without a token the board still reads: preview works and push says what is missing', async () => {
+  const view = loadBoardView({ routes: { [taskRoute('parent')]: taskReply('sha-a') } });
+  await view.tasksync.init();
+  view.board.setStatus('parent', 'review');
+  view.render.renderTasks();
+  assert.match(view.element('taskDraftList').innerHTML, /待推送/);
+
+  assert.equal(await view.tasksync.push('parent'), null);
+  assert.equal(view.requests.length, 0, 'a push without a credential asks the network for nothing');
+  assert.match(view.element('taskSyncMessage').textContent,
+    /请先填写 GitHub Token.*画布、清单与导出照常，草稿仍留在本机/s);
+
+  const composed = await view.tasksync.preview('parent');
+  assert.ok(composed.ok, 'reading a public source file needs no token');
+  assert.equal(view.element('taskPushBox').classes.has('hidden'), false);
+  assert.equal(view.element('taskPushPath').textContent, 'tasks/parent.md');
+  assert.match(view.element('taskPushText').textContent, /status: review/);
+  assert.match(view.element('taskPushText').textContent, /这一句必须活过一次推送/);
+  assert.match(view.element('taskPushNote').textContent, /只替换 status/);
+  assert.match(view.element('taskSyncMessage').textContent, /正文取自远端/);
+  assert.match(view.element('taskPushEdit').getAttribute('href'),
+    /^https:\/\/github\.com\/isLinXu\/model-observatory\/edit\/main\/tasks\/parent\.md$/,
+    'the link is built from the coordinates the collector published');
+  assert.equal(putOf(view), undefined, 'a preview never writes');
+
+  const discardButton = { dataset: { taskDiscard: 'parent' } };
+  view.element('taskDraftList').events.click({ target: {
+    closest: selector => selector === 'button' ? discardButton : null } });
+  assert.equal(view.board.patchOf('parent'), null);
+  assert.match(view.element('taskDraftList').innerHTML, /没有待推送或待索引的卡片/);
+});
+
+test('the keyboard drives the canvas: digits change lane, l and d draw in two presses, Esc drops', async () => {
+  const view = loadBoardView();
+  const app = await startTaskApp(view);
+  const cards = {};
+  ['parent', 'child', 'waiter'].forEach(slug => {
+    const card = fakeElement();
+    card.dataset.taskCard = slug;
+    cards[slug] = card;
+  });
+  const canvas = view.element('taskCanvas');
+  const press = (slug, key) => {
+    let defaulted = false;
+    canvas.events.keydown({ key, preventDefault() { defaulted = true; },
+      target: { closest: selector => selector === '[data-task-card]' ? cards[slug] : null } });
+    return defaulted;
+  };
+
+  assert.equal(press('parent', '9'), false, 'a digit outside the seven lanes belongs to the page');
+  assert.equal(press('parent', '3'), true);
+  assert.equal(view.board.patchOf('parent').status, 'blocked');
+  assert.match(app.toasts.at(-1), /状态改为「受阻」（本地草稿）/);
+  assert.match(canvas.innerHTML, /data-task-card="parent" style="left:594px/);
+  press('parent', '3');
+  assert.match(app.toasts.at(-1), /parent 本来就在「受阻」道，状态没有改动/);
+
+  press('parent', 'l');
+  assert.match(view.element('taskCanvasSize').textContent, /依赖线：从 parent 出发/);
+  press('waiter', 'l');
+  assert.deepEqual(view.board.patchOf('parent').depends, ['waiter']);
+  assert.match(app.toasts.at(-1), /已连上：parent 等待 waiter/);
+
+  // A different key mid-gesture abandons the first line instead of crossing it.
+  press('child', 'd');
+  press('parent', 'l');
+  assert.equal(view.board.patchOf('child'), null, 'a 拆解 line does not become a 依赖 line');
+  assert.match(view.element('taskCanvasSize').textContent, /依赖线：从 parent 出发/,
+    'the abandoned line is replaced by the one asked for next, not left half drawn');
+
+  // Escape abandons it too, and names the card it came from.
+  press('waiter', 'd');
+  press('child', 'Escape');
+  assert.match(view.element('taskCanvasSize').textContent, /已取消：waiter 的线没有连到任何卡/);
+  assert.equal(view.board.patchOf('waiter'), null, 'the cancelled 拆解 wrote nothing');
+
+  press('waiter', 'd');
+  press('child', 'd');
+  assert.equal(view.board.patchOf('waiter').parent, 'child');
+  assert.match(app.toasts.at(-1), /已拆解：waiter 现在是 child 的子任务/);
+
+  // With no line pending, Escape is the page's key again.
+  assert.equal(press('child', 'Escape'), false);
+});
+
+// --- Paper lists: boundaries, degradation and byte budgets ------------------
+
+// A row in the shape the collector publishes: snake_case, with the two counts
+// that must never be merged sitting in their own fields.
+function awesomeRowFixture(id, extra = {}) {
+  return {
+    id, kind: 'markdown-table', upstream: false, status: 'ok', error: null,
+    captured_at: '2026-11-02T14:49:06Z', last_attempt_at: '2026-11-02T14:49:06Z',
+    measured: { entries: 10, with_arxiv: 8, with_code: 3, with_date: 6, with_venue: 1,
+      unique_ids: 10, sections: 2, skipped: 1,
+      files: [{ path: 'README.md', bytes: 4096, lines: 120, rows: 10 }] },
+    self_reported: { file: 'README.md', entries: 12, values: [12] },
+    cadence: { status: 'ok', last_file_commit_at: '2026-11-01T04:00:00Z', author: 'isLinXu',
+      is_bot: false, cadence: 'daily', stale_days: 1, stalled: false, commits_seen: 3 },
+    diff: { baseline: false, added: 2, removed: 0, held: 10 },
+    sample: [{ id: 'arxiv:2611.00001', title: 'A paper', url: 'https://arxiv.org/abs/2611.00001',
+      arxiv_id: '2611.00001', published: '2026-11', venue: null, section: '最新', is_new: true }],
+    files: [{ path: 'README.md', bytes: 4096 }],
+    ...extra
+  };
+}
+
+function awesomeSnapshotFixture(repos, extra = {}) {
+  return {
+    schema_version: 1,
+    source: { id: 'awesome', budget: { sample_limit: 40, ledger_id_limit: 4000 } },
+    status: 'ok', captured_at: '2026-11-02T14:49:06Z', last_attempt_at: '2026-11-02T14:49:06Z',
+    error: null, warnings: [], fetches: { files: 3, bytes: 2048 },
+    sizes: { payload_bytes: 40000, payload_budget_bytes: 122880,
+      ledger_bytes: 9000, ledger_budget_bytes: 204800 },
+    summary: { repos: repos.length, repos_ok: repos.filter(row => row.status === 'ok').length,
+      repos_stale: repos.filter(row => row.status === 'stale').length,
+      entries_measured: 10, entries_upstream: 0, entries_by_kind: { 'markdown-table': 10 },
+      with_arxiv: 8, with_code: 3, added: 2, removed: 0, stalled: 0, self_reported_repos: 1 },
+    changes: { added: [], removed: [], grown: [], shrunk: [], status: [] },
+    repos,
+    ...extra
+  };
+}
+
+test('what a list claims about itself never joins what we counted, and an upstream row stays on its own side', () => {
+  const data = loadData();
+  data.state.awesome = awesomeSnapshotFixture([
+    awesomeRowFixture('isLinXu/own', { self_reported: { file: 'README.md', entries: 999, values: [999] } }),
+    awesomeRowFixture('BradyFU/theirs', { upstream: true, self_reported: null,
+      measured: { entries: 30, with_arxiv: 30, unique_ids: 30 } })
+  ], { summary: { repos: 2, repos_ok: 2, entries_measured: 10, entries_upstream: 30,
+    entries_by_kind: { 'markdown-table': 10 }, added: 2, removed: 0, stalled: 0,
+    self_reported_repos: 1 } });
+  const stats = data.awesomeStats();
+  assert.equal(stats.measured, 10, 'the headline is our own count, not ours plus the upstream list');
+  assert.equal(stats.upstream, 30, 'the upstream count is published next to it, never inside it');
+  assert.equal(stats.selfReportedRepos, 1);
+  assert.equal(stats.upstreamRepos, 1);
+  const view = loadModelView(data);
+  view.render.renderAwesome();
+  assert.equal(view.element('statAwesomeMeasured').textContent, '10');
+  assert.equal(view.element('statAwesomeMeasuredSub').textContent, 'Markdown 表格 10',
+    'the caption breaks our own count down by list kind, and adds nothing else');
+  assert.match(view.element('awesomeStatus').textContent, /实测 10 条（自有） \+ 30 条（上游）/);
+  assert.match(view.element('awesomeCards').innerHTML, /自报<\/span><b>999<\/b>/,
+    'the claim is shown, labelled as the repository speaking about itself');
+  assert.ok(!/999/.test(view.element('statAwesomeMeasured').textContent +
+    view.element('statAwesomeMeasuredSub').textContent), 'no self-reported number reaches a total');
+});
+
+test('a row that lost its cadence, badge or sample still gets a card, and an unknown status degrades to 未读到', () => {
+  const data = loadData();
+  data.state.awesome = awesomeSnapshotFixture([
+    { id: 'isLinXu/bare', kind: 'markdown-table', status: 'ok' },
+    awesomeRowFixture('isLinXu/whole', { status: 'stale' }),
+    awesomeRowFixture('isLinXu/weird', { status: 'exploded' })
+  ], { status: 'partial' });
+  const rows = data.awesomeRows();
+  assert.deepEqual(plain(rows.map(row => row.status)), ['ok', 'stale', 'unavailable']);
+  assert.equal(rows[0].cadence.state, 'unknown');
+  assert.equal(rows[0].selfReported, null);
+  assert.deepEqual(plain(rows[0].sample), []);
+  assert.equal(rows[0].measured.entries, null, 'an absent count stays absent instead of becoming a zero');
+  assert.equal(rows[0].diff.baseline, false);
+  const view = loadModelView(data);
+  view.render.renderAwesome();
+  assert.match(view.element('awesomeStatus').textContent, /部分清单本次没读到/);
+  assert.match(view.element('awesomeCards').innerHTML, /isLinXu\/bare/);
+  assert.match(view.element('awesomeCards').innerHTML, /isLinXu\/weird/);
+  assert.match(view.element('awesomeNotes').innerHTML, /沿用上次/);
+  assert.deepEqual(plain(data.awesomeFlow().map(entry => entry.repoId)).sort(),
+    ['isLinXu/weird', 'isLinXu/whole'].sort(), 'a row that lost its sample adds no line to the flow');
+});
+
+test('a snapshot the board cannot read leaves the other panels alone and says so in its own section', async () => {
+  const data = loadData(async url => {
+    if (url.includes('awesome.json')) throw new TypeError('Failed to fetch');
+    return jsonResponse({ schema_version: 1, source: { id: 'other' }, status: 'ok' });
+  }, { TypeError });
+  await data.loadAwesome();
+  assert.equal(data.state.awesome.status, 'unavailable');
+  assert.deepEqual(plain(data.awesomeRows()), []);
+  assert.equal(data.awesomeStats().available, false);
+  const view = loadModelView(data);
+  view.render.renderAwesome();
+  assert.match(view.element('awesomeStatus').textContent, /清单跟踪数据暂不可用/);
+  assert.match(view.element('awesomeCards').innerHTML, /快照还没读到/);
+  assert.ok(view.element('awesomeExport').disabled, 'an empty board has nothing to export');
+
+  // A snapshot that arrives later is kept: a second failure does not wipe a board
+  // the reader already trusted, it only says the read failed.
+  data.state.awesome = awesomeSnapshotFixture([awesomeRowFixture('isLinXu/own')]);
+  const payload = data.state.awesome;
+  await assert.rejects(() => data.refreshAwesomeSnapshot(), /Failed to fetch|其他/);
+  assert.equal(data.state.awesome, payload, 'a failed refresh keeps the last good snapshot');
+  assert.match(data.state.awesomeRefreshError, /Failed to fetch/);
+});
+
+test('a snapshot from another source is refused rather than rendered as paper lists', async () => {
+  const data = loadData(async () => jsonResponse(
+    awesomeSnapshotFixture([awesomeRowFixture('isLinXu/own')], { source: { id: 'github' } })));
+  await data.loadAwesome();
+  assert.equal(data.state.awesome.status, 'unavailable',
+    'a payload for a different board never borrows this section\'s markup');
+  assert.match(data.state.awesome.error, /不兼容|格式/);
+});
+
+test('cards escape what a list says and never turn a non-http link into an anchor', () => {
+  const data = loadData();
+  const hostile = awesomeRowFixture('isLinXu/evil', {
+    measured: { entries: 1, note: '![badge](https://evil.test/track.png)',
+      files: [{ path: '"><script>alert(1)</script>', bytes: 1 }] },
+    self_reported: { file: '"><b>x</b>', entries: null, values: [] },
+    cadence: { status: 'ok', author: '<img src=x onerror=alert(1)>', cadence: 'daily', stale_days: 0 },
+    diff: { baseline: false, added: 0, removed: 0, held: 1 },
+    sample: [{ id: 'x', title: '<script>alert(1)</script>=SUM(1,2)',
+      url: 'javascript:alert(1)', arxiv_id: null, published: null, venue: null,
+      section: '"><u>s</u>', is_new: false }],
+    topics: [{ topic: '<i>t</i>', status: 'ok', latest_month: '2026-11' }]
+  });
+  data.state.awesome = awesomeSnapshotFixture([hostile]);
+  const view = loadModelView(data);
+  data.state.awesomeOpen = 'isLinXu/evil';
+  view.render.renderAwesome();
+  const cards = view.element('awesomeCards').innerHTML + view.element('awesomeNotes').innerHTML;
+  data.state.awesomeView = 'flow';
+  view.render.renderAwesome();
+  const flow = view.element('awesomeFlowRows').innerHTML;
+  for (const [name, markup] of [['cards', cards], ['flow', flow]]) {
+    assert.ok(!/<script/i.test(markup), `${name}: no markup survives from a list into the page`);
+    assert.ok(!/href="javascript:/i.test(markup), `${name}: a javascript url is never made clickable`);
+    assert.ok(!/href="https:\/\/evil\.test/i.test(markup), `${name}: a badge url is not turned into a link`);
+    // text a reader can see may still describe an attack; what matters is that it
+    // sits inside escaped text, never inside a tag or an attribute.
+    assert.ok(!/onerror=/i.test(markup.replace(/&lt;[\s\S]*?&gt;/g, '')),
+      `${name}: an event handler stays where esc() put it`);
+  }
+  assert.match(cards, /&lt;script&gt;/);
+  assert.match(flow, /&lt;script&gt;/);
+  const rows = data.awesomeRows();
+  assert.equal(rows[0].sample[0].url, null, 'the allowlist rejects it before the renderer sees it');
+  assert.equal(data.awesomeFlow()[0].url, null);
+});
+
+test('the reader gets one snapshot per page, and the button re-reads the published file without collecting', async () => {
+  const observers = [];
+  class IntersectionObserver {
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe(target) { this.target = target; }
+    disconnect() { this.disconnected = (this.disconnected || 0) + 1; }
+  }
+  const view = loadBoardView({ awesome: awesomeSnapshotFixture([awesomeRowFixture('isLinXu/own')]) });
+  const app = await startAwesomeApp(view, { IntersectionObserver });
+  const awesome = observers.find(observer => observer.target === view.element('awesome'));
+  assert.ok(awesome, 'the paper lists are watched, not downloaded at boot');
+  assert.equal(view.requests.filter(request => request.url.includes('/data/awesome.json')).length, 0);
+
+  awesome.callback([{ isIntersecting: true }]);
+  await nextTurn();
+  await nextTurn();
+  assert.equal(view.requests.filter(request => request.url.includes('/data/awesome.json')).length, 1);
+  assert.equal(awesome.disconnected, 1);
+  assert.match(view.element('awesomeCheckedAt').textContent,
+    /最近成功读取快照 .*采集由每日工作流完成/);
+  assert.match(view.element('awesomeCheckedAt').textContent, /快照 39 KB／预算 120 KB/,
+    'the size the collector reported for the file the reader just downloaded');
+  assert.equal(view.element('awesomeExport').disabled, false);
+
+  awesome.callback([{ isIntersecting: true }]);
+  await nextTurn();
+  assert.equal(view.requests.filter(request => request.url.includes('/data/awesome.json')).length, 1,
+    'a second entry into the section is not a second download');
+  assert.equal(app.toasts.length, 0, 'an entry read stays quiet');
+
+  view.element('awesomeRefresh').events.click();
+  await nextTurn();
+  await nextTurn();
+  assert.equal(view.requests.filter(request => request.url.includes('/data/awesome.json')).length, 2);
+  assert.match(app.toasts.at(-1), /刷新只读已发布文件，不会去抓别人的仓库/);
+  assert.equal(view.element('awesomeRefresh').textContent, '刷新已发布快照');
+});
+
+test('a snapshot that reports no sizes still renders: the budget line is the only thing lost', async () => {
+  const snapshot = awesomeSnapshotFixture([awesomeRowFixture('isLinXu/own')]);
+  delete snapshot.sizes;
+  delete snapshot.fetches;
+  const view = loadBoardView({ awesome: snapshot });
+  const app = await startAwesomeApp(view);
+  await view.data.loadAwesome();
+  view.render.renderAwesome();
+  assert.match(view.element('awesomeCheckedAt').textContent, /采集由每日工作流完成$/);
+  assert.ok(!/KB/.test(view.element('awesomeCheckedAt').textContent));
+  assert.equal(app.toasts.length, 0);
+});
+
+test('the list export keeps the two counts in their own columns and guards a title that looks like a formula', async () => {
+  const view = loadBoardView({ awesome: awesomeSnapshotFixture([
+    awesomeRowFixture('isLinXu/own', {
+      self_reported: { file: 'README.md', entries: 999, values: [999] },
+      sample: [{ id: 'arxiv:2611.00002', title: '=SUM(1,2)', url: 'javascript:alert(1)',
+        arxiv_id: '2611.00002', published: '2026-11', venue: 'CVPR', section: '最新', is_new: true }]
+    }),
+    awesomeRowFixture('BradyFU/theirs', { upstream: true, self_reported: null,
+      measured: { entries: 30, with_arxiv: 30, unique_ids: 30 } })
+  ]) });
+  await startAwesomeApp(view);
+  await view.data.loadAwesome();
+  view.element('awesomeExport').onclick();
+  const text = await view.blobs[0].text();
+  const [header, ...records] = text.replace(/^﻿/, '').split('\r\n').map(row =>
+    Array.from(row.matchAll(/"((?:[^"]|"")*)"/g), match => match[1].replace(/""/g, '"')));
+  assert.equal(header.length, 20);
+  assert.equal(header[11], 'measured_entries');
+  assert.equal(header[12], 'self_reported_entries',
+    'two columns because two numbers: our count and the list\'s own claim');
+  const own = records.find(row => row[0] === 'isLinXu/own');
+  const theirs = records.find(row => row[0] === 'BradyFU/theirs');
+  assert.equal(own[4], "'=SUM(1,2)", 'a formula stays a string when the csv is opened');
+  assert.equal(own[5], '', 'a rejected url exports as nothing, not as a guess');
+  assert.equal(own[11], '10');
+  assert.equal(own[12], '999');
+  assert.equal(theirs[1], 'upstream');
+  assert.equal(theirs[12], '', 'an upstream list with no badge exports an empty cell, not a zero');
+  assert.equal(theirs[14], 'yes', 'this row was read today, not carried over');
+  assert.equal(theirs[17], '2026-11-02T14:49:06Z', 'every row carries the snapshot it came from');
+  assert.equal(theirs[18], 'ok', 'and the run that produced it: a partial export says partial');
+  assert.equal(theirs[19], '2026-11-02T14:49:06Z');
+  assert.equal(view.anchors.at(-1).download, 'paper-lists-2026-11-02.csv');
+});
+
+test('a baseline reads 基线, a one-off report reads 不更新, and only a compared row reads numbers', () => {
+  const data = loadData();
+  data.state.awesome = awesomeSnapshotFixture([
+    awesomeRowFixture('isLinXu/new', { diff: { baseline: true, added: 0, removed: 0, held: 10,
+      note: '首次读到这份清单：本次只建立基线，明日起的新增与移出才是可信的变化量。' } }),
+    awesomeRowFixture('isLinXu/report', { kind: 'report', diff: { baseline: false, added: null,
+      removed: null, held: 66, note: '一次性调研报告，没有更新流' } }),
+    awesomeRowFixture('isLinXu/compared', { diff: { baseline: false, added: 4, removed: 1, held: 10 } })
+  ]);
+  const view = loadModelView(data);
+  view.render.renderAwesome();
+  const cards = view.element('awesomeCards').innerHTML;
+  assert.match(cards, /新增 \/ 移出<\/span><b>基线<\/b>/,
+    'a first read is not reported as "zero changes"');
+  assert.match(cards, /新增 \/ 移出<\/span><b>不更新<\/b>/,
+    'a report has no change stream to claim');
+  assert.match(cards, /新增 \/ 移出<\/span><b>\+4 \/ −1<\/b>/);
+  assert.match(cards, /awesome-flag">基线</);
+  assert.match(view.element('awesomeStatus').textContent, /1 个清单还在建立基线/);
+});
+
+test('a list this run never fetched keeps its numbers, and says it was not read', () => {
+  const data = loadData();
+  data.state.awesome = awesomeSnapshotFixture([
+    awesomeRowFixture('isLinXu/fetched'),
+    awesomeRowFixture('isLinXu/skipped', {
+      status: 'stale', not_attempted: true, captured_at: '2026-11-01T12:00:00Z',
+      diff: { baseline: false, added: null, removed: null, held: 10, truncated: true }
+    })
+  ], { status: 'partial' });
+  const view = loadModelView(data);
+  data.state.awesomeView = 'repos';
+  view.render.renderAwesome();
+  const cards = view.element('awesomeCards').innerHTML;
+  assert.match(cards, /awesome-state">本次未读取</, 'the card does not claim a read it did not do');
+  assert.match(cards, /本次没有读取这份清单/);
+  assert.match(cards, /新增 \/ 移出<\/span><b>不可比<\/b>/,
+    'a ledger cut by the cap compares with nothing, so no number is published');
+  assert.match(view.element('statAwesomeReposSub').textContent, /1 个本次没抓取/);
+  assert.match(view.element('statAwesomeDeltaSub').textContent, /1 个清单增删不可比/);
+  data.state.awesomeView = 'flow';
+  view.render.renderAwesome();
+  assert.match(view.element('awesomeFlowRows').innerHTML,
+    /本次未读取 · 2026-11-01 12:00/, 'a carried sample is dated in the flow too');
+});
+
+test('按停更天数 puts the coldest list first and a list with no file history last', () => {
+  const data = loadData();
+  data.state.awesome = awesomeSnapshotFixture([
+    awesomeRowFixture('isLinXu/fresh', { cadence: { status: 'ok', cadence: 'daily', stale_days: 0 } }),
+    awesomeRowFixture('isLinXu/cold', { cadence: { status: 'ok', cadence: 'weekly', stale_days: 241,
+      stalled: true } }),
+    awesomeRowFixture('isLinXu/unknown', { cadence: { status: 'unknown' } }),
+    awesomeRowFixture('isLinXu/warm', { cadence: { status: 'ok', cadence: 'weekly', stale_days: 4 } }),
+    awesomeRowFixture('isLinXu/reused', { status: 'stale',
+      cadence: { status: 'ok', cadence: 'weekly', stale_days: 60 } })
+  ], { status: 'partial' });
+  data.state.awesomeSort = 'stale';
+  assert.deepEqual(plain(data.awesomeFilteredRepos().map(row => row.id)),
+    ['isLinXu/cold', 'isLinXu/reused', 'isLinXu/warm', 'isLinXu/fresh', 'isLinXu/unknown'],
+    'an unreadable file history is a gap, not the freshest list on the board');
+  data.state.awesomeAttention = 'stopped';
+  assert.deepEqual(plain(data.awesomeFilteredRepos().map(row => row.id)), ['isLinXu/cold'],
+    'the 停更 filter asks the file, and only a stalled file answers');
+  data.state.awesomeAttention = 'stale';
+  assert.deepEqual(plain(data.awesomeFilteredRepos().map(row => row.id)), ['isLinXu/reused'],
+    'the 过期 filter asks the row: 60 days on a file nobody stalled is not a stale snapshot');
+});
+
+test('a reader who types the words without the hyphens still finds the list, in cards and in the flow', () => {
+  const data = loadData();
+  data.state.awesome = awesomeSnapshotFixture([
+    awesomeRowFixture('isLinXu/awesome-visual-reasoning', { kind: 'machine-json',
+      sample: [{ id: 'arxiv:2611.00009', title: 'Reasoning about pixels', url: null,
+        arxiv_id: '2611.00009', published: '2026-11', venue: null, section: null, is_new: false }] }),
+    awesomeRowFixture('isLinXu/paper-list', { kind: 'topic-archives',
+      topics: [{ topic: 'World_Models', status: 'ok', latest_month: '2026-10' }] })
+  ]);
+  data.state.awesomeSearch = 'visual reasoning';
+  assert.deepEqual(plain(data.awesomeFilteredRepos().map(row => row.id)),
+    ['isLinXu/awesome-visual-reasoning']);
+  assert.deepEqual(plain(data.awesomeFlow().map(row => row.repoId)),
+    ['isLinXu/awesome-visual-reasoning']);
+  data.state.awesomeSearch = 'paper list';
+  assert.deepEqual(plain(data.awesomeFilteredRepos().map(row => row.id)), ['isLinXu/paper-list'],
+    'a slug typed as two words is still the same list');
+  data.state.awesomeSearch = 'world_models';
+  assert.deepEqual(plain(data.awesomeFilteredRepos().map(row => row.id)), ['isLinXu/paper-list'],
+    'a topic the repository names is searchable, underscores and all');
+  data.state.awesomeSearch = 'world-models';
+  assert.deepEqual(plain(data.awesomeFilteredRepos().map(row => row.id)), ['isLinXu/paper-list'],
+    'the same words with a hyphen are the same search, not an empty panel');
+  data.state.awesomeSearch = 'reasoning-about';
+  assert.equal(data.awesomeFlow().length, 1,
+    'a title hit survives the reader typing a hyphen where the title has a space');
+  data.state.awesomeSearch = 'reasoning';
+  assert.equal(data.awesomeFlow().length, 1, 'a flow row that matches only its title still counts as found');
+  data.state.awesomeSearch = 'no such list';
+  assert.equal(data.awesomeFilteredRepos().length, 0);
+  assert.equal(data.awesomeFlow().length, 0);
+});
+
+test('the attention filter names the reasons a card needs a look and keeps them apart', () => {
+  const data = loadData();
+  const rows = [
+    awesomeRowFixture('isLinXu/baseline', { diff: { baseline: true, added: 0, removed: 0, held: 10 } }),
+    awesomeRowFixture('isLinXu/truncated', { diff: { baseline: false, added: 1, removed: 0,
+      held: 4000, truncated: true } }),
+    awesomeRowFixture('isLinXu/rolling', { diff: { baseline: false, added: 0, removed: 3, held: 10,
+      rolling_window: true } }),
+    awesomeRowFixture('isLinXu/mismatch', { self_reported: { file: 'README.md', entries: 400, values: [400] } }),
+    awesomeRowFixture('isLinXu/capped', {
+      measured: { entries: 60, byte_capped: true, unique_ids: 60 },
+      self_reported: null }),
+    awesomeRowFixture('isLinXu/report', { kind: 'report',
+      measured: { entries: 60, unlinked_rows: 21, skipped: 0, unique_ids: 60,
+        note: '该文件是一次性报告：无外链的行只在认得出会议或日期时才计入' },
+      self_reported: { file: 'README.md', entries: 60, values: [60] } }),
+    awesomeRowFixture('isLinXu/quiet', { self_reported: { file: 'README.md', entries: 10, values: [10] } })
+  ];
+  data.state.awesome = awesomeSnapshotFixture(rows);
+  const flagged = Object.fromEntries(rows.map(row =>
+    [row.id, plain(data.awesomeAttention(data.awesomeRows().find(entered => entered.id === row.id)))]));
+  assert.match(flagged['isLinXu/baseline'].join(' '), /首次基线/);
+  assert.match(flagged['isLinXu/truncated'].join(' '), /下限/);
+  assert.match(flagged['isLinXu/rolling'].join(' '), /滚动窗口/);
+  assert.match(flagged['isLinXu/mismatch'].join(' '), /自报 400 条与实测 10 条不一致/);
+  assert.match(flagged['isLinXu/capped'].join(' '), /超过单文件上限/);
+  assert.deepEqual(flagged['isLinXu/report'], [],
+    '报告里按会议引用的行已经计入条目数，它是一句口径说明，不是待办');
+  assert.deepEqual(flagged['isLinXu/quiet'], [], 'a list that agrees with itself asks for nothing');
+  data.state.awesomeAttention = 'attention';
+  assert.deepEqual(plain(data.awesomeFilteredRepos().map(row => row.id)).sort(), [
+    'isLinXu/baseline', 'isLinXu/capped', 'isLinXu/mismatch', 'isLinXu/rolling', 'isLinXu/truncated'
+  ].sort());
+});
+
+test('the ledger cap and the sample are said out loud instead of being quietly exceeded', () => {
+  const data = loadData();
+  data.state.awesome = awesomeSnapshotFixture([
+    awesomeRowFixture('isLinXu/huge', { sample: Array.from({ length: 40 }, (unused, index) => ({
+      id: `arxiv:2611.000${index}`, title: `Paper ${index}`, url: 'https://arxiv.org/abs/2611.00001',
+      arxiv_id: '2611.00001', published: '2026-11', venue: null, section: null, is_new: index < 3
+    })) })
+  ], { summary: { repos: 1, repos_ok: 1, entries_measured: 10, added: 3, removed: 0, stalled: 0,
+    self_reported_repos: 1, entries_by_kind: { 'markdown-table': 10 } } });
+  const view = loadModelView(data);
+  view.render.renderAwesome();
+  assert.match(view.element('statAwesomeDeltaSub').textContent,
+    /台账上限 4,000 个 id／清单/, 'the budget is stated in the panel, not only in the code');
+  data.state.awesomeOpen = 'isLinXu/huge';
+  view.render.renderAwesomeCards();
+  const detail = view.element('awesomeCards').innerHTML;
+  assert.equal((detail.match(/<li class="awesome-entry/g) || []).length, 40,
+    'the detail opens the capped view, and says it is one');
+  assert.match(detail, /最近条目样本：上限来自采集器预算/,
+    'the sample is labelled as a window, not as the list');
+});
+
+test('the daily history file has a reader, and it says when there is too little of it', async () => {
+  const snapshot = awesomeSnapshotFixture([awesomeRowFixture('isLinXu/own')]);
+  const day = (offset, repos, measured, upstream) => ({
+    date: `2026-10-2${offset}`, captured_at: `2026-10-2${offset}T14:49:06Z`,
+    repos, tracked: 6, entries_measured: measured, entries_upstream: upstream,
+    added: 0, removed: 0, stalled: 0
+  });
+  const view = loadBoardView({
+    awesome: snapshot,
+    history: {
+      schema_version: 1, source: { id: 'awesome' },
+      retention: { daily_days: 120, monthly_points: 24 },
+      // out of order on purpose: the file is drawn as a series, not as a log
+      snapshots: [day(3, 6, 4390, 512), day(1, 6, 4300, 500), day(2, 3, 4360, 510)]
+    }
+  });
+  await startAwesomeApp(view);
+  await view.data.loadAwesome();
+  const trend = view.data.awesomeTrend();
+  assert.deepEqual(plain(trend.measured.map(point => point.date)),
+    ['2026-10-21', '2026-10-22', '2026-10-23'], 'the series is sorted by day, not by file order');
+  assert.equal(trend.enough, true);
+  assert.equal(trend.netChange, 90, 'the change is between the two ends, not a sum of days');
+  assert.equal(trend.partialDays, 1, 'a day that read 3 of 6 lists carried numbers');
+  view.render.renderAwesome();
+  assert.match(view.element('awesomeTrendNote').textContent, /净变化 \+90/);
+  assert.match(view.element('awesomeTrendNote').textContent, /沿用的/,
+    'a flat stretch is called what it is: a day we did not read');
+  assert.match(view.element('awesomeTrendNote').textContent, /120 天逐日/);
+
+  view.data.state.awesomeHistory = [day(3, 6, 4390, 512)];
+  view.render.renderAwesomeTrend();
+  assert.match(view.element('awesomeTrendNote').textContent, /样本太少，看不出趋势/,
+    'two points would draw a straight line over whatever happened between them');
+  assert.equal(view.element('awesomeTrendMetric').value, 'measured');
+  view.data.state.awesomeTrendMetric = 'readable';
+  view.render.renderAwesomeTrend();
+  assert.match(view.element('awesomeTrendLabel').textContent, /当天真正读到的清单数/);
+});
+
+test('a history file the board cannot read costs the trend and nothing else', async () => {
+  const view = loadBoardView({ awesome: awesomeSnapshotFixture([awesomeRowFixture('isLinXu/own')]),
+    history: null });
+  const app = await startAwesomeApp(view);
+  await view.data.loadAwesome();
+  view.render.renderAwesome();
+  assert.equal(view.data.state.awesomeHistory, null);
+  assert.match(view.element('awesomeTrendNote').textContent, /历史读取失败/);
+  assert.match(view.element('awesomeCards').innerHTML, /isLinXu\/own/,
+    'the snapshot the reader came for still renders');
+  assert.match(view.element('awesomeStatus').textContent, /实测 10 条（自有）/);
+  assert.equal(app.toasts.length, 0, 'a missing side file is not a toast');
+});
+
+test('one list can be read on its own, and its registry entry links back instead of copying over',
+  async () => {
+    const view = loadBoardView({
+      awesome: awesomeSnapshotFixture([
+        awesomeRowFixture('isLinXu/own'), awesomeRowFixture('isLinXu/other')
+      ]),
+      entities: [entityEntry('awesome-own', { links: [entityLink('gh_repo', 'isLinXu/own')] })]
+    });
+    const app = await startAwesomeApp(view);
+    await view.data.loadAwesome();
+    const data = view.data;
+    view.render.renderAwesome();
+
+    const click = (selector, dataset) => view.element('awesomeCards').events.click({
+      target: { closest: asked => (asked === selector ? { dataset } : null) }
+    });
+
+    data.state.awesomeOpen = 'isLinXu/own';
+    view.render.renderAwesomeCards();
+    const detail = view.element('awesomeCards').innerHTML;
+    assert.match(detail, /实体注册表<\/b>：1 条登记了这份仓库/, 'the card asks the registry who is in');
+    assert.match(detail, /awesome-own/, 'and names the entry, not a copied number');
+    const registryLine = detail.slice(detail.indexOf('实体注册表</b>'));
+    assert.ok(!/实测/.test(registryLine.slice(0, registryLine.indexOf('</div>'))),
+      'the registry line names entries and states nothing about counts: the numbers stay on this board');
+
+    click('[data-awesome-registry]', { awesomeRegistry: 'gh_repo:isLinXu/own' });
+    assert.equal(data.state.entityObject, 'gh_repo:isLinXu/own',
+      'the chip asks the reverse question in the registry board');
+    assert.match(app.toasts.at(-1), /关系归那个栏目/);
+
+    click('[data-awesome-focus]', { awesomeFocus: 'isLinXu/own' });
+    assert.equal(data.state.awesomeFocus, 'isLinXu/own');
+    assert.deepEqual(plain(data.awesomeFilteredRepos().map(row => row.id)), ['isLinXu/own']);
+    assert.deepEqual(plain([...new Set(data.awesomeFlow().map(entry => entry.repoId))]), ['isLinXu/own'],
+      'the flow narrows to the same list the cards did');
+    assert.equal(view.element('awesomeFocusNote').hidden, false);
+    assert.match(view.element('awesomeFocusNote').textContent, /只看 isLinXu\/own/);
+    assert.equal(view.element('awesomeFilterReset').disabled, false,
+      'a focus is a filter, so reset has to be reachable');
+
+    click('[data-awesome-focus]', { awesomeFocus: 'isLinXu/own' });
+    assert.equal(data.state.awesomeFocus, null, 'the same button clears it');
+    assert.equal(view.element('awesomeFocusNote').hidden, true);
+
+    click('[data-awesome-focus]', { awesomeFocus: 'isLinXu/other' });
+    view.element('awesomeFocusNote').events.click();
+    assert.equal(data.state.awesomeFocus, null, 'the toolbar chip clears it too');
+
+    data.state.awesomeOpen = 'isLinXu/other';
+    view.render.renderAwesomeCards();
+    assert.match(view.element('awesomeCards').innerHTML, /还没有条目登记这份仓库/,
+      'a list nobody registered says so instead of looking like a read failure');
+  });
 

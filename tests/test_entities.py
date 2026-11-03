@@ -369,6 +369,16 @@ class EntryTest(unittest.TestCase):
         row = self.build("alpha.md", frontmatter(links=["scholar:MME: A Comprehensive Evaluation"]))
         self.assertEqual(row["links"][0]["id"], "mme")
 
+    def test_the_entry_publishes_a_git_baseline_for_write_back(self):
+        text = frontmatter("阿尔法", links=["hf_model:gatilin/Alpha"])
+        row = self.build("alpha.md", text)
+        self.assertEqual(row["blob_sha"], ce.blob_sha(text.encode("utf-8")))
+        # A comment inside the front matter moves no published field, yet the
+        # baseline the browser compares against has to notice it.
+        moved = self.build("alpha.md", text.replace("title:", "# 备注\ntitle:"))
+        self.assertNotEqual(moved["blob_sha"], row["blob_sha"])
+        self.assertEqual(moved["sha256"], row["sha256"])
+
     def test_a_long_body_is_cut_but_still_measured_in_full(self):
         with patch.object(ce, "MAX_BODY_CHARS", 40):
             row = self.build("alpha.md", frontmatter() + "x" * 60)
@@ -468,6 +478,19 @@ class PublishTest(unittest.TestCase):
         history = json.loads((self.data / "entities_history.json").read_text(encoding="utf-8"))
         self.assertEqual(history["snapshots"][0]["ids"], ["alpha", "beta"])
         self.assertEqual(history["snapshots"][0]["resolved"], 2)
+
+    def test_the_snapshot_publishes_the_vocabulary_the_editor_checks_against(self):
+        """The browser refuses a mistyped prefix using this list, not its own copy."""
+        self.assertEqual(self.publish(), "ok")
+        source = self.payload()["source"]
+        self.assertEqual(source["kinds"], list(ce.KINDS))
+        self.assertEqual(source["stages"], list(ce.STAGES))
+        self.assertEqual(source["domains"], list(ce.DOMAINS))
+        self.assertEqual(source["repo"], "isLinXu/model-observatory")
+        self.assertEqual(source["branch"], "main")
+        # An entry the page can push back has to say which file it came from.
+        self.assertEqual(self.payload()["entries"][0]["blob_sha"],
+                         ce.blob_sha((self.entities / "alpha.md").read_bytes()))
 
     def test_a_second_run_reports_revisions_and_removals(self):
         self.publish()

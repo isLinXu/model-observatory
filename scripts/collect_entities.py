@@ -38,11 +38,11 @@ from pathlib import Path
 from typing import Any
 
 try:  # executed as a script (python scripts/collect_entities.py)
-    from collect import atomic_json_write, entity_url
+    from collect import atomic_json_write, blob_sha, entity_url
     from collect_templates import (MAX_BODY_CHARS, SLUG_PATTERN, _clean_value,
                                    normalise_tags, parse_frontmatter)
 except ImportError:  # imported as a module (from scripts.collect_entities import ...)
-    from scripts.collect import atomic_json_write, entity_url
+    from scripts.collect import atomic_json_write, blob_sha, entity_url
     from scripts.collect_templates import (MAX_BODY_CHARS, SLUG_PATTERN, _clean_value,
                                           normalise_tags, parse_frontmatter)
 
@@ -326,9 +326,10 @@ def build_entry(path: Path, repo: str, branch: str,
     if updated and not DATE_RE.match(updated):
         add_note(errors, f"{slug}：updated「{updated[:24]}」不是 YYYY-MM-DD，按未标注处理")
         updated = ""
-    # ``body`` below is cut at MAX_BODY_CHARS, but bytes/lines/sha256 describe
-    # the whole file, so a truncated entry still shows its true size and still
-    # diffs when the only edit lives past the cut.
+    # ``body`` below is cut at MAX_BODY_CHARS, but bytes/lines/sha256 measure the
+    # whole body and blob_sha hashes the whole file, so a truncated entry still
+    # shows its true size, still diffs when the only edit lives past the cut, and
+    # still gives the browser a write-back baseline that cannot be faked.
     truncated = len(body) > MAX_BODY_CHARS
     entry = {
         "slug": slug,
@@ -341,6 +342,7 @@ def build_entry(path: Path, repo: str, branch: str,
         "bytes": len(body.encode("utf-8")),
         "lines": len(body.splitlines()),
         "sha256": hashlib.sha256(body.encode("utf-8")).hexdigest()[:16],
+        "blob_sha": blob_sha(text.encode("utf-8")),
         "truncated": truncated,
         "url": f"https://github.com/{repo}/blob/{branch}/entities/{slug}.md",
         "body": body[:MAX_BODY_CHARS],
@@ -548,7 +550,10 @@ def _envelope(at: dt.datetime, repo: str, branch: str) -> dict:
     return {
         "schema_version": SCHEMA_VERSION,
         "source": {"id": SOURCE_ID, "directory": "entities", "repo": repo, "branch": branch,
-                   "url": f"https://github.com/{repo}/tree/{branch}/entities"},
+                   "url": f"https://github.com/{repo}/tree/{branch}/entities",
+                   # Published so the browser's editor checks a draft against the
+                   # vocabulary this collector enforces, not a hand-copied list.
+                   "kinds": list(KINDS), "stages": list(STAGES), "domains": list(DOMAINS)},
         "captured_at": None, "last_attempt_at": timestamp(at),
     }
 

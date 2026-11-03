@@ -407,7 +407,7 @@
       'text/csv;charset=utf-8');
   }
 
-  /** Re-read the published registry index; the board is read-only by design. */
+  /** Re-read the published registry index; this never writes to the repo. */
   async function refreshEntities() {
     const button = $('entityRefresh');
     if (button.disabled) return;
@@ -417,7 +417,7 @@
     try {
       const payload = await data.refreshEntitySnapshot();
       render.showToast(payload.status === 'ok'
-        ? '已读取注册表快照；本页只读，不会触发后台采集，也不会修改任何条目。'
+        ? '已读取注册表快照；刷新只读取已发布文件，不会触发后台采集，也不会修改任何条目。'
         : '已读取注册表快照，但后台最近一次索引未成功；页面继续显示上次数据。');
     } catch (error) {
       render.showToast(`注册表快照读取失败：${error.message}。保留上次数据。`);
@@ -426,6 +426,8 @@
       button.removeAttribute('aria-busy');
       button.textContent = '刷新已发布快照';
       render.renderEntities();
+      // The draft list names its entries from the index, so it follows the refresh.
+      MO.registry.renderDrafts();
     }
   }
 
@@ -451,12 +453,429 @@
     return state.entityOpen;
   }
 
+  /**
+   * The editor holds the remote source file, not the truncated copy the index
+   * published. The row opens with it so the link states the author is about to
+   * change stay on screen while they type.
+   */
+  async function editEntityEntry(slug) {
+    if (data.state.entityOpen !== slug) openEntityEntry(slug);
+    const opened = await MO.registry.open(slug);
+    render.showToast(opened
+      ? `编辑器里是 ${MO.registry.pathFor(slug)} 的远端原文，推送前会做基线检查。`
+      : `回写暂不可用：${MO.registry.state.sync.message || '需要 GitHub Token。'}`);
+    return opened;
+  }
+
   /** Clicking a link chip asks the reverse question: who else references it? */
   function selectEntityObject(key) {
     const state = data.state;
     state.entityObject = state.entityObject === key ? 'all' : key;
     state.entityPage = 1;
     render.renderEntities();
+  }
+
+  // --- Task board -----------------------------------------------------------
+
+  let taskDrag = null;
+  let taskKeyLink = null;
+  let taskSnapshotRead = false;
+  // --- Paper-list tracking --------------------------------------------------
+  let awesomeSnapshotRead = false;
+
+  /**
+   * Where the pointer is *on the canvas*, not on the screen: the box scrolls, so
+   * a drop has to be measured against the cards' own coordinates.
+   */
+  function taskPoint(event, canvas) {
+    const rect = canvas.getBoundingClientRect ? canvas.getBoundingClientRect() : { left: 0, top: 0 };
+    return {
+      x: Number(event?.clientX || 0) - (rect.left || 0) + (canvas.scrollLeft || 0),
+      y: Number(event?.clientY || 0) - (rect.top || 0) + (canvas.scrollTop || 0)
+    };
+  }
+
+  /** What a drop means: another card (拆解), a different lane (状态), or furniture. */
+  function taskDrop(slug, point, mode = 'move') {
+    const board = MO.board;
+    const rows = board.rows();
+    const row = board.findRow(slug, rows);
+    if (!row) return { kind: 'none' };
+    const over = board.hitCard(point, board.layout(rows).cards, slug);
+    if (over) return { kind: 'card', target: over };
+    const lane = board.laneAt(point.x);
+    if (mode === 'link') return { kind: 'nowhere', lane };
+    if (lane !== row.lane) return { kind: 'lane', lane };
+    return { kind: 'place', point };
+  }
+
+  function taskReadout(text) {
+    $('taskCanvasSize').textContent = text;
+  }
+
+  function endTaskDrag() {
+    const canvas = $('taskCanvas');
+    if (taskDrag?.card) taskDrag.card.classList.remove(taskDrag.mode === 'link' ? 'is-linking' : 'is-dragging');
+    if (taskDrag?.hover) taskDrag.hover.classList.remove('is-target');
+    if (canvas.releasePointerCapture && taskDrag?.pointerId !== undefined) {
+      try { canvas.releasePointerCapture(taskDrag.pointerId); } catch (error) { /* already gone */ }
+    }
+    taskDrag = null;
+  }
+
+  function onTaskPointerDown(event) {
+    const card = event?.target?.closest?.('[data-task-card]');
+    if (!card || event.target.closest?.('button, a')) return;
+    const canvas = $('taskCanvas');
+    const point = taskPoint(event, canvas);
+    const handle = event.target.closest?.('[data-task-link]');
+    taskDrag = {
+      slug: card.dataset.taskCard, mode: handle ? 'link' : 'move', card, from: point, point,
+      moved: false, hover: null, pointerId: event.pointerId
+    };
+    card.classList.add(handle ? 'is-linking' : 'is-dragging');
+    // Capture keeps the drag alive when the pointer leaves the card; a browser
+    // without it still drags inside the canvas.
+    if (canvas.setPointerCapture && event.pointerId !== undefined) {
+      try { canvas.setPointerCapture(event.pointerId); } catch (error) { /* no pointer */ }
+    }
+    event.preventDefault?.();
+  }
+
+  function onTaskPointerMove(event) {
+    if (!taskDrag) return;
+    const canvas = $('taskCanvas');
+    const point = taskPoint(event, canvas);
+    if (!taskDrag.moved && Math.abs(point.x - taskDrag.from.x) + Math.abs(point.y - taskDrag.from.y) < 6) return;
+    taskDrag.moved = true;
+    taskDrag.point = point;
+    const cards = MO.board.rows();
+    const hit = MO.board.hitCard(point, MO.board.layout(cards).cards, taskDrag.slug);
+    if (taskDrag.hoverSlug !== hit) {
+      taskDrag.hover?.classList?.remove('is-target');
+      // Looked up by dataset rather than by selector: a slug is user input, and
+      // an escaped-selector path is one more way to get this wrong.
+      taskDrag.hover = hit
+        ? (Array.from(canvas.querySelectorAll?.('[data-task-card]') || [])
+            .find(element => element.dataset?.taskCard === hit) || null)
+        : null;
+      taskDrag.hoverSlug = hit;
+      taskDrag.hover?.classList?.add('is-target');
+    }
+    if (taskDrag.mode === 'move' && taskDrag.card) {
+      // The box follows the pointer while the drag is alive; the commit only
+      // happens on release, so a cancelled drag leaves no orphan coordinate.
+      taskDrag.card.setAttribute('style', `left:${Math.round(point.x - 60)}px;top:${Math.round(point.y - 24)}px`);
+    }
+    taskReadout(hit
+      ? (taskDrag.mode === 'link'
+        ? `松手：${taskDrag.slug} 等待 ${hit}（这条线会写进 ${taskDrag.slug} 的 depends）`
+        : `松手：把 ${taskDrag.slug} 拆到 ${hit} 下面（这条线会写进 ${taskDrag.slug} 的 parent）`)
+      : taskDrag.mode === 'link'
+        // A lane name would be a lie here: a line has no lane to land in.
+        ? '松手的地方没有卡片：依赖线要落在另一张卡上。'
+        : `松手：落在「${MO.board.laneLabel(MO.board.laneAt(point.x))}」道`);
+  }
+
+  /**
+   * 拆解 or 依赖, from a drop or from two key presses: one sentence either way.
+   * The card stays where it was - drawing a line is not a request to pile the
+   * author's work on top of the task it points at.
+   */
+  function applyEdge(origin, target, mode) {
+    const result = mode === 'link' ? MO.board.connect(origin, target) : MO.board.setParent(origin, target);
+    if (!result.ok) render.showToast(result.reason);
+    else if (!result.changed) {
+      render.showToast(mode === 'link'
+        ? `${origin} 已经在等 ${target}，这条线不用重画。`
+        : `${origin} 的父任务本来就是 ${target}，没有改动。`);
+    } else {
+      render.showToast(mode === 'link'
+        ? `已连上：${origin} 等待 ${target}。这是本地草稿，推送前不进索引。`
+        : `已拆解：${origin} 现在是 ${target} 的子任务。这是本地草稿，推送前不进索引。`);
+    }
+    return result;
+  }
+
+  /** A lane change lands the card in that lane's next free slot. */
+  function applyLane(slug, lane) {
+    const geometry = MO.board.layout();
+    const slot = MO.board.slotIn(lane, geometry.cards, slug);
+    const result = MO.board.setStatus(slug, lane);
+    if (result.ok) MO.board.move(slug, slot);
+    if (result.ok && result.changed) {
+      render.showToast(`状态改为「${MO.board.laneLabel(lane)}」（本地草稿）：` +
+        '推送后由次日采集器重建索引。');
+    } else if (result.ok) {
+      render.showToast(`${slug} 本来就在「${MO.board.laneLabel(lane)}」道，状态没有改动。`);
+    } else render.showToast(result.reason);
+    return result;
+  }
+
+  /**
+   * One release, one meaning, one sentence back. A refusal is not a silent
+   * no-op: the toast repeats what the reducer said, because a card that did not
+   * move is otherwise indistinguishable from a drag that missed.
+   */
+  function onTaskPointerUp(event) {
+    if (!taskDrag) return;
+    const drag = taskDrag;
+    const point = taskPoint(event, $('taskCanvas'));
+    endTaskDrag();
+    if (!drag.moved) {
+      selectTaskCard(drag.slug);
+      return;
+    }
+    const outcome = taskDrop(drag.slug, point, drag.mode);
+    let result = null;
+    if (outcome.kind === 'card') result = applyEdge(drag.slug, outcome.target, drag.mode);
+    else if (outcome.kind === 'lane') result = applyLane(drag.slug, outcome.lane);
+    else if (outcome.kind === 'place') {
+      result = MO.board.move(drag.slug, point);
+      if (result.ok) render.showToast('已摆放：卡片座标只存在这台浏览器，不会进入仓库。');
+    } else {
+      render.showToast('松手的地方没有卡片：依赖线要从卡片右下角的把手拖到另一张卡上。');
+    }
+    render.renderTasks();
+  }
+
+  /**
+   * Keyboard handles for the two things a drag does, so the canvas is not a
+   * pointer-only surface. `l` and `d` start a line from the focused card and the
+   * same key on the next focused card finishes it - a two-press gesture instead
+   * of a modal the reader cannot see out of, and `Esc` always drops it.
+   */
+  function endTaskKeyLink(note) {
+    if (!taskKeyLink) return null;
+    const previous = taskKeyLink;
+    taskKeyLink.card?.classList?.remove('is-linking');
+    taskKeyLink = null;
+    taskReadout(note || '已取消这条线。');
+    return previous;
+  }
+
+  function onTaskCanvasKey(event) {
+    const card = event.target?.closest?.('[data-task-card]');
+    if (!card) return;
+    const slug = card.dataset.taskCard;
+    const key = event.key;
+    if (key === 'Escape') {
+      // Escape only answers for the line gesture. With nothing pending the key
+      // belongs to the page again, so the handler must not claim it silently.
+      if (!taskKeyLink) return;
+      endTaskKeyLink(`已取消：${taskKeyLink.slug} 的线没有连到任何卡。`);
+      event.preventDefault?.();
+      return;
+    }
+    if (key >= '1' && key <= '7') {
+      event.preventDefault?.();
+      applyLane(slug, MO.board.LANES[Number(key) - 1]);
+      render.renderTasks();
+      return;
+    }
+    if (key === 'l' || key === 'd') {
+      event.preventDefault?.();
+      const mode = key === 'l' ? 'link' : 'split';
+      if (taskKeyLink && taskKeyLink.slug !== slug && taskKeyLink.mode === mode) {
+        applyEdge(taskKeyLink.slug, slug, mode);
+        endTaskKeyLink('');
+        render.renderTasks();
+        return;
+      }
+      if (taskKeyLink && taskKeyLink.slug !== slug) endTaskKeyLink('');
+      taskKeyLink = { slug, mode, card };
+      card.classList?.add('is-linking');
+      taskReadout(mode === 'link'
+        ? `依赖线：从 ${slug} 出发，Tab 到被等的卡片再按一次 l（Esc 取消）`
+        : `拆解：把 ${slug} 挂到目标卡下面，Tab 过去再按一次 d（Esc 取消）`);
+      return;
+    }
+    if (key === 'Enter' || key === ' ' || key === 'Spacebar') {
+      event.preventDefault?.();
+      if (endTaskKeyLink('')) render.renderTasks();
+      selectTaskCard(slug);
+    }
+  }
+
+  /** Click, keyboard or a list row: the same card detail opens either way. */
+  function selectTaskCard(slug) {
+    const opened = MO.board.select(slug);
+    if (opened) {
+      const rows = MO.board.rows();
+      // A card the filters hid would otherwise open a detail below an empty
+      // canvas, so the filter is cleared instead of silently keeping it hidden.
+      if (!data.taskFiltered(rows).some(row => row.slug === slug)) {
+        Object.assign(data.state, { taskSearch: '', taskTag: 'all', taskRef: 'all' });
+      }
+    }
+    render.renderTasks();
+    return opened;
+  }
+
+  function openTaskNewForm(show) {
+    const form = $('taskNewForm');
+    form.classList.toggle('hidden', !show);
+    if (show) {
+      $('taskNewNote').textContent = '新卡先落在这块画布上：推送后才会成为 tasks/ 下的文件并被索引。';
+      $('taskNewSlug').focus?.();
+    }
+  }
+
+  function createTaskCard() {
+    const result = MO.board.create({ slug: $('taskNewSlug').value, title: $('taskNewTitle').value });
+    $('taskNewNote').textContent = result.ok
+      ? `已创建 ${result.slug}（本地卡片）：在下面「待推送」里预览原文，推送后才会成为 tasks/ 下的文件。`
+      : result.reason;
+    if (result.ok) {
+      $('taskNewSlug').value = '';
+      $('taskNewTitle').value = '';
+      data.state.taskView = 'board';
+      render.renderTasks();
+      render.showToast(`画布上多了一张卡：${result.slug}。它还在这台浏览器里，推送才进仓库。`);
+    }
+    return result;
+  }
+
+  function exportTaskCsv() {
+    const header = ['slug', 'title', 'status', 'parent', 'depends', 'entity', 'entity_state',
+      'ddl', 'ddl_state', 'deadline_utc', 'days_left', 'tags', 'updated', 'reason',
+      'draft_state', 'pushed_at', 'source_url'];
+    const now = Date.now();
+    const rows = data.taskFiltered(MO.board.rows()).map(task => {
+      const deadline = task.ddl ? data.taskDeadline(task.ddl, now) : null;
+      const receipt = MO.board.pushedOf(task.slug);
+      return [task.slug, task.title, task.status || '未标注', task.parent || '',
+        task.depends.join('|'), task.entity || '', task.entityState || '', task.ddl || '',
+        task.ddlState || '', deadline?.found ? deadline.utc || '' : '',
+        deadline?.found && deadline.ts ? Math.round((deadline.ts - now) / 86400000) : '',
+        task.tags.join('|'), task.updated || '', task.reason || '',
+        task.pushed ? 'pushed' : task.dirty ? 'local' : 'none',
+        task.pushed ? receipt?.at || '' : '', task.url || ''];
+    });
+    download(`task-board-${data.state.tasks?.captured_at?.slice(0, 10) || 'local'}.csv`,
+      '\uFEFF' + [header, ...rows].map(row => row.map(value => csvEscape(csvCell(value))).join(',')).join('\r\n'),
+      'text/csv;charset=utf-8');
+  }
+
+  async function refreshTasks() {
+    const button = $('taskRefresh');
+    if (button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = '读取已发布快照…';
+    try {
+      const payload = await data.refreshTaskSnapshot();
+      render.showToast(payload.status === 'ok'
+        ? '已读取任务快照；刷新只读取已发布文件，不会触发后台采集。画布上的本地草稿仍在。'
+        : '已读取任务快照，但后台最近一次索引未成功；页面继续显示上次数据。');
+    } catch (error) {
+      render.showToast(`任务快照读取失败：${error.message}。保留上次数据。`);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.textContent = '刷新已发布快照';
+      render.renderTasks();
+    }
+  }
+
+  /**
+   * The canvas is the heaviest section on the page and sits far below the fold,
+   * so first paint never asks for it. Scrolling close is what triggers the read -
+   * and a local draft still paints before any snapshot arrives.
+   */
+  function watchTaskSection() {
+    const read = () => {
+      // One entry read per page: scrolling back down to the canvas must not
+      // download the same snapshot again, that is what the refresh button is for.
+      if (taskSnapshotRead) return;
+      taskSnapshotRead = true;
+      data.loadTasks().then(() => render.renderTasks());
+    };
+    if (!('IntersectionObserver' in window)) {
+      read();
+      return;
+    }
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return;
+      observer.disconnect();
+      read();
+    }, { rootMargin: '300px 0px' });
+    observer.observe($('tasks'));
+  }
+
+  /**
+   * Manual read of the published list snapshot. This never crawls a repository:
+   * the six awesome lists are fetched by the daily workflow, and re-running it
+   * from the browser would turn a reader's click into somebody else's traffic.
+   */
+  async function refreshAwesome() {
+    const button = $('awesomeRefresh');
+    if (button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = '读取已发布快照…';
+    try {
+      const payload = await data.refreshAwesomeSnapshot();
+      await data.loadAwesomeHistory(Date.now());
+      render.showToast(payload.status === 'ok'
+        ? '已读取清单快照；刷新只读已发布文件，不会去抓别人的仓库，也不触发后台采集。'
+        : payload.status === 'partial'
+          ? '已读取清单快照，但部分清单本次没读到：它们沿用上次结果并标为「沿用上次」。'
+          : '已读取清单快照，但后台最近一次采集未成功；页面继续显示上次数据。');
+    } catch (error) {
+      render.showToast(`清单快照读取失败：${error.message}。保留上次数据。`);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.textContent = '刷新已发布快照';
+      render.renderAwesome();
+    }
+  }
+
+  /**
+   * The export is the sampled flow, not the whole list: one column pair keeps
+   * 实测 and 自报 apart so a spreadsheet cannot turn them into one number.
+   */
+  function exportAwesomeCsv() {
+    const payload = data.state.awesome || {};
+    const byId = new Map(data.awesomeRows().map(row => [row.id, row]));
+    const header = ['repo', 'ownership', 'list_kind', 'entry_id', 'title', 'url', 'arxiv_id',
+      'published', 'venue', 'section', 'is_new', 'measured_entries', 'self_reported_entries',
+      'list_status', 'list_read_today', 'cadence', 'stale_days', 'list_captured_at',
+      'snapshot_status', 'snapshot_captured_at'];
+    const rows = data.awesomeFlow().map(entry => {
+      const repo = byId.get(entry.repoId) || {};
+      return [entry.repoId, entry.upstream ? 'upstream' : 'own', entry.kind, entry.id, entry.title,
+        entry.url || '', entry.arxivId || '', entry.published || '', entry.venue || '',
+        entry.section || '', entry.isNew ? 'yes' : '',
+        repo.measured?.entries ?? '', repo.selfReported?.entries ?? '',
+        entry.repoStatus || '', entry.repoNotAttempted ? 'no' : 'yes',
+        repo.cadence?.cadence || '', repo.cadence?.staleDays ?? '',
+        repo.capturedAt || '', payload.status || '', payload.captured_at || ''];
+    });
+    const date = String(payload.captured_at || '').slice(0, 10) || 'latest';
+    download(`paper-lists-${date}.csv`,
+      '\uFEFF' + [header, ...rows].map(row => row.map(value => csvEscape(csvCell(value))).join(',')).join('\r\n'),
+      'text/csv;charset=utf-8');
+  }
+
+  /** Below the fold and crawled elsewhere: scroll close is what asks for it. */
+  function watchAwesomeSection() {
+    const read = () => {
+      if (awesomeSnapshotRead) return;
+      awesomeSnapshotRead = true;
+      data.loadAwesome().then(() => render.renderAwesome());
+    };
+    if (!('IntersectionObserver' in window)) {
+      read();
+      return;
+    }
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return;
+      observer.disconnect();
+      read();
+    }, { rootMargin: '300px 0px' });
+    observer.observe($('awesome'));
   }
 
   function bind() {
@@ -598,6 +1017,11 @@
         openEntityEntry(open.dataset.entityOpen);
         return;
       }
+      const edit = event.target.closest('[data-entity-edit]');
+      if (edit) {
+        editEntityEntry(edit.dataset.entityEdit);
+        return;
+      }
       const object = event.target.closest('[data-entity-object]');
       if (object) {
         selectEntityObject(object.dataset.entityObject);
@@ -611,6 +1035,11 @@
       }
     });
     $('entityProblems').addEventListener('click', event => {
+      const edit = event.target.closest('[data-entity-edit]');
+      if (edit) {
+        editEntityEntry(edit.dataset.entityEdit);
+        return;
+      }
       const open = event.target.closest('[data-entity-open]');
       if (open) openEntityEntry(open.dataset.entityOpen);
     });
@@ -624,6 +1053,160 @@
     });
     $('entityRefresh').addEventListener('click', refreshEntities);
     $('entityExport').onclick = exportEntityCsv;
+    // Task board: the canvas is local furniture, the semantics are drafts, and
+    // every refusal has to reach the reader as a sentence.
+    for (const [id, key, eventName] of [
+      ['taskSearch', 'taskSearch', 'input'], ['taskTag', 'taskTag', 'change'],
+      ['taskRef', 'taskRef', 'change'], ['taskSort', 'taskSort', 'change']]) {
+      $(id).addEventListener(eventName, event => {
+        data.state[key] = event.target.value;
+        data.state.taskPage = 1;
+        render.renderTaskStatus();
+        if (data.state.taskView === 'board') render.renderTaskCanvas();
+        else render.renderTaskList();
+      });
+    }
+    $('taskFilterReset').addEventListener('click', () => {
+      Object.assign(data.state, {
+        taskSearch: '', taskTag: 'all', taskRef: 'all', taskSort: 'updated', taskPage: 1
+      });
+      MO.board.clearSelection();
+      render.renderTasks();
+    });
+    document.querySelectorAll('[data-task-view]').forEach(button => {
+      button.addEventListener('click', () => {
+        data.state.taskView = button.dataset.taskView;
+        data.state.taskPage = 1;
+        render.renderTasks();
+      });
+    });
+    $('taskCanvas').addEventListener('pointerdown', onTaskPointerDown);
+    $('taskCanvas').addEventListener('pointermove', onTaskPointerMove);
+    $('taskCanvas').addEventListener('pointerup', onTaskPointerUp);
+    $('taskCanvas').addEventListener('keydown', onTaskCanvasKey);
+    $('taskCanvas').addEventListener('pointercancel', () => {
+      endTaskDrag();
+      render.renderTasks();
+    });
+    $('taskRows').addEventListener('click', event => {
+      const open = event.target.closest('[data-task-open]');
+      if (open) {
+        selectTaskCard(open.dataset.taskOpen);
+        return;
+      }
+      const row = event.target.closest('[data-task-slug]');
+      if (row) selectTaskCard(row.dataset.taskSlug);
+    });
+    $('taskDetail').addEventListener('click', event => {
+      const reset = event.target.closest('[data-task-reset]');
+      if (!reset) return;
+      const result = MO.board.discard(reset.dataset.taskReset);
+      render.showToast(result.ok
+        ? `已丢弃 ${reset.dataset.taskReset} 在本机的改动，卡片回到索引里的样子。${result.note || ''}`
+        : result.reason);
+      render.renderTasks();
+    });
+    $('taskNew').addEventListener('click', () => openTaskNewForm(
+      $('taskNewForm').classList.contains('hidden')));
+    $('taskNewClose').addEventListener('click', () => openTaskNewForm(false));
+    $('taskNewCreate').addEventListener('click', createTaskCard);
+    $('taskTidy').addEventListener('click', () => {
+      MO.board.resetLayout();
+      render.renderTasks();
+      render.showToast('画布已按所在道重新堆叠：这只动了本机的摆放，任务内容一个字都没改。');
+    });
+    $('taskResetEdits').addEventListener('click', () => {
+      const waiting = MO.board.pushedSlugs().length;
+      MO.board.resetEdits();
+      MO.board.clearSelection();
+      render.renderTasks();
+      render.showToast('本地未推送的语义改动与新建卡已清空；索引里的任务不受影响。' +
+        (waiting ? `那 ${waiting} 张已推送的卡片也会退回索引里的旧样子——远端文件已经改好，` +
+          '次日采集重建索引后页面会跟上。' : ''));
+    });
+    $('taskRefresh').addEventListener('click', refreshTasks);
+    $('taskExport').onclick = exportTaskCsv;
+    $('taskPrev').addEventListener('click', () => {
+      data.state.taskPage--;
+      render.renderTaskList();
+    });
+    $('taskNext').addEventListener('click', () => {
+      data.state.taskPage++;
+      render.renderTaskList();
+    });
+    MO.board.load();
+    render.renderTasks();
+    watchTaskSection();
+    // Paper lists: one filter bar drives both the cards and the entry flow.
+    for (const [id, key, eventName] of [
+      ['awesomeSearch', 'awesomeSearch', 'input'], ['awesomeKind', 'awesomeKind', 'change'],
+      ['awesomeOwner', 'awesomeOwner', 'change'], ['awesomeCadence', 'awesomeCadence', 'change'],
+      ['awesomeAttention', 'awesomeAttention', 'change'], ['awesomeSort', 'awesomeSort', 'change'],
+      ['awesomeFlowSort', 'awesomeFlowSort', 'change']]) {
+      $(id).addEventListener(eventName, event => {
+        data.state[key] = event.target.value;
+        data.state.awesomeFlowPage = 1;
+        render.renderAwesome();
+      });
+    }
+    $('awesomeTrendMetric').addEventListener('change', event => {
+      data.state.awesomeTrendMetric = event.target.value;
+      render.renderAwesomeTrend();
+    });
+    $('awesomeFilterReset').addEventListener('click', () => {
+      Object.assign(data.state, {
+        awesomeSearch: '', awesomeKind: 'all', awesomeOwner: 'all', awesomeCadence: 'all',
+        awesomeAttention: 'all', awesomeSort: 'measured', awesomeFlowPage: 1, awesomeFocus: null
+      });
+      render.renderAwesome();
+    });
+    document.querySelectorAll('[data-awesome-view]').forEach(button => {
+      button.addEventListener('click', () => {
+        data.state.awesomeView = button.dataset.awesomeView;
+        data.state.awesomeFlowPage = 1;
+        render.renderAwesome();
+      });
+    });
+    $('awesomeCards').addEventListener('click', event => {
+      const registry = event.target.closest('[data-awesome-registry]');
+      if (registry) {
+        selectEntityObject(registry.dataset.awesomeRegistry);
+        render.showToast(`已在实体注册表里反查 ${registry.dataset.awesomeRegistry}：` +
+          '关系归那个栏目，条目数与节奏仍在这里。');
+        document.getElementById('registry')?.scrollIntoView?.({ block: 'start' });
+        return;
+      }
+      const focus = event.target.closest('[data-awesome-focus]');
+      if (focus) {
+        const id = focus.dataset.awesomeFocus;
+        data.state.awesomeFocus = data.state.awesomeFocus === id ? null : id;
+        data.state.awesomeFlowPage = 1;
+        render.renderAwesome();
+        return;
+      }
+      const open = event.target.closest('[data-awesome-open]');
+      if (!open) return;
+      const id = open.dataset.awesomeOpen;
+      data.state.awesomeOpen = data.state.awesomeOpen === id ? null : id;
+      render.renderAwesomeCards();
+    });
+    $('awesomeFocusNote').addEventListener('click', () => {
+      data.state.awesomeFocus = null;
+      data.state.awesomeFlowPage = 1;
+      render.renderAwesome();
+    });
+    $('awesomeRefresh').addEventListener('click', refreshAwesome);
+    $('awesomeExport').onclick = exportAwesomeCsv;
+    $('awesomeFlowPrev').addEventListener('click', () => {
+      data.state.awesomeFlowPage--;
+      render.renderAwesomeFlow();
+    });
+    $('awesomeFlowNext').addEventListener('click', () => {
+      data.state.awesomeFlowPage++;
+      render.renderAwesomeFlow();
+    });
+    render.renderAwesome();
+    watchAwesomeSection();
     $('collectionFilter').addEventListener('change', event => selectCollection(event.target.value));
     $('collectionReset').addEventListener('click', () => selectCollection('all'));
     $('collectionRefresh').addEventListener('click', refreshCollections);
@@ -825,10 +1408,13 @@
       try { render.renderConferences(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderStars(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderEntities(); } catch (secondaryError) { console.error(secondaryError); }
+      try { render.renderAwesome(); } catch (secondaryError) { console.error(secondaryError); }
     }
     // The template library is independent of the download data, so it loads
     // on its own and a failure here never blocks the other boards.
     MO.templates.init().catch(error => console.error('模版库初始化失败：', error));
+    MO.registry.init().catch(error => console.error('注册表回写面板初始化失败：', error));
+    MO.tasksync.init().catch(error => console.error('任务回写面板初始化失败：', error));
   }
 
   boot();

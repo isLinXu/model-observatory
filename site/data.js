@@ -97,6 +97,34 @@ MO.data = (() => {
     entitySort: 'updated',
     entityOpen: null,
     entityPage: 1,
+    tasks: null,
+    taskSnapshotCheckedAt: null,
+    taskRefreshError: null,
+    taskView: 'board',
+    taskSearch: '',
+    taskTag: 'all',
+    taskRef: 'all',
+    taskSort: 'updated',
+    taskOpen: null,
+    taskPage: 1,
+    awesome: null,
+    awesomeHistory: null,
+    awesomeHistoryError: null,
+    awesomeHistoryRetention: null,
+    awesomeTrendMetric: 'measured',
+    awesomeFocus: null,
+    awesomeSnapshotCheckedAt: null,
+    awesomeRefreshError: null,
+    awesomeView: 'repos',
+    awesomeSearch: '',
+    awesomeKind: 'all',
+    awesomeOwner: 'all',
+    awesomeCadence: 'all',
+    awesomeAttention: 'all',
+    awesomeSort: 'measured',
+    awesomeOpen: null,
+    awesomeFlowSort: 'published',
+    awesomeFlowPage: 1,
     status: 'loading'
   };
 
@@ -1044,6 +1072,9 @@ MO.data = (() => {
       bytes: Number.isFinite(entry.bytes) ? entry.bytes : null,
       lines: Number.isFinite(entry.lines) ? entry.lines : null,
       sha: typeof entry.sha256 === 'string' ? entry.sha256 : '',
+      // The git blob SHA of the whole source file: the write-back panel compares
+      // it against the live one to tell "the page is stale" from "someone edited".
+      blobSha: typeof entry.blob_sha === 'string' ? entry.blob_sha : '',
       truncated: entry.truncated === true,
       links: (Array.isArray(entry.links) ? entry.links : [])
         .filter(link => typeof link?.domain === 'string' && typeof link?.id === 'string')
@@ -1210,7 +1241,722 @@ MO.data = (() => {
     return entityFiltered().slice(start, start + ENTITY_PAGE_SIZE);
   }
 
-  /** Load every dataset. Only a download failure is fatal for the page. */
+  // --- Task board -----------------------------------------------------------
+
+  const TASK_SOURCE_ID = 'tasks';
+  const TASK_REF_STATES = ['resolved', 'unresolved', 'missing_index'];
+  const TASK_PAGE_SIZE = 12;
+
+  let taskRowCache = null;
+
+  function validateTaskSnapshot(payload) {
+    if (payload?.schema_version !== 1 || payload?.source?.id !== TASK_SOURCE_ID ||
+        !['ok', 'stale', 'unavailable'].includes(payload.status) || !Array.isArray(payload.tasks) ||
+        payload.tasks.some(task => typeof task?.slug !== 'string')) {
+      throw new Error('任务看板快照格式或数据来源不兼容');
+    }
+    return payload;
+  }
+
+  /**
+   * Re-read the published board. The collector runs in the daily workflow, so
+   * this never touches `tasks/` - the canvas follows the repository, not the
+   * other way round.
+   */
+  async function refreshTaskSnapshot() {
+    try {
+      const payload = validateTaskSnapshot(await getJSON(
+        './data/tasks.json', '任务看板', { signal: AbortSignal.timeout(20000) }));
+      state.tasks = payload;
+      state.taskSnapshotCheckedAt = new Date().toISOString();
+      state.taskRefreshError = null;
+      notify();
+      return payload;
+    } catch (error) {
+      state.taskRefreshError = error.name === 'TimeoutError'
+        ? '读取任务看板超时，请稍后重试' : error.message;
+      throw new Error(state.taskRefreshError);
+    }
+  }
+
+  /** The board sits below the fold, so first paint does not ask for it. */
+  async function loadTasks() {
+    try {
+      await refreshTaskSnapshot();
+    } catch (error) {
+      if (!state.tasks) {
+        state.tasks = { status: 'unavailable', source: { id: TASK_SOURCE_ID }, tasks: [],
+                        graph: { edges: [], dropped: [] }, error: error.message };
+      }
+      console.warn('任务看板快照读取失败：', error);
+    }
+  }
+
+  /**
+   * Published tasks, shaped for the canvas. A status the collector could not
+   * read arrives as null - that card belongs to the 未标注 lane rather than to
+   * whichever lane happens to be first.
+   */
+  function taskRows() {
+    const payload = state.tasks;
+    if (!Array.isArray(payload?.tasks)) return [];
+    if (taskRowCache && taskRowCache.payload === payload) return taskRowCache.rows;
+    const rows = payload.tasks.map(task => ({
+      slug: task.slug,
+      title: typeof task.title === 'string' && task.title ? task.title : task.slug,
+      status: typeof task.status === 'string' ? task.status : null,
+      parent: typeof task.parent === 'string' && task.parent ? task.parent : null,
+      depends: (Array.isArray(task.depends) ? task.depends : [])
+        .filter(item => typeof item === 'string'),
+      tags: (Array.isArray(task.tags) ? task.tags : []).filter(tag => typeof tag === 'string'),
+      entity: typeof task.entity === 'string' && task.entity ? task.entity : null,
+      ddl: typeof task.ddl === 'string' && task.ddl ? task.ddl : null,
+      // The collector's own verdict, kept separate from the id so an unchecked
+      // reference never renders as a resolved one.
+      entityState: TASK_REF_STATES.includes(task.entity_state) ? task.entity_state : null,
+      ddlState: TASK_REF_STATES.includes(task.ddl_state) ? task.ddl_state : null,
+      updated: typeof task.updated === 'string' ? task.updated : '',
+      reason: typeof task.reason === 'string' ? task.reason : '',
+      url: /^https?:\/\/.+/i.test(task.url || '') ? task.url : null,
+      body: typeof task.body === 'string' ? task.body : '',
+      bytes: Number.isFinite(task.bytes) ? task.bytes : null,
+      lines: Number.isFinite(task.lines) ? task.lines : null,
+      sha: typeof task.sha256 === 'string' ? task.sha256 : '',
+      blobSha: typeof task.blob_sha === 'string' ? task.blob_sha : '',
+      truncated: task.truncated === true
+    }));
+    taskRowCache = { payload, rows };
+    return rows;
+  }
+
+  function taskSource(name) {
+    const source = (state.tasks?.sources || {})[name] || {};
+    return {
+      name,
+      file: source.file || `${name}.json`,
+      available: source.available === true,
+      capturedAt: source.captured_at || null,
+      reason: typeof source.reason === 'string' ? source.reason : null
+    };
+  }
+
+  /**
+   * The deadline a card points at, resolved against the conference board. Only
+   * the id is stored in `tasks/`; the instant and the countdown belong to
+   * conferences.json, so a card that needs one asks for it here rather than
+   * carrying a copy that would go stale on its own schedule.
+   */
+  function taskDeadline(id, now = Date.now()) {
+    if (!id) return null;
+    const source = taskSource('ddl');
+    const event = conferenceEvents().find(row => row.id === id);
+    if (!event) {
+      return { id, found: false, available: source.available, reason: source.reason, capturedAt: source.capturedAt };
+    }
+    return {
+      id, found: true, kind: event.kind, conference: event.title, edition: event.edition,
+      utc: event.utc, ts: Number.isFinite(event.ts) ? event.ts : null,
+      tbd: event.tbd === true, ccf: event.ccf, url: event.url,
+      countdown: MO.format.countdown(event.utc, now), tone: MO.format.deadlineTone(event.utc, now),
+      capturedAt: source.capturedAt
+    };
+  }
+
+  /** The registry entry a task serves, if the registry knows that slug at all. */
+  function taskEntity(slug) {
+    if (!slug) return null;
+    const source = taskSource('entity');
+    const entry = entityEntries().find(row => row.slug === slug);
+    return {
+      slug, found: Boolean(entry), title: entry?.title || slug, url: entry?.url || null,
+      available: source.available, reason: source.reason
+    };
+  }
+
+  /** Edges and refusals as the daily run published them - the verified side of the graph. */
+  function taskGraph() {
+    const graph = state.tasks?.graph || {};
+    return {
+      edges: Array.isArray(graph.edges) ? graph.edges : [],
+      dropped: Array.isArray(graph.dropped) ? graph.dropped : [],
+      truncated: graph.truncated === true
+    };
+  }
+
+  /** Headline numbers come from the collector's own summary and validation. */
+  function taskStats() {
+    const payload = state.tasks || {};
+    const summary = payload.summary || {};
+    const validation = payload.validation || {};
+    const refs = validation.refs || {};
+    const rows = taskRows();
+    const byStatus = summary.by_status || {};
+    return {
+      available: ['ok', 'stale'].includes(payload.status),
+      total: Number.isFinite(summary.total) ? summary.total : rows.length,
+      edges: Number.isFinite(summary.edges) ? summary.edges : taskGraph().edges.length,
+      roots: Number.isFinite(summary.roots) ? summary.roots : rows.filter(row => !row.parent).length,
+      blocked: Number.isFinite(summary.blocked) ? summary.blocked : 0,
+      byStatus,
+      untriaged: rows.filter(row => !row.status).length,
+      broken: (validation.parent_missing || 0) + (validation.depends_missing || 0),
+      cycles: (validation.cycles || 0) + (validation.self_edges || 0),
+      refs: {
+        entity: { resolved: refs.entity?.resolved || 0, unresolved: refs.entity?.unresolved || 0,
+                  unchecked: refs.entity?.missing_index || 0 },
+        ddl: { resolved: refs.ddl?.resolved || 0, unresolved: refs.ddl?.unresolved || 0,
+               unchecked: refs.ddl?.missing_index || 0 }
+      },
+      warnings: (payload.warnings || []).length,
+      errors: (payload.structural_errors || []).length
+    };
+  }
+
+  function taskFacets() {
+    const tags = new Map();
+    taskRows().forEach(task => task.tags.forEach(tag => tags.set(tag, (tags.get(tag) || 0) + 1)));
+    return [...tags].map(([value, count]) => ({ value, count }))
+      .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+  }
+
+  /** Search, tag and reference-state filters, shared by the canvas and the list. */
+  function taskFiltered(source = null) {
+    const search = state.taskSearch.trim().toLowerCase();
+    const pool = source || taskRows();
+    const items = pool.filter(task => {
+      if (state.taskTag !== 'all' && !task.tags.includes(state.taskTag)) return false;
+      const wanted = state.taskRef;
+      // 断引用 counts a missing parent against the pool the canvas is showing, so
+      // a draft card that only exists here still resolves as a real target.
+      if (wanted === 'broken' && !(task.entityState === 'unresolved' || task.ddlState === 'unresolved' ||
+          (task.parent && !pool.some(row => row.slug === task.parent)))) return false;
+      if (wanted === 'unchecked' && !(task.entityState === 'missing_index' || task.ddlState === 'missing_index')) return false;
+      if (wanted === 'ddl' && !task.ddl) return false;
+      if (wanted === 'orphan' && task.parent) return false;
+      if (!search) return true;
+      return [task.title, task.slug, task.tags.join(' '), task.body, task.entity, task.ddl,
+        task.parent, task.depends.join(' '), task.reason].join(' ').toLowerCase().includes(search);
+    });
+    return sortTasks(items, state.taskSort);
+  }
+
+  function sortTasks(items, sort) {
+    if (sort === 'status') {
+      const order = ['blocked', 'doing', 'review', 'proposal', 'done', 'dropped'];
+      return items.slice().sort((a, b) =>
+        (order.indexOf(a.status) < 0 ? order.length : order.indexOf(a.status)) -
+        (order.indexOf(b.status) < 0 ? order.length : order.indexOf(b.status)) ||
+        a.slug.localeCompare(b.slug));
+    }
+    if (sort === 'ddl') {
+      return items.slice().sort((a, b) => {
+        const left = a.ddl ? Date.parse(taskDeadline(a.ddl)?.utc || '') : Infinity;
+        const right = b.ddl ? Date.parse(taskDeadline(b.ddl)?.utc || '') : Infinity;
+        return (left - right) || a.slug.localeCompare(b.slug);
+      });
+    }
+    if (sort === 'name') return items.slice().sort((a, b) => a.title.localeCompare(b.title) || a.slug.localeCompare(b.slug));
+    return items.slice().sort((a, b) => String(b.updated).localeCompare(String(a.updated)) || a.slug.localeCompare(b.slug));
+  }
+
+  function taskPageCount() {
+    return Math.max(1, Math.ceil(taskFiltered().length / TASK_PAGE_SIZE));
+  }
+
+  function taskPage() {
+    const start = (Math.min(Math.max(1, state.taskPage), taskPageCount()) - 1) * TASK_PAGE_SIZE;
+    return taskFiltered().slice(start, start + TASK_PAGE_SIZE);
+  }
+
+  // --- Paper-list tracking --------------------------------------------------
+
+  const AWESOME_SOURCE_ID = 'awesome';
+  const AWESOME_REPO_STATES = ['ok', 'stale', 'unavailable'];
+  const AWESOME_FLOW_PAGE_SIZE = 25;
+  const AWESOME_URL_RE = /^https?:\/\/[^\s"'<>\\]+$/i;
+
+  // Normalised once per payload: a refresh must never mix two snapshots.
+  let awesomeRowCache = null;
+
+  /** An absent measurement stays null; only the collector's own zeros are zeros. */
+  const awesomeCount = value => (Number.isFinite(value) ? value : null);
+  const awesomeFlag = value => (value === true);
+  const awesomeUrl = value => (AWESOME_URL_RE.test(String(value || '')) ? String(value) : null);
+
+  function validateAwesomeSnapshot(payload) {
+    if (payload?.schema_version !== 1 || payload?.source?.id !== AWESOME_SOURCE_ID ||
+        !['ok', 'partial', 'stale', 'unavailable'].includes(payload.status) ||
+        !Array.isArray(payload.repos) ||
+        payload.repos.some(repo => typeof repo?.id !== 'string')) {
+      throw new Error('清单跟踪快照格式或数据来源不兼容');
+    }
+    return payload;
+  }
+
+  /**
+   * Re-read the published snapshot. The collector runs in the daily workflow,
+   * so this never fetches a repository - the board reports what was counted,
+   * not what the reader wishes were current.
+   */
+  async function refreshAwesomeSnapshot() {
+    try {
+      const payload = validateAwesomeSnapshot(await getJSON(
+        './data/awesome.json', '论文清单跟踪', { signal: AbortSignal.timeout(20000) }));
+      state.awesome = payload;
+      state.awesomeSnapshotCheckedAt = new Date().toISOString();
+      state.awesomeRefreshError = null;
+      notify();
+      return payload;
+    } catch (error) {
+      state.awesomeRefreshError = error.name === 'TimeoutError'
+        ? '读取论文清单快照超时，请稍后重试' : error.message;
+      throw new Error(state.awesomeRefreshError);
+    }
+  }
+
+  /** Six repositories are crawled daily, but only this board needs their rows. */
+  async function loadAwesome() {
+    try {
+      await refreshAwesomeSnapshot();
+    } catch (error) {
+      if (!state.awesome) {
+        state.awesome = { status: 'unavailable', source: { id: AWESOME_SOURCE_ID }, repos: [],
+                          summary: {}, error: error.message };
+      }
+      console.warn('论文清单跟踪快照读取失败：', error);
+    }
+    await loadAwesomeHistory();
+  }
+
+  /**
+   * The daily series is a second file and a second failure: a missing history
+   * costs the trend line and nothing else, so it never marks the board stale.
+   */
+  async function loadAwesomeHistory(stamp) {
+    try {
+      const payload = await getJSON(`./data/awesome_history.json${stamp ? `?t=${stamp}` : ''}`,
+        '清单跟踪历史', { signal: AbortSignal.timeout(20000) });
+      if (payload?.schema_version !== 1 || payload?.source?.id !== AWESOME_SOURCE_ID ||
+          !Array.isArray(payload.snapshots)) {
+        throw new Error('清单跟踪历史格式或数据来源不兼容');
+      }
+      state.awesomeHistory = payload.snapshots
+        .filter(row => typeof row?.date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(row.date))
+        .map(row => ({
+          date: row.date,
+          capturedAt: typeof row.captured_at === 'string' ? row.captured_at : null,
+          repos: awesomeCount(row.repos),
+          tracked: awesomeCount(row.tracked),
+          entriesMeasured: awesomeCount(row.entries_measured),
+          entriesUpstream: awesomeCount(row.entries_upstream),
+          added: awesomeCount(row.added),
+          removed: awesomeCount(row.removed),
+          stalled: awesomeCount(row.stalled),
+          // A day that read fewer lists than are tracked published carried numbers;
+          // a flat stretch there means "we did not look", not "nothing changed".
+          partial: awesomeCount(row.tracked) !== null && awesomeCount(row.repos) !== null &&
+            row.repos < row.tracked
+        }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+      state.awesomeHistoryRetention = payload.retention || null;
+    } catch (error) {
+      state.awesomeHistory = null;
+      state.awesomeHistoryError = error.name === 'TimeoutError'
+        ? '读取清单跟踪历史超时' : error.message;
+      console.warn('清单跟踪历史读取失败：', error);
+    }
+  }
+
+  /**
+   * The trend needs three points before a slope means anything: two draw a
+   * straight line no matter what happened between them.
+   */
+  function awesomeTrend() {
+    const snapshots = state.awesomeHistory || [];
+    const series = key => snapshots
+      .filter(row => Number.isFinite(row[key]))
+      .map(row => ({ date: row.date, value: row[key] }));
+    const measured = series('entriesMeasured');
+    const points = snapshots.filter(row => Number.isFinite(row.entriesMeasured) &&
+      Number.isFinite(row.entriesUpstream));
+    return {
+      snapshots,
+      measured,
+      upstream: series('entriesUpstream'),
+      readable: series('repos'),
+      enough: measured.length >= 3,
+      partialDays: snapshots.filter(row => row.partial).length,
+      first: measured.length ? measured[0] : null,
+      last: measured.length ? measured.at(-1) : null,
+      netChange: measured.length >= 2 ? measured.at(-1).value - measured[0].value : null,
+      // Summing the daily `added` would double-count a carried day as zero and a
+      // re-read as new growth; the series only says what the two ends differ by.
+      addedDays: points.filter(row => row.added > 0).length
+    };
+  }
+
+  /**
+   * One repository row, with the two numbers that must never be merged kept
+   * apart: `measured` is what this collector counted today, `selfReported` is
+   * what the repository says about itself.
+   */
+  function awesomeRows() {
+    const payload = state.awesome;
+    if (!Array.isArray(payload?.repos)) return [];
+    if (awesomeRowCache && awesomeRowCache.payload === payload) return awesomeRowCache.rows;
+    const rows = payload.repos.map(repo => {
+      const measured = repo.measured || {};
+      const reported = repo.self_reported || null;
+      const cadence = repo.cadence || {};
+      const diff = repo.diff || {};
+      return {
+        id: repo.id,
+        name: String(repo.id).split('/').slice(1).join('/') || String(repo.id),
+        kind: typeof repo.kind === 'string' ? repo.kind : '',
+        upstream: awesomeFlag(repo.upstream),
+        status: AWESOME_REPO_STATES.includes(repo.status) ? repo.status : 'unavailable',
+        notAttempted: awesomeFlag(repo.not_attempted),
+        error: typeof repo.error === 'string' ? repo.error : null,
+        capturedAt: typeof repo.captured_at === 'string' ? repo.captured_at : null,
+        lastAttemptAt: typeof repo.last_attempt_at === 'string' ? repo.last_attempt_at : null,
+        measured: {
+          entries: awesomeCount(measured.entries),
+          withArxiv: awesomeCount(measured.with_arxiv),
+          withCode: awesomeCount(measured.with_code),
+          withDate: awesomeCount(measured.with_date),
+          withVenue: awesomeCount(measured.with_venue),
+          uniqueIds: awesomeCount(measured.unique_ids),
+          sections: awesomeCount(measured.sections),
+          skipped: awesomeCount(measured.skipped),
+          duplicatedRows: awesomeCount(measured.duplicated_rows),
+          topics: awesomeCount(measured.topics),
+          topicsReporting: awesomeCount(measured.topics_reporting),
+          topicsUnreadable: awesomeCount(measured.topics_unreadable),
+          topicsAtNewest: awesomeCount(measured.topics_at_newest_month),
+          topicsNotAttempted: awesomeCount(measured.topics_not_attempted),
+          monthsSampled: awesomeCount(measured.months_sampled),
+          newestMonth: typeof measured.newest_month === 'string' ? measured.newest_month : null,
+          newestMonthAgeDays: awesomeCount(measured.newest_month_age_days),
+          recent: measured.recent && typeof measured.recent === 'object' ? {
+            within90d: awesomeCount(measured.recent.within_90d),
+            within365d: awesomeCount(measured.recent.within_365d),
+            older: awesomeCount(measured.recent.older),
+            undated: awesomeCount(measured.recent.undated)
+          } : null,
+          datePrecision: measured.date_precision && typeof measured.date_precision === 'object'
+            ? measured.date_precision : null,
+          skippedNoTitle: awesomeCount(measured.skipped_no_title),
+          skippedNoLink: awesomeCount(measured.skipped_no_link),
+          skippedNoSignal: awesomeCount(measured.skipped_no_signal),
+          unlinkedRows: awesomeCount(measured.unlinked_rows),
+          byteCapped: awesomeFlag(measured.byte_capped),
+          note: typeof measured.note === 'string' ? measured.note : null,
+          files: (Array.isArray(measured.files) ? measured.files : []).map(file => ({
+            path: typeof file?.path === 'string' ? file.path : '',
+            bytes: awesomeCount(file?.bytes),
+            lines: awesomeCount(file?.lines),
+            rows: awesomeCount(file?.rows),
+            truncated: awesomeFlag(file?.truncated),
+            sha: typeof file?.sha256 === 'string' ? file.sha256 : null
+          }))
+        },
+        selfReported: reported ? {
+          file: typeof reported.file === 'string' ? reported.file : null,
+          entries: awesomeCount(reported.entries),
+          values: Array.isArray(reported.values) ? reported.values.filter(Number.isFinite) : [],
+          generatedAt: typeof reported.generated_at === 'string' ? reported.generated_at : null,
+          monthsSampled: awesomeCount(reported.months_sampled),
+          extra: {
+            inDocs: awesomeCount(reported.in_docs),
+            new7d: awesomeCount(reported.new_7d),
+            last30d: awesomeCount(reported.last_30d),
+            reposTotal: awesomeCount(reported.repos_total),
+            reposStars: awesomeCount(reported.repos_stars_total)
+          },
+          note: typeof reported.note === 'string' ? reported.note : null
+        } : null,
+        cadence: {
+          state: typeof cadence.status === 'string' ? cadence.status : 'unknown',
+          lastCommitAt: typeof cadence.last_file_commit_at === 'string'
+            ? cadence.last_file_commit_at : null,
+          author: typeof cadence.author === 'string' ? cadence.author : null,
+          isBot: typeof cadence.is_bot === 'boolean' ? cadence.is_bot : null,
+          message: typeof cadence.message === 'string' ? cadence.message : null,
+          cadence: typeof cadence.cadence === 'string' ? cadence.cadence : null,
+          staleDays: awesomeCount(cadence.stale_days),
+          stalled: awesomeFlag(cadence.stalled),
+          commitsSeen: awesomeCount(cadence.commits_seen)
+        },
+        diff: {
+          baseline: awesomeFlag(diff.baseline),
+          added: awesomeCount(diff.added),
+          removed: awesomeCount(diff.removed),
+          held: awesomeCount(diff.held),
+          truncated: awesomeFlag(diff.truncated),
+          rollingWindow: awesomeFlag(diff.rolling_window),
+          note: typeof diff.note === 'string' ? diff.note : null
+        },
+        sample: (Array.isArray(repo.sample) ? repo.sample : []).map(entry => ({
+          id: typeof entry?.id === 'string' ? entry.id : '',
+          title: typeof entry?.title === 'string' ? entry.title : '',
+          url: awesomeUrl(entry?.url),
+          arxivId: typeof entry?.arxiv_id === 'string' ? entry.arxiv_id : null,
+          published: typeof entry?.published === 'string' ? entry.published : null,
+          venue: typeof entry?.venue === 'string' ? entry.venue : null,
+          section: typeof entry?.section === 'string' ? entry.section : null,
+          isNew: awesomeFlag(entry?.is_new)
+        })),
+        categories: (Array.isArray(repo.categories) ? repo.categories : []).map(item => ({
+          category: typeof item?.category === 'string' ? item.category : '',
+          selfReported: awesomeCount(item?.self_reported),
+          rowsInDoc: awesomeCount(item?.rows_in_doc),
+          new7d: awesomeCount(item?.new_7d)
+        })),
+        topics: (Array.isArray(repo.topics) ? repo.topics : []).map(item => ({
+          topic: typeof item?.topic === 'string' ? item.topic : '',
+          state: typeof item?.status === 'string' ? item.status : 'unavailable',
+          latestMonth: typeof item?.latest_month === 'string' ? item.latest_month : null,
+          selfReportedTotal: awesomeCount(item?.self_reported_total),
+          selfReportedMonth: awesomeCount(item?.self_reported_month),
+          measuredRows: awesomeCount(item?.measured_rows)
+        }))
+      };
+    });
+    awesomeRowCache = { payload, rows };
+    return rows;
+  }
+
+  /**
+   * Stars, forks and `pushed_at` belong to the GitHub board. The card asks that
+   * snapshot by repository id and never keeps a copy of its own.
+   */
+  function awesomeRepoMetrics(id) {
+    const repo = (state.github?.repositories || [])
+      .find(row => row.id === id || row.full_name === id);
+    if (!repo) {
+      return {
+        observed: false,
+        reason: state.github?.status === 'unavailable'
+          ? 'GitHub 看板本次没有可用快照'
+          : '该仓库不在本站 GitHub 采集范围内（上游他人的仓库）'
+      };
+    }
+    return {
+      observed: true,
+      stars: awesomeCount(repo.stars),
+      forks: awesomeCount(repo.forks),
+      watchers: awesomeCount(repo.watchers),
+      openIssues: awesomeCount(repo.open_issues),
+      language: typeof repo.language === 'string' ? repo.language : null,
+      description: typeof repo.description === 'string' ? repo.description : null,
+      pushedAt: typeof repo.pushed_at === 'string' ? repo.pushed_at : null,
+      archived: awesomeFlag(repo.archived),
+      url: awesomeUrl(repo.url) || `https://github.com/${id}`,
+      capturedAt: typeof state.github?.captured_at === 'string' ? state.github.captured_at : null
+    };
+  }
+
+  /**
+   * What the entity registry says about this list repository. The registry owns
+   * the relationship, this board owns the counts: the card only asks who has
+   * registered this repo, and never copies a number out of the registry.
+   */
+  function awesomeRegistry(id) {
+    const key = `gh_repo:${id}`;
+    const group = entityIndex().get(key);
+    return { key, entries: group ? group.entries : [], state: group ? group.state : null,
+             url: group ? group.url : null };
+  }
+
+  /** Fields a row can be judged on: the collector counted them, that is all. */
+  function awesomeCoverage(repo) {
+    const total = repo.measured.entries;
+    const share = value => (total ? Math.round(((value || 0) / total) * 100) : null);
+    return [
+      { key: 'arXiv', label: 'arXiv ID', count: repo.measured.withArxiv, share: share(repo.measured.withArxiv) },
+      { key: 'code', label: '代码链接', count: repo.measured.withCode, share: share(repo.measured.withCode) },
+      { key: 'date', label: '时间', count: repo.measured.withDate, share: share(repo.measured.withDate) },
+      { key: 'venue', label: '会议', count: repo.measured.withVenue, share: share(repo.measured.withVenue) }
+    ];
+  }
+
+  /** Repositories that need a look: baseline, stall, degraded read, moved rows. */
+  function awesomeAttention(repo) {
+    const notes = [];
+    if (repo.notAttempted) notes.push('本次没有读取这份清单（抓取额度用完或被 --only 排除）');
+    else if (repo.status === 'stale') notes.push('本次没读到，沿用上次快照');
+    else if (repo.status === 'unavailable') notes.push('本次没读到，且没有可沿用的历史');
+    if (repo.cadence.stalled) notes.push(`清单文件已 ${repo.cadence.staleDays} 天没动过`);
+    if (repo.diff.baseline) notes.push('首次基线，新增与移出明天起才可信');
+    if (repo.diff.truncated) {
+      notes.push(repo.diff.added === null
+        ? '上次台账被 id 上限截断，新增与移出无法比较：本次不报数'
+        : '条目 id 超过台账上限，增删只是下限');
+    }
+    if (repo.diff.rollingWindow) notes.push('滚动窗口，移出属于正常收缩');
+    if (repo.measured.byteCapped) notes.push('清单文件超过单文件上限，实测条目数是下限');
+    if (repo.measured.topicsNotAttempted) {
+      notes.push(`抓取额度用完，${repo.measured.topicsNotAttempted} 个主题这次没轮到`);
+    }
+    if (repo.selfReported && repo.selfReported.entries !== null &&
+        repo.measured.entries !== null && repo.selfReported.entries !== repo.measured.entries) {
+      notes.push(`自报 ${repo.selfReported.entries} 条与实测 ${repo.measured.entries} 条不一致`);
+    }
+    return notes;
+  }
+
+  function awesomeStats() {
+    const payload = state.awesome || {};
+    const summary = payload.summary || {};
+    const rows = awesomeRows();
+    return {
+      available: ['ok', 'partial', 'stale'].includes(payload.status),
+      repos: awesomeCount(summary.repos) ?? rows.length,
+      reposOk: awesomeCount(summary.repos_ok) ?? rows.filter(r => r.status === 'ok').length,
+      reposStale: awesomeCount(summary.repos_stale) ?? rows.filter(r => r.status === 'stale').length,
+      reposUnavailable: awesomeCount(summary.repos_unavailable)
+        ?? rows.filter(r => r.status === 'unavailable').length,
+      measured: awesomeCount(summary.entries_measured),
+      upstream: awesomeCount(summary.entries_upstream),
+      byKind: summary.entries_by_kind || {},
+      withArxiv: awesomeCount(summary.with_arxiv),
+      withCode: awesomeCount(summary.with_code),
+      added: awesomeCount(summary.added),
+      removed: awesomeCount(summary.removed),
+      stalled: awesomeCount(summary.stalled),
+      baseline: rows.filter(repo => repo.diff.baseline).length,
+      // "no attempt today" and "uncomparable against a capped ledger" are two different
+      // silences, and both have to be visible next to a total that quietly excludes them
+      notAttempted: rows.filter(repo => repo.notAttempted).length,
+      notCompared: rows.filter(repo => repo.diff.truncated && repo.diff.added === null).length,
+      // Counted out of the ids and dates the collector already read: how much of
+      // what is on the board arrived recently, per list it could be asked of.
+      recent90d: rows.filter(repo => repo.status === 'ok' && !repo.upstream)
+        .reduce((total, repo) => total + (repo.measured.recent?.within90d || 0), 0),
+      byteCapped: rows.filter(repo => repo.measured.byteCapped).length,
+      skippedNoLink: rows.reduce((total, repo) => total + (repo.measured.skippedNoLink || 0), 0),
+      skippedNoTitle: rows.reduce((total, repo) => total + (repo.measured.skippedNoTitle || 0), 0),
+      selfReportedRepos: awesomeCount(summary.self_reported_repos),
+      upstreamRepos: rows.filter(repo => repo.upstream).length,
+      warnings: (payload.warnings || []).length,
+      fetches: payload.fetches || null,
+      sizes: payload.sizes || null,
+      budget: payload.source?.budget || null
+    };
+  }
+
+  /** Only choices the snapshot actually offers, so no select can filter to empty. */
+  function awesomeFacets() {
+    const tally = get => {
+      const counts = new Map();
+      awesomeRows().forEach(repo => {
+        const value = get(repo) || 'none';
+        counts.set(value, (counts.get(value) || 0) + 1);
+      });
+      return [...counts].map(([value, count]) => ({ value, count }))
+        .sort((a, b) => b.count - a.count || a.value.localeCompare(b.value));
+    };
+    return {
+      kinds: tally(repo => repo.kind),
+      owners: tally(repo => (repo.upstream ? 'upstream' : 'own')),
+      cadences: tally(repo => repo.cadence.cadence)
+    };
+  }
+
+  /** Separators are punctuation here, not part of what is searched: `world_models`
+   *  means the same words as `world-models`, for a repo slug and for a title. */
+  const flattenSearch = value => String(value).toLowerCase().replace(/[-_/]+/g, ' ');
+
+  /** Kind / ownership / cadence / attention filters; `search` may match a repo or a paper. */
+  function awesomeRepoFilter(source = awesomeRows()) {
+    const search = flattenSearch(state.awesomeSearch.trim());
+    const focus = state.awesomeFocus;
+    const kind = state.awesomeKind === 'all' ? null : state.awesomeKind;
+    const owner = state.awesomeOwner === 'all' ? null : state.awesomeOwner;
+    const cadence = state.awesomeCadence === 'all' ? null : state.awesomeCadence;
+    const attention = state.awesomeAttention;
+    const items = source.filter(repo => {
+      if (focus && repo.id !== focus) return false;
+      if (kind && (repo.kind || 'none') !== kind) return false;
+      if (owner && (repo.upstream ? 'upstream' : 'own') !== owner) return false;
+      if (cadence && (repo.cadence.cadence || 'none') !== cadence) return false;
+      if (attention === 'attention' && !awesomeAttention(repo).length) return false;
+      if (attention === 'stale' && repo.status === 'ok') return false;
+      if (attention === 'stopped' && !repo.cadence.stalled) return false;
+      if (attention === 'fresh' && !repo.diff.added) return false;
+      if (!search) return true;
+      // A repository slug is a hyphenated name: readers type "visual reasoning".
+      return flattenSearch([repo.id, repo.kind, repo.measured.note,
+        repo.selfReported?.file,
+        ...repo.topics.map(topic => topic.topic),
+        ...repo.categories.map(category => category.category),
+        ...repo.sample.map(entry => `${entry.title} ${entry.section || ''}`)]
+        .join(' ')).includes(search);
+    });
+    const sort = state.awesomeSort;
+    if (sort === 'stale') {
+      // Most stale first; an unknown file history is a gap, not the freshest list.
+      return items.sort((a, b) => {
+        const left = a.cadence.staleDays, right = b.cadence.staleDays;
+        if (left === null) return right === null ? a.id.localeCompare(b.id) : 1;
+        if (right === null) return -1;
+        return (right - left) || a.id.localeCompare(b.id);
+      });
+    }
+    const rank = repo => {
+      if (sort === 'added') return (repo.diff.added || 0) - (repo.diff.removed || 0);
+      if (sort === 'selfReported') return repo.selfReported?.entries ?? -1;
+      return repo.measured.entries ?? -1;
+    };
+    return items.sort((a, b) => (rank(b) - rank(a)) || a.id.localeCompare(b.id));
+  }
+
+  function awesomeFilteredRepos() {
+    return awesomeRepoFilter();
+  }
+
+  /**
+   * The paper flow: every sampled entry of every list that passed the filters.
+   * A sample is a capped view of the list, never the list itself - the label in
+   * the UI says so, and the count here is the sample count, not the total.
+   */
+  function awesomeFlow() {
+    const search = flattenSearch(state.awesomeSearch.trim());
+    const rows = [];
+    awesomeRepoFilter().forEach(repo => {
+      repo.sample.forEach(entry => {
+        rows.push({ ...entry, repoId: repo.id, repoName: repo.name, upstream: repo.upstream,
+                    kind: repo.kind, repoStatus: repo.status, repoCapturedAt: repo.capturedAt,
+                    repoNotAttempted: repo.notAttempted });
+      });
+    });
+    const filtered = search
+      ? rows.filter(row => flattenSearch([row.title, row.section, row.venue, row.repoId,
+                                         row.arxivId].join(' ')).includes(search))
+      : rows;
+    const sort = state.awesomeFlowSort;
+    return filtered.sort((a, b) => {
+      if (sort === 'repo') return a.repoId.localeCompare(b.repoId) ||
+        String(b.published || '').localeCompare(String(a.published || ''));
+      if (sort === 'added') return (b.isNew ? 1 : 0) - (a.isNew ? 1 : 0) ||
+        String(b.published || '').localeCompare(String(a.published || ''));
+      return String(b.published || '').localeCompare(String(a.published || '')) ||
+        a.repoId.localeCompare(b.repoId);
+    });
+  }
+
+  function awesomeFlowPageCount() {
+    return Math.max(1, Math.ceil(awesomeFlow().length / AWESOME_FLOW_PAGE_SIZE));
+  }
+
+  function awesomeFlowPage() {
+    const start = (Math.min(Math.max(1, state.awesomeFlowPage), awesomeFlowPageCount()) - 1) *
+      AWESOME_FLOW_PAGE_SIZE;
+    return awesomeFlow().slice(start, start + AWESOME_FLOW_PAGE_SIZE);
+  }
+
+  // --- Load every dataset ---------------------------------------------------
+
   async function loadAll() {
     const [downloads] = await Promise.allSettled([
       loadDownloads(), loadScholar(), loadSocial(), loadGitHub(), loadModelScope(),
@@ -1571,6 +2317,36 @@ MO.data = (() => {
     entityCoverage,
     entityProblems,
     entityObjects,
-    entityReferences
+    entityReferences,
+    loadTasks,
+    refreshTaskSnapshot,
+    taskRows,
+    taskFiltered,
+    taskPage,
+    taskPageCount,
+    taskPageSize: () => TASK_PAGE_SIZE,
+    taskStats,
+    taskFacets,
+    taskGraph,
+    taskSource,
+    taskDeadline,
+    taskEntity,
+    sortTasks,
+    loadAwesome,
+    loadAwesomeHistory,
+    awesomeTrend,
+    refreshAwesomeSnapshot,
+    awesomeRows,
+    awesomeFilteredRepos,
+    awesomeRepoMetrics,
+    awesomeCoverage,
+    awesomeRegistry,
+    awesomeAttention,
+    awesomeStats,
+    awesomeFacets,
+    awesomeFlow,
+    awesomeFlowPage,
+    awesomeFlowPageCount,
+    awesomeFlowPageSize: () => AWESOME_FLOW_PAGE_SIZE
   };
 })();

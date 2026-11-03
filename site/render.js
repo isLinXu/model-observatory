@@ -588,7 +588,7 @@ MO.render = (() => {
     $('entityStatus').classList.toggle('neg', !stats.available || lines.length > 1);
     const age = snapshotFreshness(payload.captured_at);
     $('entityFreshness').textContent = `${stats.available ? `快照采集于 ${timestamp(payload.captured_at)} UTC · ` : ''}${age.text}` +
-      `${state.entitySnapshotCheckedAt ? ` · 最近读取 ${timestamp(state.entitySnapshotCheckedAt)} UTC（读取不触发采集，本页只读）` : ''}`;
+      `${state.entitySnapshotCheckedAt ? ` · 最近读取 ${timestamp(state.entitySnapshotCheckedAt)} UTC（读取不触发采集）` : ''}`;
     $('entityFreshness').classList.toggle('neg', age.overdue && stats.available);
     $('entitySnapshotCheckedAt').textContent = `${state.entitySnapshotCheckedAt
       ? `最近成功读取快照 ${timestamp(state.entitySnapshotCheckedAt)} UTC` : '尚未成功读取快照'} · 采集由每日工作流完成`;
@@ -664,7 +664,9 @@ MO.render = (() => {
       `<div class="micro muted entity-problem-why">${esc(ENTITY_STATE_EXPLAINED[problem.state] || '')}` +
       `${problem.state === 'unchecked' && sources[problem.domain]?.reason ? `（${esc(sources[problem.domain].reason)}）` : ''}</div>` +
       `<div class="micro entity-problem-from">来自实体 <button type="button" class="button text-button" ` +
-      `data-entity-open="${esc(problem.slug)}">${esc(problem.title)}</button> · 点开查看正文与全部关联</div>` +
+      `data-entity-open="${esc(problem.slug)}">${esc(problem.title)}</button> · 点开查看正文与全部关联` +
+      `<button type="button" class="button text-button" data-entity-edit="${esc(problem.slug)}" ` +
+      'title="读取该条目的远端原文，改掉这条关系">改这条关联 ⌄</button></div>' +
       `</div></div>`).join('')
       : '<div class="chart-empty">没有断链，也没有未核对链接。注册表只登记关系，指标仍在各自看板。</div>';
   }
@@ -731,7 +733,10 @@ MO.render = (() => {
         `</div></div>`).join('') : '<p class="micro muted">该条目还没有登记任何关联对象——注册表允许空链接，只有作者知道它该连向哪里。</p>') +
       `<div class="entity-detail-actions">${entry.url
         ? `<a class="button secondary" href="${esc(entry.url)}" target="_blank" rel="noopener noreferrer">在 GitHub 编辑源文件 ↗</a>`
-        : '<span class="micro muted">源文件链接不可用</span>'}<span class="micro muted">本页只读；回写排在下一批</span></div>` +
+        : '<span class="micro muted">源文件链接不可用</span>'}` +
+      `<button type="button" class="button" data-entity-edit="${esc(entry.slug)}" ` +
+      `title="读取源文件原文并在页内编辑，推送前用采集器发布的 blob SHA 做基线">在页内编辑 ⌄</button>` +
+      '<span class="micro muted">回写需要 GitHub Token（只留在本标签页）</span></div>' +
       `</div></div></td></tr>`;
   }
 
@@ -804,6 +809,866 @@ MO.render = (() => {
     renderEntityProblems();
     renderEntityReverseNote();
     renderEntityTable();
+  }
+
+  // --- Task board -----------------------------------------------------------
+
+  /** Coordinates into CSS: fmt() adds thousands separators, which no style can read. */
+  const px = value => Math.round(Number(value) || 0);
+
+  const TASK_REF_LABELS = {
+    resolved: '已核对', unresolved: '断链', missing_index: '未核对'
+  };
+  const TASK_REF_EXPLAINED = {
+    resolved: '当日快照里确实有这个目标。',
+    unresolved: '来源当天回答了我们，却没有这个 ID。',
+    missing_index: '那次采集没有可用快照，所以这里什么都没说。'
+  };
+
+  /** A card's own status: the canvas words, not the registry's stages. */
+  function taskStatusLabel(status) {
+    if (!status) return '未标注';
+    return MO.board.laneLabel(status) || status;
+  }
+
+  function taskCountdownText(deadline) {
+    if (!deadline) return '';
+    if (!deadline.found) {
+      return deadline.available
+        ? '顶会目录里没有这个环节 ID' : '顶会快照本次不可用，未核对';
+    }
+    if (deadline.tbd) return '上游时间待定';
+    return deadline.utc ? `距截止 ${deadline.countdown}` : '无截止时间';
+  }
+
+  function taskRefChip(kind, id, refState, source) {
+    const label = TASK_REF_LABELS[refState] || TASK_REF_LABELS.missing_index;
+    const explained = TASK_REF_EXPLAINED[refState] || TASK_REF_EXPLAINED.missing_index;
+    const reason = !source?.available && source?.reason ? `｜${source.reason}` : '';
+    return `<span class="chip tiny entity-state task-ref task-${esc(kind)} ` +
+      `task-${esc(kind)}-${esc(refState || 'missing_index')}" ` +
+      `title="${esc(kind === 'ddl' ? '截止时间（数字归顶会看板所有）' : '研究实体（关系归注册表所有）')}：` +
+      `${esc(label)}——${esc(explained)}${esc(reason)}">` +
+      `${esc(kind === 'ddl' ? '◴' : '⌗')} ${esc(id)}</span>`;
+  }
+
+  function taskCardMarkup(card, row) {
+    const board = MO.board;
+    const deadline = row.ddl ? data.taskDeadline(row.ddl) : null;
+    const ddlText = taskCountdownText(deadline);
+    const children = board.childrenOf(row.slug);
+    const waiters = board.blockersOf(row.slug);
+    const patch = board.patchOf(row.slug);
+    const lines = [
+      `<div class="task-card-top"><span class="chip tiny task-status task-${esc(row.lane)}">` +
+      `${esc(taskStatusLabel(row.status))}</span>`,
+      row.localOnly ? `<span class="chip tiny task-flag${row.pushed ? ' is-pushed' : ''}" title="${
+        row.pushed ? '文件已写回 tasks/ 下；索引要等次日采集，所以这条卡仍显示你推送的样子'
+          : '这张卡片只在这台浏览器里，推送后才会成为 tasks/ 下的文件'}">` +
+        `${row.pushed ? '新建 · 已推送' : '新建 · 未推送'}</span>` : '',
+      patch ? `<span class="chip tiny task-flag${row.pushed ? ' is-pushed' : ''}" title="${
+        row.pushed ? '已经写回 tasks/ 下的源文件；明天采集重建索引前，这里仍显示你推送的样子'
+          : `画布上的改动尚未推送：状态是 ${esc((patch.status ?? row.status) || '未标注')}`}">` +
+        `${row.pushed ? '已推送 · 等索引' : '本地改动'}</span>` : '',
+      `<span class="task-card-spacer"></span><span class="micro muted task-updated">${esc(row.updated || '—')}</span></div>`,
+      `<div class="task-card-title" title="${esc(row.title)}">${esc(row.title)}</div>`,
+      `<div class="task-card-code"><code>${esc(row.slug)}</code></div>`,
+      `<div class="task-card-meta">`,
+      row.parent ? `<span class="micro" title="父任务：这张卡是从它拆出来的">↳ ${esc(row.parent)}</span>` : '',
+      row.depends.length ? `<span class="micro" title="依赖：等这些任务先完成">⤷ 依赖 ${fmt(row.depends.length)}</span>` : '',
+      children.length ? `<span class="micro" title="已拆出的子任务">⑂ 拆出 ${fmt(children.length)}</span>` : '',
+      waiters.length ? `<span class="micro" title="等待本任务的其他卡">⧗ 被等 ${fmt(waiters.length)}</span>` : '',
+      row.entity ? taskRefChip('entity', row.entity, row.entityState, data.taskSource('entity')) : '',
+      row.ddl ? taskRefChip('ddl', row.ddl, row.ddlState, data.taskSource('ddl')) : '',
+      ddlText ? `<span class="micro task-countdown tone-${esc(deadline?.tone || 'unknown')}" ` +
+        `title="倒计时取自 conferences.json，任务卡只保存这个 ID">${esc(ddlText)}</span>` : '',
+      `</div>`,
+      row.reason ? `<div class="task-card-reason" title="${esc(row.reason)}">⚑ ${esc(row.reason)}</div>` : '',
+      `<div class="task-card-tags">${row.tags.slice(0, 2)
+        .map(tag => `<span class="chip tiny" title="标签 ${esc(tag)}">${esc(tag)}</span>`).join('')}` +
+      `${row.tags.length > 2 ? `<span class="micro muted">+${fmt(row.tags.length - 2)}</span>` : ''}</div>`
+    ];
+    return `<div class="task-card${row.dirty ? ' is-draft' : ''}${row.localOnly ? ' is-new' : ''}${
+      card.stored ? ' is-placed' : ''}${data.state.taskOpen === row.slug ? ' is-open' : ''}" ` +
+      `data-task-card="${esc(row.slug)}" style="left:${px(card.x)}px;top:${px(card.y)}px" ` +
+      `tabindex="0" role="button" aria-label="${esc(row.title)}（${esc(taskStatusLabel(row.status))}）——` +
+      `拖动换道即改状态，拖到别的卡上建立父子，右下角把手可拉依赖；` +
+      '键盘：1–7 换道，l 起依赖线，d 起拆解，Enter 打开详情">' +
+      `${lines.join('')}<span class="task-card-handle" data-task-link="${esc(row.slug)}" ` +
+      `title="按住拖到另一张卡上，建立「这个任务等那个任务」"></span></div>`;
+  }
+
+  function renderTaskStatus() {
+    const state = data.state, payload = state.tasks || {}, stats = data.taskStats();
+    const drafts = MO.board.draftSummary();
+    const changes = payload.changes || {};
+    const lines = [stats.available
+      ? `任务看板快照 · ${fmt(stats.total)} 个任务 · ${fmt(stats.edges)} 条边 · ` +
+        `${fmt(stats.blocked)} 个受阻 · 采集于 ${timestamp(payload.captured_at)} UTC`
+      : state.tasks
+        ? '任务快照暂不可用，画布只显示这台浏览器上的草稿卡。'
+        : '还没有读取任务快照：滚动到本节、点「刷新已发布快照」，或直接在画布上建卡。'];
+    if (changes.status === 'initial') lines.push('首次发布任务索引，后续每日快照开始对比增删与推进');
+    else if (changes.status === 'compared') {
+      lines.push(`较上次采集 新增 ${fmt(changes.added_count)} · 移除 ${fmt(changes.removed_count)} · ` +
+        `修订 ${fmt(changes.revised_count)} · 推进 ${fmt(changes.advanced_count)} · ` +
+        `回退 ${fmt(changes.regressed_count)}`);
+    }
+    if (payload.status === 'stale' || payload.error) {
+      lines.push(`后台索引失败，保留上次快照${payload.error ? `：${payload.error}` : ''}`);
+    }
+    if (state.taskRefreshError) lines.push(`快照读取失败，保留上次数据：${state.taskRefreshError}`);
+    if (stats.errors) lines.push(`${fmt(stats.errors)} 条结构错误按未标注处理（CI --check 会失败）`);
+    if (stats.untriaged) lines.push(`${fmt(stats.untriaged)} 个任务落在「未标注」道，需要补 status`);
+    if (drafts.pending) lines.push(`${fmt(drafts.pending)} 张卡有本地改动，尚未推送`);
+    if (drafts.waiting) lines.push(`${fmt(drafts.waiting)} 张已写回远端，等次日采集重建索引`);
+    if (drafts.warning) lines.push(drafts.warning);
+    $('taskStatus').textContent = lines.join(' · ');
+    $('taskStatus').title = [payload.error, state.taskRefreshError].filter(Boolean).join('\n');
+    $('taskStatus').classList.toggle('neg', !stats.available || lines.length > 1);
+    const age = snapshotFreshness(payload.captured_at);
+    $('taskFreshness').textContent = `${stats.available ? `快照采集于 ${timestamp(payload.captured_at)} UTC · ` : ''}${age.text}` +
+      `${state.taskSnapshotCheckedAt ? ` · 最近读取 ${timestamp(state.taskSnapshotCheckedAt)} UTC（读取不触发采集）` : ''}`;
+    $('taskFreshness').classList.toggle('neg', age.overdue && stats.available);
+    $('taskCheckedAt').textContent = `${state.taskSnapshotCheckedAt
+      ? `最近成功读取快照 ${timestamp(state.taskSnapshotCheckedAt)} UTC` : '尚未成功读取快照'} · ` +
+      '采集由每日工作流完成' +
+      (drafts.waiting ? ` · 已推送 ${fmt(drafts.waiting)} 张，次日索引才会反映它们` : '');
+    $('taskExport').disabled = !stats.available && !drafts.total;
+    $('taskFilterReset').disabled = !state.taskSearch && state.taskTag === 'all' && state.taskRef === 'all';
+    $('taskDraftBadge').textContent = drafts.pending
+      ? `${fmt(drafts.pending)} 张卡待推送`
+      : drafts.waiting ? `${fmt(drafts.waiting)} 张已推送 · 等索引` : '无本地改动';
+    $('taskDraftBadge').classList.toggle('accent', drafts.pending > 0);
+    $('taskDraftBadge').title = `座标 ${fmt(drafts.positions)} 张只留在本机，不计入待推送` +
+      (drafts.waiting ? ` · ${fmt(drafts.waiting)} 张已写回远端，等次日采集重建索引` : '');
+  }
+
+  function renderTaskSummary() {
+    const payload = data.state.tasks || {}, stats = data.taskStats();
+    const board = MO.board;
+    const rows = board.rows();
+    const byLane = {};
+    rows.forEach(row => { byLane[row.lane] = (byLane[row.lane] || 0) + 1; });
+    const graph = board.graph(rows);
+    $('taskCountBadge').textContent = fmt(rows.length);
+    $('statTasks').textContent = fmt(rows.length);
+    $('statTasksSub').textContent = board.LANES.slice(0, 6)
+      .map(lane => `${board.laneLabel(lane)} ${fmt(byLane[lane] || 0)}`).join(' · ');
+    $('statTaskEdges').textContent = fmt(graph.edges.length);
+    const published = data.taskGraph();
+    $('statTaskEdgesSub').textContent = `索引里 ${fmt(published.edges.length)} 条 · ` +
+      `画布挡下 ${fmt(graph.dropped.length)} 条 · 采集器挡下 ${fmt(published.dropped.length)} 条`;
+    $('statTaskBlocked').textContent = fmt(byLane.blocked || 0);
+    const blocked = rows.filter(row => row.lane === 'blocked');
+    $('statTaskBlockedSub').textContent = blocked.length
+      ? `被等合计 ${fmt(blocked.reduce((sum, row) => sum + board.blockersOf(row.slug).length, 0))} 条 · ` +
+        (blocked.some(row => row.reason) ? '受阻原因已写在卡上' : '这些卡还没有受阻原因')
+      : '没有受阻任务';
+    const nearest = rows.map(row => row.ddl ? data.taskDeadline(row.ddl) : null)
+      .filter(item => item?.found && Number.isFinite(item.ts))
+      .sort((a, b) => a.ts - b.ts)[0];
+    $('statTaskDeadline').textContent = nearest ? nearest.countdown : '—';
+    $('statTaskDeadlineSub').textContent = nearest
+      ? `${nearest.conference} ${nearest.edition} · ${nearest.kind}｜数字归顶会看板所有`
+      : '没有任务挂 ddl 截止时间';
+  }
+
+  function renderTaskQueue() {
+    const board = MO.board;
+    const rows = board.rows();
+    const graph = board.graph(rows);
+    const published = data.taskGraph();
+    const items = [
+      ...graph.dropped.map(edge => ({
+        kind: '画布拒绝', text: `${edge.from} -${edge.type}-> ${edge.to}`,
+        note: edge.reason, tone: 'warn'
+      })),
+      ...published.dropped.map(edge => ({
+        kind: '索引拒绝', text: `${edge.from} -${edge.type}-> ${edge.to}`,
+        note: `每日采集已把这条边挡下（${edge.reason}）`, tone: 'warn'
+      })),
+      ...rows.filter(row => row.entityState === 'unresolved' || row.ddlState === 'unresolved').map(row => ({
+        kind: '断引用', text: row.slug,
+        note: [row.entityState === 'unresolved' ? `entity ${row.entity}` : '',
+          row.ddlState === 'unresolved' ? `ddl ${row.ddl}` : ''].filter(Boolean).join(' · ') +
+          ' 在当日快照里找不到',
+        tone: 'neg'
+      })),
+      ...rows.filter(row => row.entityState === 'missing_index' || row.ddlState === 'missing_index').map(row => ({
+        kind: '未核对', text: row.slug,
+        note: '来源本次没有可用快照，这不是断链', tone: ''
+      })),
+      ...(data.state.tasks?.structural_errors || []).map(note => ({
+        kind: '结构错误', text: note, note: '采集器按未标注处理，CI --check 会失败', tone: 'neg'
+      }))
+    ];
+    $('taskQueueNote').textContent = items.length
+      ? `${fmt(items.length)} 条需要看一眼：画布上的线只连到已存在的卡，成环与自连当场拒绝`
+      : rows.length ? '父子与依赖全部可用，引用都能在当日快照里找到' : '等待任务数据';
+    $('taskQueue').innerHTML = items.length ? items.slice(0, 12).map(item =>
+      `<div class="entity-detail-item"><span class="chip tiny task-state-${esc(item.kind)}">${esc(item.kind)}</span>` +
+      `<div class="entity-detail-text"><code>${esc(item.text)}</code>` +
+      `<div class="micro muted">${esc(item.note)}</div></div></div>`).join('') +
+      (items.length > 12 ? `<p class="micro muted">另有 ${fmt(items.length - 12)} 条未列出</p>` : '')
+      : '<div class="chart-empty">没有待处理的边或引用</div>';
+  }
+
+  /** A lane's own box, so a filtered canvas still shows where the lanes are. */
+  function taskLaneMarkup(lane) {
+    return `<div class="task-lane${lane.id === MO.board.UNTRIAGED ? ' is-untriaged' : ''}" ` +
+      `data-task-lane="${esc(lane.id)}" style="left:${px(lane.x)}px;width:${px(lane.w)}px">` +
+      `<div class="task-lane-head">${esc(lane.label)} ` +
+      `<span class="micro muted">${fmt(lane.count)}</span></div></div>`;
+  }
+
+  function taskEdgeMarkup(edge) {
+    const word = edge.type === 'parent' ? '拆自' : '等待';
+    return `<path class="task-edge task-edge-${esc(edge.type)}${edge.draft ? ' is-draft' : ''}" ` +
+      `d="${esc(edge.d)}" fill="none" marker-end="url(#task-arrow-${esc(edge.type)})">` +
+      `<title>${esc(edge.from)} ${word} ${edge.to}${edge.draft ? '（本地改动，未推送）' : ''}</title></path>` +
+      `<text class="task-edge-label" x="${px(edge.midX)}" y="${px(edge.midY - 6)}" ` +
+      `text-anchor="middle">${word}</text>`;
+  }
+
+  const TASK_ARROW = kind =>
+    `<marker id="task-arrow-${kind}" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" ` +
+    `markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" ` +
+    `class="task-arrow task-arrow-${kind}"></path></marker>`;
+
+  /**
+   * The layer is painted *inside* the canvas instead of being a node the page
+   * handed over: the canvas writes its own innerHTML on every repaint, so a node
+   * living there would be deleted by the first one and the second would crash on
+   * a null. It stays the first child, absolutely positioned at the content origin,
+   * so a line lands on the box the reader sees and scrolls with it.
+   */
+  function taskLayerMarkup(geometry, edges) {
+    const size = { width: px(geometry.width), height: px(geometry.height) };
+    return `<svg id="taskEdgeLayer" class="task-edge-layer" aria-hidden="true" focusable="false" ` +
+      `viewBox="0 0 ${size.width} ${size.height}" width="${size.width}" height="${size.height}">` +
+      `<defs>${TASK_ARROW('parent')}${TASK_ARROW('depends')}</defs>` +
+      edges.lines.map(taskEdgeMarkup).join('') + '</svg>';
+  }
+
+  function renderTaskCanvas() {
+    const board = MO.board;
+    const rows = board.rows();
+    const box = $('taskCanvas');
+    if (!rows.length) {
+      box.innerHTML = '<div class="chart-empty">还没有任务：点「＋ 新建卡片」在提案道落下第一张卡，' +
+        '或等每日采集读到 tasks/ 目录。</div>';
+      $('taskCanvasSize').textContent = '空画布';
+      return;
+    }
+    const geometry = board.layout(rows);
+    const visible = data.taskFiltered(rows);
+    const slugs = new Set(visible.map(row => row.slug));
+    const cards = geometry.cards.filter(card => slugs.has(card.slug));
+    const edges = board.edges(rows, cards);
+    box.innerHTML = taskLayerMarkup(geometry, edges) +
+      geometry.lanes.map(taskLaneMarkup).join('') +
+      cards.map(card => taskCardMarkup(card, rows.find(row => row.slug === card.slug))).join('');
+    $('taskCanvasSize').textContent = `${fmt(cards.length)} / ${fmt(rows.length)} 张卡在同屏 · ` +
+      `${fmt(edges.lines.length)} 条连线` +
+      (edges.hidden ? `（${fmt(edges.hidden)} 条的另一端被筛选隐藏）` : '') +
+      ` · 卡片座标只存本机`;
+  }
+
+  function taskDetailMarkup() {
+    const slug = data.state.taskOpen;
+    const wrap = $('taskDetail');
+    if (!slug) {
+      wrap.classList.add('hidden');
+      wrap.innerHTML = '';
+      return;
+    }
+    const row = MO.board.findRow(slug);
+    if (!row) {
+      wrap.classList.add('hidden');
+      wrap.innerHTML = '';
+      data.state.taskOpen = null;
+      return;
+    }
+    wrap.classList.remove('hidden');
+    wrap.innerHTML = taskDetailRow(row);
+  }
+
+  function renderTaskList() {
+    const board = MO.board;
+    const rows = board.rows();
+    const filtered = data.taskFiltered(rows);
+    const pages = Math.max(1, Math.ceil(filtered.length / data.taskPageSize()));
+    data.state.taskPage = Math.min(Math.max(1, data.state.taskPage), pages);
+    const start = (data.state.taskPage - 1) * data.taskPageSize();
+    const page = filtered.slice(start, start + data.taskPageSize());
+    $('taskTableCount').textContent = `${fmt(filtered.length)} / ${fmt(rows.length)} TASKS · ` +
+      '清单与画布共用同一份筛选';
+    $('taskRows').innerHTML = page.length ? page.map(task => {
+      const children = board.childrenOf(task.slug);
+      const waiters = board.blockersOf(task.slug);
+      const deadline = task.ddl ? data.taskDeadline(task.ddl) : null;
+      return `<tr class="task-row${task.dirty ? ' is-draft' : ''}" data-task-slug="${esc(task.slug)}">` +
+        `<td><div class="table-primary">${esc(task.title)}</div>` +
+        `<div class="micro muted"><code>${esc(task.slug)}</code>${task.url
+          ? ` · <a href="${esc(task.url)}" target="_blank" rel="noopener noreferrer">源文件 ↗</a>` : ''}</div></td>` +
+        `<td><span class="chip tiny task-status task-${esc(task.lane)}">${esc(taskStatusLabel(task.status))}</span>` +
+        `${task.dirty ? `<span class="chip tiny task-flag${task.pushed ? ' is-pushed' : ''}">` +
+          `${task.pushed ? '已推送' : '本地'}</span>` : ''}</td>` +
+        `<td class="micro">${esc(task.parent || '—')}${children.length ? ` · ⑂ ${fmt(children.length)} 张子卡` : ''}</td>` +
+        `<td class="micro">${task.depends.length ? esc(task.depends.join('、')) : '—'}` +
+        `${waiters.length ? `<div class="micro muted">被 ${fmt(waiters.length)} 个任务等</div>` : ''}</td>` +
+        `<td class="micro">${task.entity ? esc(task.entity) : '—'}` +
+        `${task.ddl ? `<div class="micro muted">${esc(task.ddl)} · ${esc(taskCountdownText(deadline))}</div>` : ''}</td>` +
+        `<td class="micro">${task.tags.length ? esc(task.tags.join(' · ')) : '—'}</td>` +
+        `<td class="align-right micro">${esc(task.updated || '—')}</td>` +
+        `<td><button type="button" class="button text-button" data-task-open="${esc(task.slug)}">` +
+        `${data.state.taskOpen === task.slug ? '收起' : '详情'}</button></td></tr>`;
+    }).join('') : '<tr><td colspan="8" class="no-rows">没有符合筛选的任务</td></tr>';
+    $('taskPrev').disabled = data.state.taskPage <= 1;
+    $('taskNext').disabled = data.state.taskPage >= pages;
+    $('taskPageInfo').textContent = `第 ${fmt(data.state.taskPage)} / ${fmt(pages)} 页`;
+    $('taskPagination').hidden = filtered.length <= data.taskPageSize();
+  }
+
+  /** 状态：进行中 → 待验收 — a draft names what the index still says, not just the new value. */
+  function taskDraftDiff(task, patch) {
+    const copy = { status: '状态', parent: '父任务', depends: '依赖' };
+    const show = (field, value) => {
+      if (field === 'depends') return (value || []).length ? value.join('、') : '（无）';
+      if (field === 'status') return value ? taskStatusLabel(value) : '（未标注）';
+      return value || '（无）';
+    };
+    return Object.keys(copy).filter(field => field in patch).map(field =>
+      `${copy[field]}：${show(field, task.was?.[field])} → ${show(field, patch[field])}`).join(' · ');
+  }
+
+  function taskDetailRow(task) {
+    const board = MO.board;
+    const entity = task.entity ? data.taskEntity(task.entity) : null;
+    const deadline = task.ddl ? data.taskDeadline(task.ddl) : null;
+    const children = board.childrenOf(task.slug);
+    const waiters = board.blockersOf(task.slug);
+    const patch = board.patchOf(task.slug);
+    const source = name => data.taskSource(name);
+    return `<div class="entity-detail-main"><div class="panel-overline">正文（索引里的副本）</div>` +
+      `<pre class="entity-body">${esc(task.body || '（这张卡还没有正文）')}</pre>` +
+      (task.localOnly
+        ? `<p class="micro neg">${task.pushed
+          ? `这张新卡已写回 tasks/${esc(task.slug)}.md` +
+            esc(MO.board.commitLabel(MO.board.pushedOf(task.slug)?.commit)) + '，索引要等次日采集，' +
+            '所以现在只有画布看得到它。'
+          : '这是一张本地新建卡：还没有对应的 tasks/ 文件，推送后才会进入索引。'}</p>`
+        : `<p class="micro muted">源文件 ${fmt(task.bytes ?? 0)} 字节 / ${fmt(task.lines ?? 0)} 行 · ` +
+          `正文摘要 sha256 ${esc(task.sha || '未公开')} · 推送基线 ${esc(task.blobSha ? task.blobSha.slice(0, 7) : '未公开')}</p>`) +
+      (patch ? `<p class="micro accent">${task.pushed ? '已推送，等次日索引：' : '本地改动：'}` +
+        `${esc(taskDraftDiff(task, patch))}</p>` : '') +
+      `</div><div class="entity-detail-links"><div class="panel-overline">结构与引用</div>` +
+      `<div class="entity-detail-item"><div class="entity-detail-text">` +
+      `<div>父任务：<code>${esc(task.parent || '无')}</code></div>` +
+      `<div class="micro muted">拆出 ${fmt(children.length)} 张子卡${children.length ? `：${esc(children.join('、'))}` : ''}</div>` +
+      `<div class="micro muted">被 ${fmt(waiters.length)} 张卡等待${waiters.length ? `：${esc(waiters.join('、'))}` : ''}</div>` +
+      `<div class="micro muted">依赖：${task.depends.length ? esc(task.depends.join('、')) : '无'}</div>` +
+      `</div></div>` +
+      (task.entity ? `<div class="entity-detail-item"><span class="chip tiny entity-state task-ref-${esc(task.entityState || 'missing_index')}">` +
+        `${esc(TASK_REF_LABELS[task.entityState] || '未核对')}</span><div class="entity-detail-text">` +
+        `<div><span class="entity-domain">注册表</span> <code>${esc(task.entity)}</code>` +
+        `${entity?.url ? `<a class="ext-link" href="${esc(entity.url)}" target="_blank" rel="noopener noreferrer">↗</a>` : ''}</div>` +
+        `<div class="micro muted">${esc(TASK_REF_EXPLAINED[task.entityState] || TASK_REF_EXPLAINED.missing_index)}` +
+        `${!source('entity').available ? `（${esc(source('entity').reason || '来源不可用')}）` : ''}</div>` +
+        `</div></div>` : '') +
+      (task.ddl ? `<div class="entity-detail-item"><span class="chip tiny entity-state task-ref-${esc(task.ddlState || 'missing_index')}">` +
+        `${esc(TASK_REF_LABELS[task.ddlState] || '未核对')}</span><div class="entity-detail-text">` +
+        `<div><span class="entity-domain">顶会截止</span> <code>${esc(task.ddl)}</code></div>` +
+        `<div class="micro muted">${esc(deadline?.found
+          ? `${deadline.conference || ''} ${deadline.edition || ''} · ${deadline.kind || ''} · UTC ${deadline.utc || '待定'}`
+          : TASK_REF_EXPLAINED[task.ddlState] || TASK_REF_EXPLAINED.missing_index)}</div>` +
+        (deadline?.found && deadline.utc
+          ? `<div class="micro">倒计时 ${esc(deadline.countdown)}｜这个数只有一个主人：conferences.json</div>` : '') +
+        `</div></div>` : '') +
+      (task.reason ? `<p class="micro">⚑ 受阻原因：${esc(task.reason)}</p>` : '') +
+      `<div class="entity-detail-actions">${task.url
+        ? `<a class="button secondary" href="${esc(task.url)}" target="_blank" rel="noopener noreferrer">在 GitHub 打开源文件 ↗</a>`
+        : `<span class="micro muted">${task.localOnly
+          ? '本地新建卡还没有源文件' : '索引没有给出可以打开的源文件链接'}</span>`}</div>` +
+      `<button type="button" class="button text-button" data-task-reset="${esc(task.slug)}" ` +
+      `title="只丢弃这张卡在本机的语义改动；座标不动">撤销本地改动</button></div>` +
+      `</div>`;
+  }
+
+  function renderTasks() {
+    const state = data.state;
+    const board = MO.board;
+    fillSelect('taskTag', data.taskFacets().map(item => ({
+      value: item.value, label: `${item.value} (${fmt(item.count)})`
+    })), 'taskTag', '全部标签');
+    $('taskRef').value = state.taskRef;
+    $('taskSort').value = state.taskSort;
+    $('taskSearch').value = state.taskSearch;
+    renderTaskStatus();
+    renderTaskSummary();
+    renderTaskQueue();
+    $('taskCanvasWrap').classList.toggle('hidden', state.taskView !== 'board');
+    $('taskTableWrap').classList.toggle('hidden', state.taskView !== 'list');
+    document.querySelectorAll('[data-task-view]').forEach(button => {
+      const active = button.dataset.taskView === state.taskView;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    if (state.taskView === 'board') renderTaskCanvas();
+    else renderTaskList();
+    taskDetailMarkup();
+    $('taskLanes').textContent = board.LANES
+      .map(lane => `${board.laneLabel(lane)}`).join(' → ');
+    // The push panel reads the same overlay the canvas just painted, so a drag and
+    // its 待推送 count can never be one render apart - but the panel owns its own
+    // nodes, and this is the only line between the two.
+    if (MO.tasksync) MO.tasksync.renderPanel();
+  }
+
+  // --- Paper-list tracking --------------------------------------------------
+
+  const AWESOME_KIND_LABELS = {
+    'markdown-table': 'Markdown 表格', 'machine-json': '机器可读索引',
+    'topic-archives': '主题月度归档', report: '一次性报告'
+  };
+  const AWESOME_CADENCE_LABELS = { daily: '日更', weekly: '周更', monthly: '月更', manual: '手动' };
+  const AWESOME_STATE_LABELS = { ok: '已读取', stale: '沿用上次', unavailable: '未读到' };
+  const AWESOME_KIND_EXPLAINED = {
+    'markdown-table': '逐行读表格与条目符号，表头按每个分区自己的列名解释',
+    'machine-json': '读该仓库自己发布的 JSON 索引，不碰 README',
+    'topic-archives': '一个主题一个索引页，逐月归档；只数最新月份抽样到的主题',
+    report: '一次性调研报告：只统计带外链的行，不声称有更新流'
+  };
+
+  const awesomeKindLabel = kind => AWESOME_KIND_LABELS[kind] || kind || '未标注形态';
+  const awesomeValue = value => (value === null || value === undefined ? '—' : fmt(value));
+
+  /** A baseline is not "zero changes", and a report has no change stream at all. */
+  function awesomeDeltaText(repo) {
+    const diff = repo.diff;
+    if (diff.baseline) return '基线';
+    if (diff.added === null || diff.removed === null) return diff.truncated ? '不可比' : '不更新';
+    return `${signed(diff.added)} / ${diff.removed ? `−${fmt(diff.removed)}` : '0'}`;
+  }
+
+  /** Two numbers, two cells: the measured count and the list's own claim. */
+  function awesomeNumberCell(label, value, note, toneClass) {
+    return `<div class="awesome-number${toneClass ? ` ${toneClass}` : ''}">` +
+      `<span class="awesome-number-label">${esc(label)}</span>` +
+      `<b>${value}</b><span class="micro muted">${esc(note)}</span></div>`;
+  }
+
+  /** Field coverage: a list can be large and still say nothing about its rows. */
+  function awesomeCoverageBar(repo) {
+    return data.awesomeCoverage(repo).map(field =>
+      `<div class="awesome-cov-row">` +
+      `<span class="awesome-cov-name">${esc(field.label)}</span>` +
+      `<div class="awesome-cov-bar"><i style="width:${(field.share || 0).toFixed(1)}%"></i></div>` +
+      `<span class="micro">${field.count === null ? '—' : `${fmt(field.count)} · ` +
+        `${field.share === null ? '—' : `${field.share}%`}`}</span></div>`).join('');
+  }
+
+  /** The one number that has another owner: this board only points at it. */
+  function awesomeRepoLine(repo) {
+    const metrics = data.awesomeRepoMetrics(repo.id);
+    if (!metrics.observed) {
+      return `<div class="micro muted awesome-foreign">仓库指标：${esc(metrics.reason)}` +
+        `｜本站不代他人仓库保存 star 数</div>`;
+    }
+    return `<div class="micro muted awesome-foreign">仓库指标（由 GitHub 看板持有，采集于 ` +
+      `${esc(timestamp(metrics.capturedAt))} UTC）：★ ${fmt(metrics.stars)} · ` +
+      `fork ${fmt(metrics.forks)} · 推送 ${esc(timestamp(metrics.pushedAt))}` +
+      `${metrics.archived ? ' · 已归档' : ''}${metrics.language ? ` · ${esc(metrics.language)}` : ''}` +
+      `｜这里的「推送」是整仓最后一次，清单文件自己的改动时间见上方节奏</div>`;
+  }
+
+  function awesomeEntryRow(entry) {
+    return `<li class="awesome-entry${entry.isNew ? ' fresh' : ''}">` +
+      (entry.url
+        ? `<a class="model-link" href="${esc(entry.url)}" target="_blank" rel="noopener noreferrer">` +
+          `${esc(entry.title || entry.id)} ↗</a>`
+        : `<span class="model-title">${esc(entry.title || entry.id)}</span>`) +
+      `<span class="micro muted awesome-entry-meta">` +
+      [entry.section, entry.published, entry.venue].filter(Boolean).map(esc).join(' · ') +
+      `</span>${entry.isNew ? '<span class="chip tiny awesome-fresh">本次新增</span>' : ''}</li>`;
+  }
+
+  /**
+   * The registry owns the relationship, this board owns the counts. The card
+   * asks one question of it — "has anybody registered this repository, and under
+   * what" — and links to the reverse lookup instead of copying anything over.
+   */
+  function awesomeRegistryLine(repoId) {
+    const key = `gh_repo:${repoId}`;
+    if (!data.state.entities) {
+      return '<div class="awesome-topic-note"><b>实体注册表</b>：注册表索引还没载入，' +
+        '载入后这里会列出登记了这份清单的实体条目</div>';
+    }
+    const found = data.awesomeRegistry(repoId);
+    if (!found.entries.length) {
+      return `<div class="awesome-topic-note"><b>实体注册表</b>：还没有条目登记这份仓库` +
+        `（注册表把清单登记成可被任务卡引用的对象，条目数与节奏仍归本栏目）</div>`;
+    }
+    const state = ENTITY_STATE_LABELS[found.state] || found.state || '未核对';
+    return `<div class="awesome-topic-note"><b>实体注册表</b>：${fmt(found.entries.length)} 条登记了这份仓库` +
+      `（对象状态 ${esc(state)}）：` +
+      found.entries.map(entry =>
+        `<button type="button" class="chip tiny awesome-registry-chip" ` +
+        `data-awesome-registry="${esc(key)}" title="到注册表反查 ${esc(key)}">${esc(entry.slug)} · ` +
+        `${esc(entry.title)}</button>`).join(' ') + `</div>`;
+  }
+
+  function awesomeCardDetail(repo) {
+    const files = repo.measured.files.filter(file => file.path);
+    const extras = [awesomeRegistryLine(repo.id)];
+    if (repo.measured.recent) {
+      const recent = repo.measured.recent;
+      extras.push(`<div class="awesome-topic-note"><b>条目年龄</b>（本站从已数到的 arXiv id ` +
+        `与日期里分桶，只有年份的按当年 1 月计，宁老不新）：近 90 天 ${fmt(recent.within90d)} 条 · ` +
+        `近一年 ${fmt(recent.within365d)} 条 · 更早 ${fmt(recent.older)} 条 · ` +
+        `认不出日期 ${fmt(recent.undated)} 条</div>`);
+    }
+    if (repo.measured.skipped) {
+      extras.push(`<div class="awesome-topic-note"><b>没成为条目的行</b>：${fmt(repo.measured.skipped)} 行 =` +
+        ` 认不出标题 ${fmt(repo.measured.skippedNoTitle || 0)} + 无链接 ${fmt(repo.measured.skippedNoLink || 0)}` +
+        ` + 既无链接也无会议／日期 ${fmt(repo.measured.skippedNoSignal || 0)}。` +
+        `表格清单按链接列判定条目，所以导航表与榜单行在这里被排除；` +
+        `报告类清单没有链接列，认得出会议或日期就算条目</div>`);
+    }
+    if (repo.topics.length) {
+      const stale = repo.topics.filter(topic => topic.state !== 'ok');
+      extras.push(`<div class="awesome-topic-note"><b>主题归档</b>：${fmt(repo.topics.length)} 个主题页，` +
+        `${fmt(repo.measured.monthsSampled || 0)} 个（最新月 ${esc(repo.measured.newestMonth || '—')}` +
+        `${repo.measured.newestMonthAgeDays !== null ? ` · 距今 ${fmt(repo.measured.newestMonthAgeDays)} 天` : ''}）` +
+        `被逐行数过 · ` +
+        `合计实测 ${fmt(repo.measured.entries)} 条（同一篇跨主题只数一次，重复 ${fmt(repo.measured.duplicatedRows || 0)} 次）` +
+        `${stale.length ? ` · ${fmt(stale.length)} 个主题本次读不到` : ''}｜未挂进索引的主题文件不计入，` +
+        `因此这里的实测小于仓库自己的归档总量</div>`);
+    }
+    if (repo.categories.length) {
+      extras.push(`<div class="awesome-topic-note"><b>自报分类</b>（该仓库自己的 stats.json）：` +
+        repo.categories.map(item =>
+          `${esc(item.category)} ${fmt(item.selfReported)}（7 日新增 ${fmt(item.new7d || 0)}）`).join(' · ') +
+        `</div>`);
+    }
+    if (repo.selfReported?.extra?.reposStars !== null && repo.selfReported?.extra?.reposStars !== undefined) {
+      extras.push(`<div class="awesome-topic-note">自报代码仓库总数 ${fmt(repo.selfReported.extra.reposTotal)} 个、` +
+        `合计 star ${fmt(repo.selfReported.extra.reposStars)}——那是别人仓库的 star 之和，` +
+        `与本站的任何指标都不同源，只作为该清单自己的说法保留</div>`);
+    }
+    return `<div class="awesome-card-detail">` +
+      (repo.diff.note || repo.measured.note || repo.selfReported?.note
+        ? `<p class="micro awesome-caliber">${esc([repo.diff.note, repo.measured.note, repo.selfReported?.note]
+            .filter(Boolean).join('　｜　'))}</p>` : '') +
+      (files.length
+        ? `<p class="micro muted">读取文件：${files.map(file =>
+            `<code>${esc(file.path)}</code>${file.bytes !== null
+              ? ` ${(file.bytes / 1024).toFixed(0)} KB` : ''}${file.rows !== null ? ` · ${fmt(file.rows)} 行` : ''}` +
+              `${file.truncated ? ' · 已在单文件上限处截断' : ''}`
+            ).join(' · ')}${repo.status === 'stale' ? '（上一次成功读取时的尺寸）' : ''}</p>` : '') +
+      extras.join('') +
+      `<p class="micro awesome-sample-note">最近条目样本：上限来自采集器预算，` +
+        `是清单的一扇窗口而不是全量（实测 ${awesomeValue(repo.measured.entries)} 条中的 ` +
+        `${fmt(repo.sample.length)} 条，优先展示本次新增）</p>` +
+      (repo.sample.length
+        ? `<ul class="awesome-entries">${repo.sample.map(awesomeEntryRow).join('')}</ul>`
+        : '<p class="chart-empty">本次没有可读的条目样本</p>') +
+      `</div>`;
+  }
+
+  function renderAwesomeStatus() {
+    const state = data.state, payload = state.awesome || {}, stats = data.awesomeStats();
+    const changes = payload.changes || {};
+    const lines = [stats.available
+      ? `清单快照 · ${fmt(stats.reposOk)} / ${fmt(stats.repos)} 个可读 · 实测 ${awesomeValue(stats.measured)} 条（自有）` +
+        ` + ${awesomeValue(stats.upstream)} 条（上游） · 采集于 ${timestamp(payload.captured_at)} UTC`
+      : state.awesome
+        ? '清单跟踪数据暂不可用，其他看板不受影响。'
+        : '还没有读取清单快照：滚动到本节会自动读取，或点上方「刷新已发布快照」。'];
+    if (payload.status === 'partial') {
+      lines.push('部分清单本次没读到新数字：读失败的沿用上次快照并标「沿用上次」，' +
+        '没轮到的沿用上次并标「本次未读取」');
+    } else if (payload.status === 'stale' || payload.error) {
+      lines.push(`后台采集失败，保留上次快照${payload.error ? `：${payload.error}` : ''}`);
+    }
+    if (Array.isArray(changes.added) && changes.added.length) {
+      lines.push(`本次新纳入跟踪的清单：${changes.added.join('、')}`);
+    }
+    if (Array.isArray(changes.removed) && changes.removed.length) {
+      lines.push(`已从跟踪中移除：${changes.removed.join('、')}`);
+    }
+    if (state.awesomeRefreshError) lines.push(`快照读取失败，保留上次数据：${state.awesomeRefreshError}`);
+    if (stats.baseline) lines.push(`${fmt(stats.baseline)} 个清单还在建立基线，明日起的新增与移出才是可信变化量`);
+    if (stats.byteCapped) {
+      lines.push(`${fmt(stats.byteCapped)} 个清单的文件超过单文件上限，实测条目数是下限`);
+    }
+    if (stats.recent90d) {
+      lines.push(`自有清单里近 90 天的条目 ${fmt(stats.recent90d)} 条（按 id 与日期分桶，本站数出来的）`);
+    }
+    if (stats.warnings) lines.push(`${fmt(stats.warnings)} 条采集告警，列在下方「口径与告警」`);
+    $('awesomeStatus').textContent = lines.join(' · ');
+    $('awesomeStatus').title = [payload.error, state.awesomeRefreshError].filter(Boolean).join('\n');
+    $('awesomeStatus').classList.toggle('neg', !stats.available || lines.length > 1);
+    const age = snapshotFreshness(payload.captured_at);
+    $('awesomeFreshness').textContent = `${stats.available ? `快照采集于 ${timestamp(payload.captured_at)} UTC · ` : ''}${age.text}` +
+      `${payload.last_attempt_at && payload.last_attempt_at !== payload.captured_at
+        ? ` · 最近一次尝试 ${timestamp(payload.last_attempt_at)} UTC` : ''}` +
+      `${state.awesomeSnapshotCheckedAt ? ' · 页面最近读取 ' + timestamp(state.awesomeSnapshotCheckedAt) + ' UTC（读取不触发采集）' : ''}`;
+    $('awesomeFreshness').classList.toggle('neg', age.overdue && stats.available);
+    $('awesomeCheckedAt').textContent = `${state.awesomeSnapshotCheckedAt
+      ? `最近成功读取快照 ${timestamp(state.awesomeSnapshotCheckedAt)} UTC` : '尚未成功读取快照'} · 采集由每日工作流完成`;
+    if (stats.fetches) {
+      $('awesomeCheckedAt').textContent += ` · 本次抓取 ${fmt(stats.fetches.files)} 个文件` +
+        `${stats.fetches.max_files !== undefined ? `／上限 ${fmt(stats.fetches.max_files)}` : ''} / ` +
+        `${(stats.fetches.bytes / 1024).toFixed(0)} KB` +
+        `${stats.fetches.budget_hit ? '（额度已用满，没轮到的清单标「本次未读取」）' : ''}`;
+    }
+    if (stats.sizes) {
+      const over = stats.sizes.payload_bytes > stats.sizes.payload_budget_bytes;
+      $('awesomeCheckedAt').textContent += ` · 快照 ${(stats.sizes.payload_bytes / 1024).toFixed(0)} KB` +
+        `／${over ? '已超' : '预算'} ${(stats.sizes.payload_budget_bytes / 1024).toFixed(0)} KB`;
+      $('awesomeCheckedAt').classList.toggle('neg', over);
+    }
+    $('awesomeExport').disabled = !stats.available || !data.awesomeFlow().length;
+    $('awesomeFilterReset').disabled = !state.awesomeSearch && state.awesomeKind === 'all' &&
+      state.awesomeOwner === 'all' && state.awesomeCadence === 'all' &&
+      state.awesomeAttention === 'all' && !state.awesomeFocus;
+  }
+
+  function renderAwesomeSummary() {
+    const payload = data.state.awesome || {}, stats = data.awesomeStats();
+    const byKind = stats.byKind || {};
+    $('awesomeCountBadge').textContent = fmt(stats.reposOk);
+    $('statAwesomeRepos').textContent = `${fmt(stats.reposOk)} / ${fmt(stats.repos)}`;
+    $('statAwesomeReposSub').textContent = stats.reposUnavailable || stats.reposStale
+      ? `沿用上次 ${fmt(stats.reposStale)} · 未读到 ${fmt(stats.reposUnavailable)}` +
+        `${stats.notAttempted ? ` · 其中 ${fmt(stats.notAttempted)} 个本次没抓取` : ''}`
+      : '全部清单当日可读';
+    $('statAwesomeMeasured').textContent = awesomeValue(stats.measured);
+    $('statAwesomeMeasuredSub').textContent = Object.keys(byKind).length
+      ? Object.entries(byKind).map(([kind, count]) => `${awesomeKindLabel(kind)} ${fmt(count)}`).join(' · ')
+      : '暂无实测';
+    $('statAwesomeMeasured').title = '实测＝本站今天逐行数过的行；上游仓库的行数另计，不并进来';
+    $('statAwesomeDelta').textContent = stats.added === null
+      ? '—' : `${signed(stats.added)} / ${signed(stats.removed)}`;
+    $('statAwesomeDeltaSub').textContent = `${fmt(stats.baseline)} 个清单仍在基线` +
+      `${stats.notCompared ? ` · ${fmt(stats.notCompared)} 个清单增删不可比` : ''} · ` +
+      `台账上限 ${fmt(stats.budget?.ledger_id_limit || 0)} 个 id／清单`;
+    $('statAwesomeStalled').textContent = awesomeValue(stats.stalled);
+    $('statAwesomeStalledSub').textContent = `自报与实测并列 ${fmt(stats.selfReportedRepos)} 个 · ` +
+      `上游 ${fmt(stats.upstreamRepos)} 个 · 告警 ${fmt(stats.warnings)} 条`;
+  }
+
+  /** 实测 / 自报 side by side, so a badge can never become our statistic. */
+  function renderAwesomeCompare() {
+    const repos = data.awesomeFilteredRepos();
+    const both = repos.filter(repo => repo.selfReported && repo.selfReported.entries !== null);
+    const scale = Math.max(...repos.map(repo => Math.max(repo.measured.entries || 0,
+      repo.selfReported?.entries || 0)), 1);
+    $('awesomeCompareNote').textContent = repos.length
+      ? `${fmt(repos.length)} 个清单 · ${fmt(both.length)} 个有自报数字 · 两条永远分列，不相减也不相加`
+      : '等待清单数据';
+    $('awesomeCompareList').innerHTML = repos.length ? repos.map(repo => {
+      const measured = repo.measured.entries;
+      const reported = repo.selfReported?.entries;
+      return `<div class="awesome-cmp${repo.status === 'ok' ? '' : ' off'}">` +
+        `<div class="awesome-cmp-head"><code>${esc(repo.id)}</code>` +
+        `<span class="micro muted">${esc(awesomeKindLabel(repo.kind))}</span></div>` +
+        `<div class="awesome-cmp-bar"><i class="measured" style="width:${(((measured || 0) / scale) * 100).toFixed(1)}%"></i>` +
+        (reported ? `<i class="reported" style="width:${((reported / scale) * 100).toFixed(1)}%"></i>` : '') +
+        `</div><div class="micro muted">实测 ${awesomeValue(measured)}` +
+        `${reported ? ` · 自报 ${fmt(reported)}（${esc(repo.selfReported.file || '仓库自述')}）` : ' · 无自报数字'}` +
+        `${measured !== null && reported && reported !== measured ? ' · 两边都发布，差距请自己看条子' : ''}</div>` +
+        `</div>`;
+    }).join('') : '<div class="chart-empty">等待清单数据</div>';
+  }
+
+  function renderAwesomeNotes() {
+    const payload = data.state.awesome || {};
+    const warnings = payload.warnings || [];
+    const repos = data.awesomeFilteredRepos();
+    const watch = repos.filter(repo => data.awesomeAttention(repo).length);
+    $('awesomeNoteCount').textContent = `${fmt(warnings.length)} 条采集告警 · ${fmt(watch.length)} 个清单有待办`;
+    $('awesomeNotes').innerHTML = (warnings.length || watch.length)
+      ? warnings.map(note => `<div class="awesome-note warn">${esc(note)}</div>`).join('') +
+        watch.map(repo => `<div class="awesome-note"><code>${esc(repo.id)}</code>：` +
+          `${data.awesomeAttention(repo).map(esc).join('；')}</div>`).join('')
+      : '<div class="chart-empty">没有告警：每个清单都读到了，且新增与移出已有基线可比</div>';
+  }
+
+  function renderAwesomeCards() {
+    const state = data.state;
+    const repos = data.awesomeFilteredRepos();
+    $('awesomeCards').innerHTML = repos.length ? repos.map(repo => {
+      const open = state.awesomeOpen === repo.id;
+      const notes = data.awesomeAttention(repo);
+      return `<article class="awesome-card${repo.upstream ? ' upstream' : ''}` +
+        `${repo.status === 'ok' ? '' : ` ${repo.status}`}">` +
+        `<div class="awesome-card-head"><div>` +
+        `<a class="model-link" href="https://github.com/${esc(repo.id)}" target="_blank" ` +
+        `rel="noopener noreferrer">${esc(repo.id)} ↗</a>` +
+        `<div class="micro muted">${esc(awesomeKindLabel(repo.kind))} · ` +
+        `${esc(AWESOME_KIND_EXPLAINED[repo.kind] || '逐行数过清单文件')}</div></div>` +
+        `<div class="awesome-badges">` +
+        `<span class="chip tiny awesome-owner">${repo.upstream ? '上游 · 他人仓库' : '自有'}</span>` +
+        `<span class="chip tiny awesome-state">` +
+        `${esc(repo.notAttempted ? '本次未读取' : (AWESOME_STATE_LABELS[repo.status] || repo.status))}</span>` +
+        (repo.cadence.stalled ? `<span class="chip tiny awesome-flag">停更 ${fmt(repo.cadence.staleDays)} 天</span>` : '') +
+        (repo.diff.baseline ? '<span class="chip tiny awesome-flag">基线</span>' : '') +
+        (repo.diff.truncated ? '<span class="chip tiny awesome-flag">增删为下限</span>' : '') +
+        `</div></div>` +
+        `<div class="awesome-numbers">` +
+        awesomeNumberCell('实测', fmt(repo.measured.entries),
+          repo.notAttempted ? '本次未读取，数字是上次快照的'
+            : repo.status === 'stale' ? '沿用上次快照'
+            : `arXiv ${awesomeValue(repo.measured.withArxiv)} · 代码 ${awesomeValue(repo.measured.withCode)}`) +
+        awesomeNumberCell('自报', awesomeValue(repo.selfReported?.entries),
+          repo.selfReported ? `${repo.selfReported.file || '仓库自述'} · 不参与合计` : '该清单没有自报数字') +
+        awesomeNumberCell('新增 / 移出', awesomeDeltaText(repo),
+          repo.diff.baseline ? '首次读到，明日起才是变化量'
+            : repo.diff.added === null ? (repo.diff.truncated
+              ? '上次台账被 id 上限截断，本次不报增删' : '没有更新流：这类清单不报增删')
+            : `保留 ${awesomeValue(repo.diff.held)} 条${repo.diff.rollingWindow ? ' · 滚动窗口' : ''}`) +
+        awesomeNumberCell('节奏', esc(AWESOME_CADENCE_LABELS[repo.cadence.cadence] || '未知'),
+          repo.cadence.lastCommitAt
+            ? `${timestamp(repo.cadence.lastCommitAt)} · ${esc(repo.cadence.author || '未知作者')}` +
+              `${repo.cadence.isBot ? '（机器人）' : ''}`
+            : '清单文件的改动时间未知') +
+        `</div>` +
+        `<div class="awesome-cov">${awesomeCoverageBar(repo)}</div>` +
+        awesomeRepoLine(repo) +
+        (notes.length
+          ? `<ul class="awesome-card-notes">${notes.map(note => `<li>${esc(note)}</li>`).join('')}</ul>` : '') +
+        (repo.error ? `<p class="micro awesome-error">${esc(repo.error)}</p>` : '') +
+        `<div class="awesome-card-foot"><button type="button" class="button text-button" ` +
+        `data-awesome-open="${esc(repo.id)}" aria-pressed="${open}">` +
+        `${open ? '收起明细 ✕' : `展开明细（样本 ${fmt(repo.sample.length)} 条）⌄`}</button>` +
+        `<button type="button" class="button text-button" data-awesome-focus="${esc(repo.id)}" ` +
+        `aria-pressed="${state.awesomeFocus === repo.id}" ` +
+        `title="把卡片与论文流水都收敛到这一份清单">` +
+        `${state.awesomeFocus === repo.id ? '取消只看' : '只看这份'}</button>` +
+        `<span class="micro muted">${repo.topics.length ? `${fmt(repo.topics.length)} 个主题`
+          : repo.categories.length ? `${fmt(repo.categories.length)} 个分类`
+          : `${awesomeValue(repo.measured.sections)} 个分区 · ${awesomeValue(repo.measured.skipped)} 行未成条目` +
+            (repo.measured.skipped ? `（无链接 ${fmt(repo.measured.skippedNoLink || 0)} 行）` : '')}</span></div>` +
+        (open ? awesomeCardDetail(repo) : '') +
+        `</article>`;
+    }).join('') : `<div class="chart-empty">${data.awesomeRows().length
+      ? '当前筛选没有匹配的清单，试试重置筛选'
+      : '快照还没读到：滚动到本节会自动读取，也可以点上方「刷新已发布快照」重试'}</div>`;
+  }
+
+  function renderAwesomeFlow() {
+    const state = data.state;
+    const total = data.awesomeFlow().length;
+    const pages = data.awesomeFlowPageCount();
+    state.awesomeFlowPage = Math.min(Math.max(1, state.awesomeFlowPage), pages);
+    const rows = data.awesomeFlowPage();
+    $('awesomeFlowCount').textContent = `${fmt(total)} 条样本 · 第 ${state.awesomeFlowPage} / ${pages} 页` +
+      `（每页 ${fmt(data.awesomeFlowPageSize())} 条，来自各清单的最近条目抽样）`;
+    $('awesomeFlowRows').innerHTML = rows.length ? rows.map(entry =>
+      `<tr class="awesome-flow-row${entry.isNew ? ' fresh' : ''}">` +
+      `<td>${entry.url
+        ? `<a class="model-link" href="${esc(entry.url)}" target="_blank" rel="noopener noreferrer">` +
+          `${esc(entry.title || entry.id)} ↗</a>`
+        : `<span class="model-title">${esc(entry.title || entry.id)}</span>`}` +
+      `${entry.isNew ? '<span class="chip tiny awesome-fresh">本次新增</span>' : ''}</td>` +
+      `<td><code>${esc(entry.repoId)}</code>${entry.upstream ? '<span class="chip tiny upstream">上游</span>' : ''}` +
+      `${entry.repoStatus === 'ok' ? '' : '<span class="chip tiny awesome-flag">' +
+        esc(entry.repoNotAttempted ? '本次未读取' : '沿用上次') +
+        (entry.repoCapturedAt ? ` · ${esc(timestamp(entry.repoCapturedAt))}` : '') + '</span>'}</td>` +
+      `<td class="micro">${esc(entry.section || '—')}</td>` +
+      `<td class="align-right">${esc(entry.published || '—')}</td>` +
+      `<td class="align-right">${esc(entry.venue || '—')}</td>` +
+      `<td class="align-right">${entry.arxivId ? `<a class="ext-link" href="https://arxiv.org/abs/${esc(entry.arxivId)}" ` +
+        `target="_blank" rel="noopener noreferrer">arXiv ↗</a>` : '<span class="muted">—</span>'}</td></tr>`).join('')
+      : `<tr><td colspan="6" class="no-rows">${data.awesomeRows().length
+        ? '当前筛选下没有条目样本。流水只是每清单的最近条目抽样，不在这里出现不等于清单里没有'
+        : '等待清单快照'}</td></tr>`;
+    $('awesomeFlowPageInfo').textContent = `${state.awesomeFlowPage} / ${pages}`;
+    $('awesomeFlowPrev').disabled = state.awesomeFlowPage === 1;
+    $('awesomeFlowNext').disabled = state.awesomeFlowPage === pages;
+    $('awesomeFlowPagination').hidden = total <= data.awesomeFlowPageSize();
+  }
+
+  function renderAwesomeTrend() {
+    const state = data.state;
+    const trend = data.awesomeTrend();
+    const readable = state.awesomeTrendMetric === 'readable';
+    $('awesomeTrendMetric').value = state.awesomeTrendMetric;
+    $('awesomeTrendLabel').textContent = readable
+      ? '当天真正读到的清单数：其余数字在没读到的日子是沿用的'
+      : '本站每天逐行数出来的条目行，自有与上游分列，永不相加';
+    charts.line($('awesomeTrendChart'), readable
+      ? [{ name: '当日可读清单数', points: trend.readable, color: 'var(--chart-2)' }]
+      : [{ name: '实测条目（自有）', points: trend.measured, color: 'var(--chart-1)' },
+        { name: '实测条目（上游另计）', points: trend.upstream, color: 'var(--chart-4)' }], {
+      area: readable,
+      label: '论文清单跟踪逐日快照',
+      emptyText: trend.snapshots.length
+        ? '逐日历史里还没有可画的整数：可能是历史文件比快照更早，等下一次采集补齐。'
+        : '还没有逐日历史。每天采集一次后开始积累，本站不补造历史数据。'
+    });
+    const lines = [];
+    if (state.awesomeHistoryError) lines.push(`历史读取失败，趋势暂缺：${state.awesomeHistoryError}`);
+    else if (!trend.snapshots.length) lines.push('还没有逐日历史文件');
+    else {
+      lines.push(`${fmt(trend.snapshots.length)} 个逐日快照`);
+      if (trend.enough && Number.isFinite(trend.netChange)) {
+        lines.push(`自 ${trend.first.date} 起实测条目净变化 ${signed(trend.netChange)}` +
+          `（${fmt(trend.first.value)} → ${fmt(trend.last.value)}，只比两端，不逐日累加）`);
+      } else if (trend.snapshots.length) {
+        lines.push('样本太少，看不出趋势：两点连成的直线说明不了中间发生过什么，第 3 天起才有净变化');
+      }
+      if (trend.partialDays) {
+        lines.push(`其中 ${fmt(trend.partialDays)} 天没读全所有清单，那些天的数字是沿用的，` +
+          '曲线走平可能只是没读到');
+      }
+      const retention = state.awesomeHistoryRetention;
+      if (retention?.daily_days) {
+        lines.push(`留存：最近 ${fmt(retention.daily_days)} 天逐日，更早每月留一个点` +
+          `（最多 ${fmt(retention.monthly_points)} 个月）`);
+      }
+    }
+    $('awesomeTrendNote').textContent = lines.join(' · ');
+    $('awesomeTrendNote').classList.toggle('neg', Boolean(state.awesomeHistoryError));
+  }
+
+  function renderAwesome() {
+    const state = data.state;
+    fillSelect('awesomeKind', data.awesomeFacets().kinds.map(item => ({
+      value: item.value,
+      label: `${item.value === 'none' ? '未标注形态' : awesomeKindLabel(item.value)} (${fmt(item.count)})`
+    })), 'awesomeKind', '全部形态');
+    fillSelect('awesomeOwner', data.awesomeFacets().owners.map(item => ({
+      value: item.value, label: `${item.value === 'upstream' ? '上游他人仓库' : '自有清单'} (${fmt(item.count)})`
+    })), 'awesomeOwner', '全部归属');
+    fillSelect('awesomeCadence', data.awesomeFacets().cadences.map(item => ({
+      value: item.value, label: `${item.value === 'none' ? '节奏未知' : (AWESOME_CADENCE_LABELS[item.value] || item.value)} (${fmt(item.count)})`
+    })), 'awesomeCadence', '全部节奏');
+    $('awesomeAttention').value = state.awesomeAttention;
+    $('awesomeSort').value = state.awesomeSort;
+    $('awesomeFlowSort').value = state.awesomeFlowSort;
+    $('awesomeSearch').value = state.awesomeSearch;
+    document.querySelectorAll('[data-awesome-view]').forEach(button => {
+      const active = button.dataset.awesomeView === state.awesomeView;
+      button.classList.toggle('active', active);
+      button.setAttribute('aria-pressed', String(active));
+    });
+    const focus = data.awesomeFilteredRepos();
+    $('awesomeFocusNote').hidden = !state.awesomeFocus;
+    $('awesomeFocusNote').textContent = state.awesomeFocus
+      ? `只看 ${state.awesomeFocus}（余 ${fmt(focus.length)} 份，点此取消）` : '';
+    renderAwesomeStatus();
+    renderAwesomeSummary();
+    renderAwesomeCompare();
+    renderAwesomeNotes();
+    renderAwesomeTrend();
+    $('awesomeCards').classList.toggle('hidden', state.awesomeView !== 'repos');
+    $('awesomeFlowWrap').classList.toggle('hidden', state.awesomeView !== 'flow');
+    if (state.awesomeView === 'repos') renderAwesomeCards();
+    else renderAwesomeFlow();
   }
 
   // --- Models ---------------------------------------------------------------
@@ -1509,6 +2374,24 @@ MO.render = (() => {
     renderEntityProblems,
     renderEntityReverseNote,
     renderEntityTable,
+    renderTasks,
+    renderTaskStatus,
+    renderTaskSummary,
+    renderTaskQueue,
+    renderTaskCanvas,
+    renderTaskList,
+    taskCardMarkup,
+    taskDetailMarkup,
+    taskDraftDiff,
+    taskStatusLabel,
+    renderAwesome,
+    renderAwesomeStatus,
+    renderAwesomeSummary,
+    renderAwesomeCompare,
+    renderAwesomeNotes,
+    renderAwesomeTrend,
+    renderAwesomeCards,
+    renderAwesomeFlow,
     renderConferenceStatus,
     renderConferenceSummary,
     renderConferenceUpcoming,
