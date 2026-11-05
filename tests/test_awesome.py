@@ -659,6 +659,15 @@ class EntrySignalTest(CopyOfFixtures):
                 measured["skipped"],
                 measured["skipped_no_title"] + measured["skipped_no_link"]
                 + measured["skipped_no_signal"], row["id"])
+            unlinked = measured.get("paper_table_rows_without_link")
+            if unlinked is None:
+                # Only the table reader measures this; a JSON index or a topic archive
+                # publishes no number rather than a zero it did not count.
+                self.assertEqual(measured["skipped_no_link"], 0, row["id"])
+                continue
+            # The subset cannot exceed the reason it is drawn from, and being a subset
+            # is what keeps it from moving the entry count.
+            self.assertLessEqual(unlinked, measured["skipped_no_link"], row["id"])
 
     def test_a_table_row_without_the_link_column_is_named_as_such(self):
         # The recorded README's nav and leaderboard rows have real titles and years;
@@ -666,6 +675,39 @@ class EntrySignalTest(CopyOfFixtures):
         measured = row_of(self.result, "isLinXu/awesome-native-multimodal-models")["measured"]
         self.assertEqual(measured["skipped_no_link"], 10)
         self.assertEqual(measured["skipped_no_signal"], 0)
+        self.assertEqual(measured["paper_table_rows_without_link"], 0,
+                         'that recording leaves out tables, not papers: nothing to call 下限')
+
+    def test_a_row_in_a_paper_table_that_wrote_no_link_is_counted_apart(self):
+        """Two different things fail the link rule, and only one is a missing paper."""
+        parsed = ca.extract_entries("\n".join([
+            "# Models",
+            "",
+            "| Name | Title | Venue | Date | Paper | Code |",
+            "|---|---|---|---|---|---|",
+            "| [Alpha](https://arxiv.org/abs/2501.00001) | Alpha paper | arXiv | 2025/01 |"
+            " [PDF](https://arxiv.org/abs/2501.00001) | - |",
+            "| **Beta** | Beta paper | arXiv | 2025/02 | - | - |",
+            "",
+            "# Statistics",
+            "",
+            "| Metric | Value |",
+            "|---|---|",
+            "| 📚 Total models | **2** |",
+            "",
+            "# Pages",
+            "",
+            "| Page | Link | Description |",
+            "|---|---|---|",
+            "| Home | [index.html](https://x.github.io/repo/index.html) | landing |",
+            ""]), "x/repo")
+        self.assertEqual([entry["id"] for entry in parsed["entries"]], ["arxiv:2501.00001"])
+        self.assertEqual(parsed["skips"], {"no_link": 3})
+        # Beta sits in a table that names a Paper and a Code column and wrote neither;
+        # the stats row sits in a table with no such column, and the nav row does
+        # carry a link - to its own Pages site - so neither of them is a missing paper.
+        self.assertEqual(parsed["blank_link_rows"], 1)
+        self.assertLessEqual(parsed["blank_link_rows"], parsed["skips"]["no_link"])
 
     def test_a_cited_row_needs_no_link_where_the_document_has_no_link_column(self):
         measured = row_of(self.result, "isLinXu/idea-research-list")["measured"]

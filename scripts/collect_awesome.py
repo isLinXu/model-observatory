@@ -38,7 +38,11 @@ by design, so removals there are labelled ``rolling_window`` and not treated as 
 
 What a row must look like to become an entry differs by kind, and the difference is
 published rather than implied. A table list carries a link column, so a row with no
-link is a leaderboard or a nav table and is counted in ``skipped_no_link``. A
+link is a leaderboard or a nav table and is counted in ``skipped_no_link``. Part of
+that count is a different fact, and it gets its own number: when the row's own table
+header names a link or code column yet the row writes no link at all, the list put a
+paper there and left it unlinked - ``paper_table_rows_without_link`` says how many,
+which makes that list's entry count a floor without moving it. A
 one-off report has no link column at all, so there a venue or a date is the paper
 signal: those rows are entries (``unlinked_rows`` says how many had no link) and
 only a row with neither signal is ``skipped_no_signal``. Every skipped row is
@@ -613,6 +617,7 @@ def extract_entries(text: str, repo: str, require_link: bool = True) -> dict:
     seen: set[str] = set()
     sections: list[str] = []
     skips: dict[str, int] = {}
+    blank_link_rows = 0
     section: str | None = None
     roles: dict[str, int] = {}
     header: list[str] = []
@@ -661,15 +666,25 @@ def extract_entries(text: str, repo: str, require_link: bool = True) -> dict:
             continue
         if not any(cells):
             continue
+        no_link_before = skips.get("no_link", 0)
         entry = make_entry(line, repo, section, cells, roles, skips, require_link)
         if entry is None:
+            # Some of what the link rule leaves out is a paper the list wrote with no
+            # link, not a leaderboard row: its table header names a link or code
+            # column, and the row itself carries no link at all. Only that shape says
+            # "the paper is missing, not the table", so the number is published -
+            # it makes the entry count a floor without moving it.
+            if (skips.get("no_link", 0) > no_link_before and not links_of(line)
+                    and ("link" in roles or "code" in roles)):
+                blank_link_rows += 1
             continue
         if entry["id"] not in seen:
             seen.add(entry["id"])
             entries.append(entry)
     flush()
     return {"entries": entries, "sections": len(sections),
-            "skipped": sum(skips.values()), "skips": dict(skips)}
+            "skipped": sum(skips.values()), "skips": dict(skips),
+            "blank_link_rows": blank_link_rows}
 
 
 def cover(entries: list[dict], **extra: Any) -> dict:
@@ -719,6 +734,7 @@ def read_markdown(fetcher: Fetcher, source: dict, warnings: list[str]) -> dict:
     seen: set[str] = set()
     sections = 0
     skips: dict[str, int] = {}
+    blank_link_rows = 0
     files: list[dict] = []
     unread: list[str] = []
     capped: list[str] = []
@@ -732,6 +748,7 @@ def read_markdown(fetcher: Fetcher, source: dict, warnings: list[str]) -> dict:
             continue
         parsed = extract_entries(text, repo, require_link)
         sections += parsed["sections"]
+        blank_link_rows += parsed["blank_link_rows"]
         for key, value in parsed["skips"].items():
             skips[key] = skips.get(key, 0) + value
         for entry in parsed["entries"]:
@@ -751,7 +768,8 @@ def read_markdown(fetcher: Fetcher, source: dict, warnings: list[str]) -> dict:
     measured = cover(entries, sections=sections, skipped=sum(skips.values()),
                      skipped_no_title=skips.get("no_title", 0),
                      skipped_no_link=skips.get("no_link", 0),
-                     skipped_no_signal=skips.get("no_signal", 0), files=files)
+                     skipped_no_signal=skips.get("no_signal", 0),
+                     paper_table_rows_without_link=blank_link_rows, files=files)
     if capped:
         # Reading stops at the byte ceiling, so the rows past it were never counted:
         # publishing the number without saying so would report a shorter list.
