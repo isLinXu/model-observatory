@@ -1,0 +1,23 @@
+# The daily job is the only thing that writes to this repo, and it runs with
+# `contents: write`. Actions are pinned to commit shas, so without this file the
+# pins would simply go stale: a pinned sha is safe, not current. Dependabot opens
+# the bump PRs (actions and the one collector dependency) and the offline suite in
+# pages.yml is what reviews them - it does not merge anything by itself.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: weekly
+    commit-message:
+      prefix: build
+    labels:
+      - dependencies
