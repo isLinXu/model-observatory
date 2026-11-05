@@ -1,5 +1,10 @@
 name: Sync Hugging Face & deploy Pages
 
+# Every `uses:` below is pinned to a full commit sha, with the tag it came from in
+# a trailing comment. This job runs with `contents: write` on a schedule and pushes
+# to main, so a tag moved upstream is code running here that nobody reviewed.
+# Dependabot (.github/dependabot.yml) opens the bump PRs; nothing here auto-merges.
+
 on:
   push:
     branches: [main]
@@ -25,44 +30,51 @@ jobs:
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
       - name: Check out repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # actions/checkout@v6
         with:
           persist-credentials: true
           ref: main
 
       - name: Set up Python
-        uses: actions/setup-python@v6
+        id: setup_python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # actions/setup-python@v6
         with:
           python-version: '3.12'
           cache: pip
 
       - name: Set up Node.js
-        uses: actions/setup-node@v6
+        id: setup_node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # actions/setup-node@v6
         with:
           node-version: '24'
 
       - name: Install collector dependency
+        id: install_deps
         run: python -m pip install -r requirements.txt
 
       # Regression gate: the collectors are network-facing code, so every
       # change ships only after the offline suite passes.
       - name: Run offline test suite
+        id: offline_tests
         run: |
           PYTHONPATH=. python -m unittest discover -s tests -v
           node --test tests/test_frontend.js
 
       - name: Capture all public model downloads
+        id: capture_hf
         env:
           HF_AUTHOR: gatilin
         run: python scripts/collect.py --author "$HF_AUTHOR"
 
       - name: Capture public academic profile
+        id: capture_scholar
         continue-on-error: true
         env:
           SCHOLAR_USER_ID: oTYM_I8AAAAJ
         run: python scripts/collect_scholar.py --user "$SCHOLAR_USER_ID"
 
       - name: Capture social platform followers
+        id: capture_social
         continue-on-error: true
         env:
           # Optional: platforms that require a logged-in session read these.
@@ -71,6 +83,7 @@ jobs:
         run: python scripts/collect_social.py --config config/social_sources.json
 
       - name: Capture GitHub account and repositories
+        id: capture_github
         continue-on-error: true
         env:
           GITHUB_LOGIN: isLinXu
@@ -80,6 +93,7 @@ jobs:
         run: python scripts/collect_github.py --login "$GITHUB_LOGIN"
 
       - name: Capture anonymous public ModelScope models
+        id: capture_modelscope
         continue-on-error: true
         run: python scripts/collect_modelscope.py --author isLinXu
 
@@ -88,6 +102,7 @@ jobs:
       # GitHub collector above already spends part of it in the same run.
       # Without a token the collector publishes an "unavailable" snapshot.
       - name: Capture starred repository graph
+        id: capture_stars
         continue-on-error: true
         env:
           GITHUB_LOGIN: isLinXu
@@ -116,6 +131,7 @@ jobs:
       # must not block the download boards. The collector keeps the last good
       # snapshot and marks it stale, so failures stay visible on the site.
       - name: Capture conference deadline feed
+        id: capture_conferences
         continue-on-error: true
         run: python scripts/collect_conferences.py --data-dir data
 
@@ -125,6 +141,7 @@ jobs:
       # cannot be read keeps its last good row and is published as stale, so
       # this step must never block the boards above or the indexes below.
       - name: Capture the tracked awesome lists
+        id: capture_awesome
         continue-on-error: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -204,6 +221,7 @@ jobs:
       # fails because of the network. A missing templates/ directory is
       # reported in the payload while the previous index is preserved.
       - name: Index the skill and prompt library
+        id: index_templates
         run: python scripts/collect_templates.py --repo "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME"
 
       # The entity registry is read from the working tree and cross-checked
@@ -212,6 +230,7 @@ jobs:
       # entry has already failed the offline suite, and a target that moved is
       # published as a broken link rather than hiding the run.
       - name: Index the entity registry
+        id: index_entities
         run: python scripts/collect_entities.py --repo "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME"
 
       - name: Report entity registry size
@@ -230,6 +249,7 @@ jobs:
       # at a research object which is gone is published as a broken reference,
       # while a missing sibling index leaves it unverified.
       - name: Index the task board
+        id: index_tasks
         run: python scripts/collect_tasks.py --repo "$GITHUB_REPOSITORY" --branch "$GITHUB_REF_NAME"
 
       - name: Report task board size
@@ -242,7 +262,19 @@ jobs:
             echo "::warning::data/tasks.json is over 120 KB; the canvas fetches the whole board to draw edges - keep cards to structure and acceptance notes, and move long prose to the Markdown source"
           fi
 
+      # The run reports its own health, before the commit that publishes it.
+      # `!cancelled()` so the run most worth recording - the one that died on a
+      # hard failure - still writes its line. Build and deploy come after this
+      # commit, so this record does not claim to know how they went.
+      - name: Record this run
+        if: ${{ !cancelled() }}
+        env:
+          MO_JOB_STATUS: ${{ job.status }}
+          MO_STEPS_JSON: ${{ toJSON(steps) }}
+        run: python scripts/record_run.py
+
       - name: Commit historical snapshots
+        if: ${{ !cancelled() }}
         shell: bash
         run: |
           git config user.name 'github-actions[bot]'
@@ -254,7 +286,7 @@ jobs:
                           modelscope modelscope_history conferences \
                           stars stars_repos stars_history \
                           entities entities_history tasks tasks_history \
-                          awesome awesome_history awesome_ledger; do
+                          awesome awesome_history awesome_ledger runs; do
             [ -f "data/${snapshot}.json" ] && git add "data/${snapshot}.json"
           done
           if ! git diff --cached --quiet; then
@@ -274,13 +306,13 @@ jobs:
         run: python scripts/build.py
 
       - name: Configure Pages
-        uses: actions/configure-pages@v5
+        uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # actions/configure-pages@v5
 
       - name: Upload Pages site
-        uses: actions/upload-pages-artifact@v4
+        uses: actions/upload-pages-artifact@7b1f4a764d45c48632c6b24a0339c27f5614fb0b # actions/upload-pages-artifact@v4
         with:
           path: _site
 
       - name: Deploy Pages
         id: deployment
-        uses: actions/deploy-pages@v4
+        uses: actions/deploy-pages@d6db90164ac5ed86f2b6aed7e0febac5b3c0c03e # actions/deploy-pages@v4

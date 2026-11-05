@@ -20,7 +20,7 @@ OPTIONAL_DATA = ("scholar.json", "scholar_history.json", "social.json", "social_
                  "stars.json", "stars_repos.json", "stars_history.json",
                  "entities.json", "entities_history.json",
                  "tasks.json", "tasks_history.json",
-                 "awesome.json", "awesome_history.json")
+                 "awesome.json", "awesome_history.json", "runs.json")
 SHIPPED_DATA = CORE_DATA + OPTIONAL_DATA
 
 
