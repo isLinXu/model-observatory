@@ -110,6 +110,111 @@
       'text/csv;charset=utf-8');
   }
 
+  /** RFC 5545 TEXT: backslash, semicolon, comma and newline each carry meaning. */
+  function icsText(value) {
+    return String(value ?? '').replace(/\r\n?/g, '\n')
+      .replace(/[\\;,]/g, char => `\\${char}`).replace(/\n/g, '\\n');
+  }
+
+  /** A UID may not hold the characters TEXT escapes, so keep it to a safe set. */
+  function icsToken(value) {
+    return String(value ?? '').replace(/[^0-9A-Za-z+.\-_@]/g, '-');
+  }
+
+  /** A URI keeps its punctuation; only control characters and spaces must go. */
+  function icsUri(value) {
+    return String(value ?? '').replace(/[^\x21-\x7e]/g, '');
+  }
+
+  function icsInstant(ms) {
+    return new Date(ms).toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  }
+
+  /**
+   * Seventy-five octets per line, and a continuation line spends one of them on
+   * its leading space. Counting octets instead of characters is what lets a
+   * Chinese title fold without cutting a multi-byte character in half.
+   */
+  function icsFold(line) {
+    const parts = [];
+    let current = '';
+    let used = 0;
+    let budget = 75;
+    for (const character of line) {
+      const code = character.codePointAt(0);
+      const size = code < 0x80 ? 1 : code < 0x800 ? 2 : code < 0x10000 ? 3 : 4;
+      if (used + size > budget) {
+        parts.push(current);
+        current = '';
+        used = 0;
+        budget = 74;
+      }
+      current += character;
+      used += size;
+    }
+    parts.push(current);
+    return parts.map((part, index) => (index ? ` ${part}` : part)).join('\r\n');
+  }
+
+  /**
+   * Deadlines belong in a calendar, but only a row the collector could place at
+   * a moment is a moment: 待定 and unreadable timezones never become an all-day
+   * event invented to look like one. The bytes carry no BOM - a calendar parser
+   * reads the opening line as BEGIN:VCALENDAR.
+   */
+  function exportConferenceIcs(now = Date.now()) {
+    const payload = data.state.conferences || {};
+    const rows = data.conferenceRows();
+    const timed = rows.filter(row => Number.isFinite(row.ts));
+    if (!timed.length) {
+      render.showToast(rows.length
+        ? `当前筛选的 ${fmt(rows.length)} 个节点都没能定到时刻，日历里不放猜出来的时间：` +
+          '切回有时间的那类筛选再导出。'
+        : '当前筛选没有节点，导出的日历会是空文件。');
+      return;
+    }
+    const stamp = icsInstant(now);
+    const captured = payload.captured_at ? `快照采集于 ${payload.captured_at}` : '快照采集时间未标注';
+    const events = timed.flatMap(row => {
+      const notes = [];
+      if (row.ccf || row.core) {
+        notes.push(`评级：${[row.ccf && `CCF ${row.ccf}`, row.core && `CORE ${row.core}`]
+          .filter(Boolean).join(' · ')}`);
+      }
+      if (row.area) notes.push(`领域：${row.area}`);
+      if (row.date) notes.push(`会期：${row.date}${row.place ? ` · ${row.place}` : ''}`);
+      if (row.comment) notes.push(`来源备注：${row.comment}`);
+      if (row.timezone) notes.push(`来源标注：${row.source_local}（${row.timezone}），此处换算为 UTC`);
+      notes.push(`${captured}，由 model-observatory 页面导出。`);
+      return [
+        'BEGIN:VEVENT',
+        `UID:${icsToken(row.id)}@ccfddl.model-observatory`,
+        `DTSTAMP:${stamp}`,
+        `DTSTART:${icsInstant(row.ts)}`,
+        `SUMMARY:${icsText(`${row.title}${row.year ? ` ${row.year}` : ''} · ` +
+          `${render.kindLabel(row)}${row.round > 1 ? ` 第 ${row.round} 轮` : ''}`)}`,
+        `DESCRIPTION:${icsText(notes.join('\n'))}`,
+        ...(row.url ? [`URL:${icsUri(row.url)}`] : []),
+        'END:VEVENT'
+      ];
+    });
+    const date = String(payload.captured_at || '').slice(0, 10) || 'latest';
+    download(`conference-deadlines-${date}.ics`, [
+      'BEGIN:VCALENDAR',
+      'VERSION:2.0',
+      'PRODID:-//model-observatory//CCF-Deadlines export//EN',
+      'CALSCALE:GREGORIAN',
+      'METHOD:PUBLISH',
+      `X-WR-CALNAME:${icsText(`顶会投稿截止 · ${date}`)}`,
+      `X-WR-CALDESC:${icsText('以下时刻来自本页导出时的筛选，全部按 UTC 放置；' +
+        `日期待定或时区认不出的节点不会写入。${captured}。`)}`,
+      ...events,
+      'END:VCALENDAR'
+    ].map(icsFold).join('\r\n') + '\r\n', 'text/calendar;charset=utf-8');
+    render.showToast(`已导出 ${fmt(timed.length)} 个节点为 .ics，时刻按 UTC 放置；` +
+      '待定或时区认不出的节点不在文件里。');
+  }
+
   /** Re-read the published conference snapshot; collection stays in the daily workflow. */
   async function refreshConferences() {
     const button = $('conferenceRefresh');
@@ -859,6 +964,49 @@
       'text/csv;charset=utf-8');
   }
 
+  /**
+   * A row of the flow is a paper a list vouched for; a card is the reader deciding
+   * to read it. The file name follows the arXiv id when the row has one, so the
+   * same paper seen in two lists lands on the same card and `board.create` says
+   * 已经在看板上 instead of making a second one.
+   */
+  function paperCardSlug(entry) {
+    const source = String(entry.arxivId || entry.id || '').replace(/^[a-z]+:/, '');
+    if (!source) return '';
+    return `paper-${source}`.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '');
+  }
+
+  /** Only what the row already says goes into the card: entry id, link, section. */
+  function cardFromFlowRow(index) {
+    const entry = data.awesomeFlowPage()[index];
+    if (!entry) return;
+    const slug = paperCardSlug(entry);
+    if (!slug) {
+      render.showToast('这一行既没有 arXiv id 也没有条目 id，取不出一个能重复点击的文件名。');
+      return;
+    }
+    const title = entry.title || entry.id;
+    // Joined by blank lines, not filtered for them: a card whose prose is one
+    // run-on paragraph reads like a log line, and a row without a section has to
+    // cost a paragraph rather than a line break.
+    const paragraphs = [`# ${title}`,
+      `条目来自清单 ${entry.repoId}。`,
+      entry.url ? `原文：${entry.url}` : '这份清单没有给这一行一个链接。',
+      entry.section ? `它在清单里的分区：${entry.section}。` : '',
+      '清单的条目数与更新节奏归「论文清单跟踪」栏目，这张卡只欠一个「要不要读」的判断。']
+      .filter(Boolean);
+    const result = MO.board.create({ slug, title, body: paragraphs.join('\n\n') });
+    if (result.ok) {
+      data.state.taskView = 'board';
+      render.renderTasks();
+      render.showToast(`画布上多了一张卡：${result.slug}。它还在这台浏览器里，` +
+        '推送才进仓库；条目数与节奏仍归清单栏目。');
+    } else {
+      render.showToast(result.reason);
+    }
+    return result;
+  }
+
   /** Below the fold and crawled elsewhere: scroll close is what asks for it. */
   function watchAwesomeSection() {
     const read = () => {
@@ -945,6 +1093,8 @@
     });
     $('conferenceRefresh').addEventListener('click', refreshConferences);
     $('conferenceExport').onclick = exportConferenceCsv;
+    // the click event is not a timestamp, so the export clock stays an argument
+    $('conferenceIcs').onclick = () => exportConferenceIcs();
     // Star wall: filters only touch the wall legend, the list and the CSV.
     for (const [id, key, eventName] of [
       ['starSearch', 'starSearch', 'input'], ['starCluster', 'starCluster', 'change'],
@@ -1205,6 +1355,10 @@
       data.state.awesomeFlowPage++;
       render.renderAwesomeFlow();
     });
+    $('awesomeFlowRows').addEventListener('click', event => {
+      const button = event.target.closest('[data-awesome-card]');
+      if (button) cardFromFlowRow(Number(button.dataset.awesomeCard));
+    });
     render.renderAwesome();
     watchAwesomeSection();
     $('collectionFilter').addEventListener('change', event => selectCollection(event.target.value));
@@ -1370,6 +1524,7 @@
   function renderAll() {
     render.renderCollections();
     render.renderSummary();
+    render.renderRunHealth();
     render.renderOverall();
     render.renderTop();
     render.renderTable();
@@ -1409,6 +1564,10 @@
       try { render.renderStars(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderEntities(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderAwesome(); } catch (secondaryError) { console.error(secondaryError); }
+      // The run-health line is the one sentence that is most useful when the
+      // payload reads failed, so it paints from its own file and not from the
+      // boards below.
+      try { render.renderRunHealth(); } catch (secondaryError) { console.error(secondaryError); }
     }
     // The template library is independent of the download data, so it loads
     // on its own and a failure here never blocks the other boards.

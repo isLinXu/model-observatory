@@ -247,6 +247,7 @@ MO.render = (() => {
       `${state.conferenceSnapshotCheckedAt ? ` · 最近读取 ${timestamp(state.conferenceSnapshotCheckedAt)} UTC（读取不触发采集）` : ''}`;
     $('conferenceFreshness').classList.toggle('neg', age.overdue && Boolean(available));
     $('conferenceExport').disabled = !available;
+    $('conferenceIcs').disabled = !available;
     $('conferenceFilterReset').disabled = state.conferenceArea === 'all' && state.conferenceRank === 'all' &&
       state.conferenceKind === 'paper' && state.conferenceWindow === '90' && !state.conferenceSearch;
   }
@@ -1330,11 +1331,20 @@ MO.render = (() => {
         `认不出日期 ${fmt(recent.undated)} 条</div>`);
     }
     if (repo.measured.skipped) {
+      const unlinked = repo.measured.paperTableRowsWithoutLink;
       extras.push(`<div class="awesome-topic-note"><b>没成为条目的行</b>：${fmt(repo.measured.skipped)} 行 =` +
         ` 认不出标题 ${fmt(repo.measured.skippedNoTitle || 0)} + 无链接 ${fmt(repo.measured.skippedNoLink || 0)}` +
         ` + 既无链接也无会议／日期 ${fmt(repo.measured.skippedNoSignal || 0)}。` +
         `表格清单按链接列判定条目，所以导航表与榜单行在这里被排除；` +
-        `报告类清单没有链接列，认得出会议或日期就算条目</div>`);
+        `报告类清单没有链接列，认得出会议或日期就算条目` +
+        // Which of the two the excluded rows really were is published, and the
+        // sentence has to be able to say either way: 论文表里留空 is a floor on the
+        // count, 全都是别的表 is not.
+        (unlinked === null ? '' : unlinked
+          ? `；这些无链接的行里有 ${fmt(unlinked)} 行，所在的表头点名了链接列，自己却一个链接都没写` +
+            '——清单把它们放进了论文表、把链接留空，所以这里的实测条目数是下限'
+          : '；这些无链接的行没有一个落在点名了链接列的表里，去掉的是导航表与榜单，不是论文') +
+        '</div>');
     }
     if (repo.topics.length) {
       const stale = repo.topics.filter(topic => topic.state !== 'ok');
@@ -1567,13 +1577,15 @@ MO.render = (() => {
     const rows = data.awesomeFlowPage();
     $('awesomeFlowCount').textContent = `${fmt(total)} 条样本 · 第 ${state.awesomeFlowPage} / ${pages} 页` +
       `（每页 ${fmt(data.awesomeFlowPageSize())} 条，来自各清单的最近条目抽样）`;
-    $('awesomeFlowRows').innerHTML = rows.length ? rows.map(entry =>
+    $('awesomeFlowRows').innerHTML = rows.length ? rows.map((entry, index) =>
       `<tr class="awesome-flow-row${entry.isNew ? ' fresh' : ''}">` +
       `<td>${entry.url
         ? `<a class="model-link" href="${esc(entry.url)}" target="_blank" rel="noopener noreferrer">` +
           `${esc(entry.title || entry.id)} ↗</a>`
         : `<span class="model-title">${esc(entry.title || entry.id)}</span>`}` +
-      `${entry.isNew ? '<span class="chip tiny awesome-fresh">本次新增</span>' : ''}</td>` +
+      `${entry.isNew ? '<span class="chip tiny awesome-fresh">本次新增</span>' : ''}` +
+      `<button type="button" class="button text-button" data-awesome-card="${index}" ` +
+      `title="把这一条变成本机任务草稿：推送后才会成为 tasks/ 下的文件">建卡</button></td>` +
       `<td><code>${esc(entry.repoId)}</code>${entry.upstream ? '<span class="chip tiny upstream">上游</span>' : ''}` +
       `${entry.repoStatus === 'ok' ? '' : '<span class="chip tiny awesome-flag">' +
         esc(entry.repoNotAttempted ? '本次未读取' : '沿用上次') +
@@ -1619,7 +1631,8 @@ MO.render = (() => {
         lines.push(`自 ${trend.first.date} 起实测条目净变化 ${signed(trend.netChange)}` +
           `（${fmt(trend.first.value)} → ${fmt(trend.last.value)}，只比两端，不逐日累加）`);
       } else if (trend.snapshots.length) {
-        lines.push('样本太少，看不出趋势：两点连成的直线说明不了中间发生过什么，第 3 天起才有净变化');
+        lines.push('样本太少，看不出趋势：两点连成的直线说明不了中间发生过什么，第 3 天起才有净变化' +
+          (trend.readyOn ? `——按每天一次的节奏推算，${trend.readyOn} 才够 3 个点，本站不补造历史` : ''));
       }
       if (trend.partialDays) {
         lines.push(`其中 ${fmt(trend.partialDays)} 天没读全所有清单，那些天的数字是沿用的，` +
@@ -1717,6 +1730,58 @@ MO.render = (() => {
     const revised = net?.revised || 0;
     $('correctionBadge').textContent = revised ? `${revised} 个模型累计值下降 · 请核查` : '未检测到累计值下降';
     $('correctionBadge').classList.toggle('warn', revised > 0);
+  }
+
+  /**
+   * One line about the run that produced the numbers above it.
+   *
+   * Two things it has to say, and one it must not fake. It says which steps did
+   * not produce, because those are the failures `continue-on-error` hides
+   * everywhere else on the page. It says its own boundary (`covers`), because the
+   * deploy that follows the commit is not in this file and a green line here is
+   * not proof the site updated. And an unread file is reported as unread: a fetch
+   * that failed in this browser is not a failed collection.
+   */
+  function renderRunHealth() {
+    const health = data.runHealth();
+    const host = $('runHealth');
+    if (!health.loaded) {
+      host.textContent = '采集健康：这台浏览器没读到运行记录——读不到不等于采集失败';
+      host.title = health.error ? `读取原因：${health.error}` : '运行记录未载入';
+      host.className = 'run-health warn';
+      return;
+    }
+    const latest = health.latest;
+    if (!latest) {
+      host.textContent = '采集健康：记录文件还没有任何运行';
+      host.title = health.covers || '';
+      host.className = 'run-health';
+      return;
+    }
+
+    const words = {
+      ok: latest.stepsWatched === null ? '各步都成功' : `${fmt(latest.stepsWatched)} 步都成功`,
+      partial: `${fmt(latest.stepsFailed.length + latest.stepsMissing.length)} 步没成功`,
+      failed: '作业本身失败了',
+      unknown: '说了这趟跑过，没交出步骤结果'
+    };
+    const pieces = [`采集健康：最近一次运行 ${esc(latest.date || '日期认不出')}` +
+      // An absent run number silences its own clause; `第 — 次` would read as a
+      // count the page failed to print rather than one it never got.
+      (latest.runNumber === null ? '' : `（第 ${fmt(latest.runNumber)} 次）`) + words[latest.status]];
+    const blamed = [...latest.stepsFailed.map(item => `${item}（失败）`),
+      ...latest.stepsMissing.map(item => `${item}（没跑到）`)];
+    if (blamed.length) pieces.push(`没成功的步骤：${esc(blamed.join('、'))}`);
+    const age = ageInDays(latest.recordedAt);
+    if (age !== null && age > 2) pieces.push(`距今 ${Math.floor(age)} 天`);
+    if (health.kept > 1 && health.notOk) {
+      pieces.push(`保留的 ${fmt(health.kept)} 次记录里 ${fmt(health.notOk)} 次不干净`);
+    }
+    host.innerHTML = pieces.join(' · ') +
+      (latest.runUrl ? ` <a href="${esc(latest.runUrl)}" target="_blank" rel="noopener noreferrer">看那次运行 ↗</a>` : '');
+    host.title = health.covers
+      ? `${health.covers}${latest.jobStatus ? `；作业状态 ${latest.jobStatus}` : ''}` : '';
+    host.className = `run-health ${latest.status === 'ok' ? 'good' : 'warn'}`;
   }
 
   function renderOverall() {
@@ -2357,6 +2422,7 @@ MO.render = (() => {
   return {
     stateMessage,
     showToast,
+    kindLabel,
     renderCollections,
     renderModelScopeBoard,
     renderModelScopeTable,
@@ -2398,6 +2464,7 @@ MO.render = (() => {
     renderConferenceTable,
     renderModelScopeChart,
     renderSummary,
+    renderRunHealth,
     renderOverall,
     renderTop,
     renderTable,

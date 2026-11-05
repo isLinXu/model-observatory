@@ -125,6 +125,8 @@ MO.data = (() => {
     awesomeOpen: null,
     awesomeFlowSort: 'published',
     awesomeFlowPage: 1,
+    runs: null,
+    runsError: null,
     status: 'loading'
   };
 
@@ -1473,7 +1475,9 @@ MO.data = (() => {
   const AWESOME_SOURCE_ID = 'awesome';
   const AWESOME_REPO_STATES = ['ok', 'stale', 'unavailable'];
   const AWESOME_FLOW_PAGE_SIZE = 25;
-  const AWESOME_URL_RE = /^https?:\/\/[^\s"'<>\\]+$/i;
+  // Anything the page turns into a link, from any panel, passes this: no scheme
+  // other than http(s), no quotes or angle brackets that could escape an href.
+  const HTTP_URL_RE = /^https?:\/\/[^\s"'<>\\]+$/i;
 
   // Normalised once per payload: a refresh must never mix two snapshots.
   let awesomeRowCache = null;
@@ -1481,7 +1485,7 @@ MO.data = (() => {
   /** An absent measurement stays null; only the collector's own zeros are zeros. */
   const awesomeCount = value => (Number.isFinite(value) ? value : null);
   const awesomeFlag = value => (value === true);
-  const awesomeUrl = value => (AWESOME_URL_RE.test(String(value || '')) ? String(value) : null);
+  const awesomeUrl = value => (HTTP_URL_RE.test(String(value || '')) ? String(value) : null);
 
   function validateAwesomeSnapshot(payload) {
     if (payload?.schema_version !== 1 || payload?.source?.id !== AWESOME_SOURCE_ID ||
@@ -1579,12 +1583,22 @@ MO.data = (() => {
     const measured = series('entriesMeasured');
     const points = snapshots.filter(row => Number.isFinite(row.entriesMeasured) &&
       Number.isFinite(row.entriesUpstream));
+    // When the third point can land. This is a schedule, not a measurement: it
+    // assumes the collector's one run per day and back-fills nothing, so a
+    // skipped run moves the date rather than proving the trend is ready.
+    let readyOn = null;
+    if (snapshots.length && measured.length < 3) {
+      const day = new Date(`${snapshots.at(-1).date}T00:00:00Z`);
+      day.setUTCDate(day.getUTCDate() + (3 - measured.length));
+      readyOn = day.toISOString().slice(0, 10);
+    }
     return {
       snapshots,
       measured,
       upstream: series('entriesUpstream'),
       readable: series('repos'),
       enough: measured.length >= 3,
+      readyOn,
       partialDays: snapshots.filter(row => row.partial).length,
       first: measured.length ? measured[0] : null,
       last: measured.length ? measured.at(-1) : null,
@@ -1648,6 +1662,10 @@ MO.data = (() => {
           skippedNoTitle: awesomeCount(measured.skipped_no_title),
           skippedNoLink: awesomeCount(measured.skipped_no_link),
           skippedNoSignal: awesomeCount(measured.skipped_no_signal),
+          // A subset of the no-link skips, published because it says something the
+          // other skips do not: the list put these rows in a table that names a link
+          // column and left the link out. Absent means we did not measure it.
+          paperTableRowsWithoutLink: awesomeCount(measured.paper_table_rows_without_link),
           unlinkedRows: awesomeCount(measured.unlinked_rows),
           byteCapped: awesomeFlag(measured.byte_capped),
           note: typeof measured.note === 'string' ? measured.note : null,
@@ -1795,6 +1813,12 @@ MO.data = (() => {
     }
     if (repo.diff.rollingWindow) notes.push('滚动窗口，移出属于正常收缩');
     if (repo.measured.byteCapped) notes.push('清单文件超过单文件上限，实测条目数是下限');
+    if (repo.measured.paperTableRowsWithoutLink) {
+      // The rows are in a paper table; only the link is missing. Saying "下限" here
+      // is what keeps the entry count from being read as the list's whole content.
+      notes.push(`论文表里有 ${repo.measured.paperTableRowsWithoutLink} 行没给链接，` +
+        '本站只数得到写了链接的行，实测条目数是下限');
+    }
     if (repo.measured.topicsNotAttempted) {
       notes.push(`抓取额度用完，${repo.measured.topicsNotAttempted} 个主题这次没轮到`);
     }
@@ -1955,12 +1979,83 @@ MO.data = (() => {
     return awesomeFlow().slice(start, start + AWESOME_FLOW_PAGE_SIZE);
   }
 
+  // --- 采集健康：这份载荷说的是运行本身，不是数据 ---------------------
+
+  const RUNS_SOURCE_ID = 'runs';
+  const RUN_STATUSES = ['ok', 'partial', 'failed', 'unknown'];
+  const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+  /**
+   * The one file about the collector instead of the data it collects.
+   *
+   * Every panel can say how fresh its own numbers are; none can say whether
+   * today's run happened, or whether a step died and was swallowed by
+   * `continue-on-error`. A missing file is not a failed run, so the loader keeps
+   * the two states apart instead of turning one into the other.
+   */
+  async function loadRuns() {
+    try {
+      const payload = await getJSON('./data/runs.json', '采集健康记录',
+        { signal: AbortSignal.timeout(20000) });
+      if (payload?.schema_version !== 1 || payload?.source_id !== RUNS_SOURCE_ID ||
+          !Array.isArray(payload.runs)) {
+        throw new Error('采集健康记录格式或数据来源不兼容');
+      }
+      state.runs = {
+        covers: typeof payload.covers === 'string' ? payload.covers : null,
+        retention: Number.isFinite(payload?.retention?.runs) ? payload.retention.runs : null,
+        runs: payload.runs.map(row => ({
+          runId: typeof row?.run_id === 'string' ? row.run_id : null,
+          runNumber: Number.isFinite(row?.run_number) ? row.run_number : null,
+          attempt: Number.isFinite(row?.attempt) ? row.attempt : null,
+          date: DAY_RE.test(String(row?.date || '')) ? row.date : null,
+          recordedAt: typeof row?.recorded_at === 'string' ? row.recorded_at : null,
+          // A status outside the vocabulary the page knows is `unknown`, never the
+          // friendly default: a collector that grew a word must not be read as ok.
+          status: RUN_STATUSES.includes(row?.status) ? row.status : 'unknown',
+          jobStatus: typeof row?.job_status === 'string' ? row.job_status : null,
+          stepsWatched: Number.isFinite(row?.steps_watched) ? row.steps_watched : null,
+          stepsFailed: Array.isArray(row?.steps_failed) ? row.steps_failed.map(String).slice(0, 20) : [],
+          stepsMissing: Array.isArray(row?.steps_missing) ? row.steps_missing.map(String).slice(0, 20) : [],
+          runUrl: HTTP_URL_RE.test(String(row?.run_url || '')) ? row.run_url : null
+        }))
+      };
+      state.runsError = null;
+    } catch (error) {
+      state.runs = null;
+      state.runsError = error.message;
+      console.warn('采集健康记录读取失败：', error);
+    }
+  }
+
+  /**
+   * What the page says about the last run. `latest` is null when the file exists
+   * but holds no record - that is "还没有运行写过它", not a run that failed.
+   * Age is not derived here: `MO.format.ageInDays` is the one owner of that math.
+   */
+  function runHealth() {
+    const payload = state.runs;
+    if (!payload) return { loaded: false, error: state.runsError, latest: null };
+    const runs = payload.runs;
+    return {
+      loaded: true,
+      error: null,
+      covers: payload.covers,
+      retention: payload.retention,
+      kept: runs.length,
+      // Records that did not come out clean, counted over what the file keeps.
+      // A run dropped by retention is not a run that never failed.
+      notOk: runs.filter(row => row.status !== 'ok').length,
+      latest: runs.length ? runs[0] : null
+    };
+  }
+
   // --- Load every dataset ---------------------------------------------------
 
   async function loadAll() {
     const [downloads] = await Promise.allSettled([
       loadDownloads(), loadScholar(), loadSocial(), loadGitHub(), loadModelScope(),
-      loadConferences(), loadStars(), loadEntities()
+      loadConferences(), loadStars(), loadEntities(), loadRuns()
     ]);
     if (downloads.status === 'rejected') throw downloads.reason;
     state.status = 'ready';
@@ -2347,6 +2442,8 @@ MO.data = (() => {
     awesomeFlow,
     awesomeFlowPage,
     awesomeFlowPageCount,
-    awesomeFlowPageSize: () => AWESOME_FLOW_PAGE_SIZE
+    awesomeFlowPageSize: () => AWESOME_FLOW_PAGE_SIZE,
+    loadRuns,
+    runHealth
   };
 })();

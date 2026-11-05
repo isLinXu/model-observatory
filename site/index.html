@@ -75,6 +75,7 @@
         <h1>模型表现，<br><em>尽在掌握。</em></h1>
         <p>分别观测 Hugging Face 与 ModelScope 的公开模型，记录下载计数变化，并同步学术引用与社交平台粉丝数。</p>
         <div class="hero-meta"><span>账户 <b>@gatilin</b></span><i></i><span>上次采集 <b id="lastSync">—</b></span><i></i><span>时区 <b>UTC</b></span></div>
+        <p id="runHealth" class="run-health" role="status">采集健康：正在读取运行记录…</p>
       </section>
 
       <div id="errorBanner" class="notice hidden" role="alert"></div>
@@ -170,7 +171,7 @@
       </section>
 
       <section id="conferences" class="model-section">
-        <div class="section-heading"><div><div class="section-eyebrow">CONFERENCE BOARD / CCF-DEADLINES</div><h2>顶会投稿截止 <span id="conferenceCountBadge">0</span></h2><p>收录公开会议日历的投稿节点，统一换算为 UTC 并倒计时</p></div><div class="section-actions"><button class="button secondary" id="conferenceRefresh">刷新已发布快照</button><button class="button" id="conferenceExport" disabled>↓ 导出筛选 CSV</button></div></div>
+        <div class="section-heading"><div><div class="section-eyebrow">CONFERENCE BOARD / CCF-DEADLINES</div><h2>顶会投稿截止 <span id="conferenceCountBadge">0</span></h2><p>收录公开会议日历的投稿节点，统一换算为 UTC 并倒计时</p></div><div class="section-actions"><button class="button secondary" id="conferenceRefresh">刷新已发布快照</button><button class="button" id="conferenceExport" disabled>↓ 导出筛选 CSV</button><button class="button" id="conferenceIcs" disabled title="按当前筛选生成 UTC 时刻的日历文件；日期待定或时区认不出的节点不会写入">↓ 导出筛选日历 .ics</button></div></div>
         <div class="modelscope-data-status" role="status" aria-live="polite">
           <p id="conferenceStatus" class="collection-note">正在读取会议快照…</p>
           <p id="conferenceFreshness" class="micro muted">等待采集时间</p>

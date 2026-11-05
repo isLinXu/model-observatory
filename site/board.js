@@ -358,8 +358,12 @@ MO.board = (() => {
    * A new card is created here, but it is a file only after a push. The slug is
    * the filename, so the same rule the collector applies to names applies now -
    * a Chinese title is fine, but it has to pick its own latin slug.
+   *
+   * `body` is for a card created *from a row of another board*: such a card
+   * starts life with one fact it did not invent (where the row came from), and
+   * a heading alone would make the reader re-derive it.
    */
-  function create({ slug, title = '', status = 'proposal', parent = null } = {}) {
+  function create({ slug, title = '', status = 'proposal', parent = null, body = '' } = {}) {
     const clean = String(slug || '').trim().toLowerCase();
     if (!SLUG_PATTERN.test(clean)) {
       return refusal('文件名需为小写字母、数字与连字符（例如 task-board-canvas）。');
@@ -375,7 +379,7 @@ MO.board = (() => {
     }
     state.created[clean] = {
       slug: clean, title: heading, status, parent: parent || null,
-      depends: [], tags: [], body: `# ${heading}\n`,
+      depends: [], tags: [], body: (String(body || '').trim() || `# ${heading}`).trimEnd() + '\n',
       updated: new Date().toISOString().slice(0, 10)
     };
     persist();

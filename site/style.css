@@ -324,6 +324,14 @@ a { text-decoration: none; color: inherit; }
 .hero-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 14px; color: var(--muted-2); font-size: 11px; position: relative; z-index: 1; margin-top: 25px; }
 .hero-meta b { color: var(--txt-soft); font-weight: 650; font-variant-numeric: tabular-nums; }
 .hero-meta i { width: 3px; height: 3px; border-radius: 50%; background: var(--faint); }
+/* The run-health line lives in the hero because the hero is where the page
+   claims freshness; `p.run-health` needs the element in the selector to outrank
+   `.hero p` above. */
+p.run-health { max-width: 720px; margin-top: 15px; padding: 8px 11px; border: 1px solid var(--line-3);
+  border-radius: 8px; background: var(--surface-2); color: var(--muted-2); font-size: 11px; line-height: 1.65; }
+p.run-health.good { border-color: transparent; background: var(--state-ok-bg); color: var(--state-ok-txt); }
+p.run-health.warn { border-color: var(--state-alert-txt); background: var(--state-alert-bg); color: var(--state-alert-txt); }
+p.run-health a { color: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .hero-orbit { position: absolute; right: 1%; top: -126px; width: 455px; height: 455px; border: 1px solid rgba(124, 160, 220, .12); border-radius: 50%; pointer-events: none; }
 .hero-orbit:before, .hero-orbit:after { content: ""; position: absolute; border-radius: 50%; border: 1px solid rgba(124, 160, 220, .12); inset: 46px; }
 .hero-orbit:after { inset: 102px; border-color: rgba(124, 160, 220, .18); box-shadow: 0 0 75px rgba(109, 181, 193, .08); }
@@ -1384,6 +1392,7 @@ select { height: 40px; background: var(--input-bg); border: 1px solid var(--inpu
 .awesome-flow-table td:first-child { min-width: 220px; max-width: 430px; white-space: normal; overflow-wrap: anywhere; }
 .awesome-flow-table .model-link { white-space: normal; text-align: left; }
 .awesome-flow-table code { font-size: 10.5px; color: var(--muted); overflow-wrap: anywhere; }
+.awesome-flow-table .button.text-button { padding: 0; margin-left: 6px; font-size: 10px; color: var(--blue); vertical-align: baseline; }
 .awesome-flow-row.fresh > td { background: rgba(94, 234, 212, .05); }
 @media (max-width: 760px) {
   .awesome-cards { grid-template-columns: 1fr; }

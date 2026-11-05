@@ -533,6 +533,7 @@ function loadModelView(data, globals = {}) {
       data,
       charts: {
         line() {},
+        yearBars() {},
         // render.js captures MO.charts at load time, so the star panels need the
         // same entry points the chart module exposes. Record the arguments so a
         // test can read exactly what the renderer asked the chart to draw.
@@ -752,7 +753,7 @@ test('loadAll tolerates collection failure and preserves published membership th
       });
       data.state.modelCollection = hasFallback ? 'gatilin/saved' : 'unassigned';
       await data.loadAll();
-      assert.equal(requested.length, 15, 'first paint now includes the registry index');
+      assert.equal(requested.length, 16, 'first paint now includes the run record');
       assert.equal(data.state.status, 'ready');
       assert.equal(data.state.modelSource, 'live');
       assert.equal(data.state.modelRefreshError, null);
@@ -1249,7 +1250,7 @@ test('loadAll loads both optional ModelScope files with the versioned author/sou
     const beforeHistory = plain(history);
     const data = loadData(publishedFetch(payloads, requested));
     await data.loadAll();
-    assert.equal(requested.length, 15, 'the registry index is first-paint data');
+    assert.equal(requested.length, 16, 'the run record is first-paint data, like the registry index');
     assert.equal(requested.filter(url => url === './data/modelscope.json').length, 1);
     assert.equal(requested.filter(url => url === './data/modelscope_history.json').length, 1);
     assert.equal(data.state.modelscope, latest);
@@ -2277,6 +2278,91 @@ test('conference filters, paging, reset, refresh and CSV stay on the published s
   assert.equal(rows[0][12], '-720');
   assert.equal(rows[0][16], 'false');
   assert.equal(rows.at(-1)[11], '2026-11-25T12:00:00Z');
+});
+
+test('the calendar export writes only real instants, escapes the source, and folds by octets', async () => {
+  const clock = testClock('2026-10-30T12:00:00.000Z');
+  const data = loadData(undefined, { Date: clock.Date });
+  seedConferences(data, [
+    conference('NeurIPS, 主会; 终稿\\v2', [
+      conferenceEvent('AI/nips:nips26:paper:1', {
+        utc: '2026-11-08T23:59:59Z', round: 2, comment: 'Camera ready, see; notes\\full'
+      }),
+      conferenceEvent('AI/nips:nips26:paper:2', {
+        utc: '2026-12-01T09:00:00Z', timezone: '', source_local: ''
+      })
+    ], { key: 'AI/nips' }),
+    conference('Pending', [conferenceEvent('AI/tbd:tbd26:paper:1', {
+      utc: null, tbd: true, source_local: 'TBD'
+    })]),
+    conference('Mars', [conferenceEvent('AI/mars:mars26:paper:1', {
+      utc: null, time_status: 'unknown_timezone', timezone: 'Mars/Olympus', source_local: '2026-12-05 23:59'
+    })])
+  ]);
+  data.state.latest = { models: [] };
+  const booted = deferred();
+  const view = loadModelView({ ...data, loadAll: async () => {} });
+  view.context.Date = clock.Date;
+  view.context.MO.theme = { init() {} };
+  view.context.MO.templates = { init: async () => booted.resolve() };
+  const toasts = [];
+  view.context.MO.render = { ...view.render, showToast: message => toasts.push(message) };
+  view.run('app.js');
+  await booted.promise;
+
+  assert.equal(view.element('conferenceIcs').disabled, false,
+    'the same snapshot that feeds the CSV enables the calendar');
+  view.element('conferenceIcs').onclick();
+  assert.equal(view.blobs.length, 1, 'one click writes one file');
+  assert.equal(view.blobs[0].type, 'text/calendar;charset=utf-8');
+  const text = await view.blobs[0].text();
+  assert.ok(!text.startsWith('\uFEFF'), 'a calendar file opens with BEGIN, not with a byte-order mark');
+  const lines = text.split('\r\n');
+  for (const line of lines) {
+    assert.ok(new TextEncoder().encode(line).length <= 75, `over the 75 octet line limit: ${line}`);
+  }
+  assert.ok(lines.some(line => line.startsWith(' ')), 'a long value really did need folding');
+  const property = name => {
+    const values = [];
+    for (let index = 0; index < lines.length; index++) {
+      if (!lines[index].startsWith(`${name}:`)) continue;
+      let value = lines[index].slice(name.length + 1);
+      while (lines[index + 1]?.startsWith(' ')) value += lines[++index].slice(1);
+      values.push(value);
+    }
+    return values;
+  };
+
+  assert.deepEqual(property('UID'), ['AI-nips-nips26-paper-1@ccfddl.model-observatory',
+    'AI-nips-nips26-paper-2@ccfddl.model-observatory'], 'the event id is the uid, so re-imports update');
+  assert.deepEqual(property('DTSTART'), ['20261108T235959Z', '20261201T090000Z'],
+    'UTC in the compact form, soonest first');
+  assert.deepEqual(property('DTSTAMP'), ['20261030T120000Z', '20261030T120000Z']);
+  assert.deepEqual(property('SUMMARY'), [
+    'NeurIPS\\, 主会\\; 终稿\\\\v2 2026 · 论文截止 第 2 轮',
+    'NeurIPS\\, 主会\\; 终稿\\\\v2 2026 · 论文截止'
+  ], 'commas, semicolons and backslashes in source text are escaped, not dropped');
+  const [firstNote] = property('DESCRIPTION');
+  assert.match(firstNote, /来源备注：Camera ready\\, see\\; notes\\\\full/);
+  assert.match(firstNote, /评级：CCF A/);
+  assert.match(firstNote, /来源标注：2026-12-01 23:59:59（UTC-12），此处换算为 UTC/);
+  assert.match(firstNote, /快照采集于 2026-10-30T02:23:00Z/);
+  assert.match(property('DESCRIPTION')[1], /会期：December 2026 · Nowhere/,
+    'a row with no timezone note still says when and where the conference is');
+  assert.equal(property('DESCRIPTION')[1].includes('来源标注'), false,
+    'an empty source label is not printed as an empty claim');
+  assert.deepEqual(property('URL'), ['https://example.com/nips', 'https://example.com/nips'],
+    'a URI keeps its punctuation instead of being TEXT-escaped');
+  assert.equal(lines.filter(line => line === 'BEGIN:VEVENT').length, 2);
+  assert.doesNotMatch(text, /AI-tbd|Olympus/,
+    '待定 and unparseable timezones are left out rather than invented as all-day events');
+  assert.match(property('X-WR-CALDESC')[0], /日期待定或时区认不出的节点不会写入/);
+  assert.match(toasts.at(-1), /已导出 2 个节点/);
+
+  data.state.conferenceWindow = 'tbd';
+  view.element('conferenceIcs').onclick();
+  assert.equal(view.blobs.length, 1, 'a filter with no instant at all writes no file');
+  assert.match(toasts.at(-1), /都没能定到时刻/);
 });
 
 // --- Star wall and cluster graph --------------------------------------------
@@ -3798,7 +3884,7 @@ function taskPayload(tasks, extra = {}) {
 const TASK_REF_FIXTURES = ['resolved', 'unresolved', 'missing_index'];
 
 function loadBoardView({ tasks = null, payload = null, entities = [], token = '', routes = {},
-  awesome = null, history, globals = {} } = {}) {
+  awesome = null, history, runs = null, globals = {} } = {}) {
   const index = payload || taskPayload(tasks || [
     taskFile('parent', { status: 'doing' }),
     taskFile('child', { status: 'proposal', parent: 'parent' }),
@@ -3835,6 +3921,13 @@ function loadBoardView({ tasks = null, payload = null, entities = [], token = ''
         ? { schema_version: 1, source: { id: 'awesome' }, snapshots: [] } : history);
     }
     if (url.includes('/data/tasks.json')) return jsonResponse(index);
+    if (url.includes('/data/runs.json')) {
+      // The run-health line paints whatever it gets, including nothing, so a
+      // test that does not name a record still gets the unread sentence rather
+      // than an invented clean run.
+      if (!runs) throw new Error(`测试没有准备运行记录：${url}`);
+      return jsonResponse(runs);
+    }
     if (url.includes('/data/awesome.json')) {
       // The paper-list board is only served when a test asks for it, so a panel
       // that never reached the fold cannot quietly depend on a missing reply.
@@ -3883,7 +3976,8 @@ function loadBoardView({ tasks = null, payload = null, entities = [], token = ''
 // *is* the claim - while every other board and the write-back panels are
 // stubbed, and toasts are collected instead of painted.
 async function startApp(view, keep, {
-  IntersectionObserver = class { observe() {} disconnect() {} } } = {}) {
+  IntersectionObserver = class { observe() {} disconnect() {} },
+  loadAll = async () => {} } = {}) {
   const toasts = [];
   const booted = deferred();
   // The page always ships an observer, so the harness hands app.js one that
@@ -3892,7 +3986,7 @@ async function startApp(view, keep, {
   view.context.IntersectionObserver = IntersectionObserver;
   view.context.MO.theme = { init() {} };
   view.context.MO.templates = { init: async () => {} };
-  view.context.MO.data = { ...view.data, loadAll: async () => {} };
+  view.context.MO.data = { ...view.data, loadAll };
   view.data.state.latest = view.data.state.latest || { models: [] };
   view.context.MO.registry = { init: async () => { booted.resolve(); } };
   view.context.MO.render = Object.fromEntries(Object.entries(view.render).map(([name, fn]) => [
@@ -5237,6 +5331,12 @@ test('the daily history file has a reader, and it says when there is too little 
     repos, tracked: 6, entries_measured: measured, entries_upstream: upstream,
     added: 0, removed: 0, stalled: 0
   });
+  // the shape loadAwesomeHistory writes into state, for the sparse branches
+  // that re-render without a second fetch
+  const stateDay = (date, measured, upstream) => ({
+    date, repos: 6, tracked: 6, entriesMeasured: measured, entriesUpstream: upstream,
+    added: 0, removed: 0, stalled: 0, partial: false
+  });
   const view = loadBoardView({
     awesome: snapshot,
     history: {
@@ -5254,16 +5354,25 @@ test('the daily history file has a reader, and it says when there is too little 
   assert.equal(trend.enough, true);
   assert.equal(trend.netChange, 90, 'the change is between the two ends, not a sum of days');
   assert.equal(trend.partialDays, 1, 'a day that read 3 of 6 lists carried numbers');
+  assert.equal(trend.readyOn, null, 'three points is already enough to draw a slope');
   view.render.renderAwesome();
   assert.match(view.element('awesomeTrendNote').textContent, /净变化 \+90/);
   assert.match(view.element('awesomeTrendNote').textContent, /沿用的/,
     'a flat stretch is called what it is: a day we did not read');
   assert.match(view.element('awesomeTrendNote').textContent, /120 天逐日/);
 
-  view.data.state.awesomeHistory = [day(3, 6, 4390, 512)];
+  view.data.state.awesomeHistory = [stateDay('2026-10-23', 4390, 512)];
   view.render.renderAwesomeTrend();
   assert.match(view.element('awesomeTrendNote').textContent, /样本太少，看不出趋势/,
     'two points would draw a straight line over whatever happened between them');
+  assert.equal(view.data.awesomeTrend().readyOn, '2026-10-25',
+    'the last recorded day plus the two runs still missing, at one per day');
+  assert.match(view.element('awesomeTrendNote').textContent, /2026-10-25 才够 3 个点/,
+    'the reader is told which day to come back to, not just "later"');
+  view.data.state.awesomeHistory = [stateDay('2026-10-21', 4300, 500),
+    stateDay('2026-10-23', 4390, 512)];
+  assert.equal(view.data.awesomeTrend().readyOn, '2026-10-24',
+    'the gap counts recorded days, not the calendar between them: the 22nd is still missing');
   assert.equal(view.element('awesomeTrendMetric').value, 'measured');
   view.data.state.awesomeTrendMetric = 'readable';
   view.render.renderAwesomeTrend();
@@ -5344,4 +5453,298 @@ test('one list can be read on its own, and its registry entry links back instead
     assert.match(view.element('awesomeCards').innerHTML, /还没有条目登记这份仓库/,
       'a list nobody registered says so instead of looking like a read failure');
   });
+
+test('a list that left links out of its own paper tables says its count is a floor', () => {
+  const data = loadData();
+  const skipped = (extra = {}) => ({
+    entries: 8, with_arxiv: 4, unique_ids: 8, sections: 3, skipped: 12, skipped_no_link: 12,
+    ...extra
+  });
+  data.state.awesome = awesomeSnapshotFixture([
+    awesomeRowFixture('isLinXu/blank-links', { measured: skipped({ paper_table_rows_without_link: 5 }) }),
+    awesomeRowFixture('isLinXu/tables-are-full', { measured: skipped({ paper_table_rows_without_link: 0 }) }),
+    // A snapshot written before this number was measured: absence is not a zero.
+    awesomeRowFixture('isLinXu/older-run', { measured: skipped() })
+  ]);
+  const rows = plain(data.awesomeRows());
+  assert.deepEqual(rows.map(row => row.measured.paperTableRowsWithoutLink), [5, 0, null],
+    'the subset is read as published, and a number nobody counted is not a zero');
+
+  const notes = rows.map(repo => plain(data.awesomeAttention(repo)).join('\n'));
+  assert.match(notes[0], /论文表里有 5 行没给链接/);
+  assert.match(notes[0], /实测条目数是下限/);
+  assert.ok(!notes[1].includes('下限'), 'a measured zero says nothing is missing');
+  assert.ok(!notes[2].includes('下限'), 'and an unmeasured snapshot may not claim either way');
+
+  const view = loadModelView(data);
+  const detail = id => {
+    data.state.awesomeOpen = id;
+    view.render.renderAwesome();
+    return view.element('awesomeCards').innerHTML;
+  };
+  assert.match(detail('isLinXu/blank-links'),
+    /有 5 行，所在的表头点名了链接列[\s\S]*把链接留空，所以这里的实测条目数是下限/);
+  assert.match(detail('isLinXu/tables-are-full'),
+    /没有一个落在点名了链接列的表里，去掉的是导航表与榜单，不是论文/);
+  const silent = detail('isLinXu/older-run');
+  assert.ok(!silent.includes('点名了链接列'),
+    'the skipped line still explains the rule, but it cannot speak for a number we never read');
+  assert.match(silent, /导航表与榜单行在这里被排除/);
+});
+
+test('a row of the paper flow becomes a card on the canvas, and carries only what the row said',
+  async () => {
+    const view = loadBoardView({ awesome: awesomeSnapshotFixture([
+      awesomeRowFixture('isLinXu/own'),
+      awesomeRowFixture('isLinXu/other', {
+        measured: { entries: 42, with_arxiv: 42, unique_ids: 42 },
+        self_reported: { file: 'README.md', entries: 400, values: [400] },
+        sample: [{ id: 'title:Another paper', title: 'Another paper', url: null,
+          arxiv_id: null, published: '2026-12', venue: null, section: null, is_new: false }]
+      }),
+      awesomeRowFixture('isLinXu/anon', {
+        sample: [{ id: '', title: 'A row with no id at all', url: null, arxiv_id: null,
+          published: null, venue: null, section: null, is_new: false }]
+      })
+    ]) });
+    // Both sections stay real: the flow markup holds the button, the canvas shows
+    // the card it made, and the claim under test is exactly that the two agree.
+    const app = await startApp(view, ['renderAwesome', 'renderTask']);
+    await view.data.loadAwesome();
+    const data = view.data;
+    data.state.awesomeView = 'flow';
+    view.render.renderAwesome();
+
+    const flow = view.element('awesomeFlowRows').innerHTML;
+    assert.deepEqual(plain([...flow.matchAll(/data-awesome-card="(\d+)"/g)].map(match => match[1])),
+      ['0', '1', '2'], 'one button per row, numbered by the place the reader sees it in');
+
+    const click = index => view.element('awesomeFlowRows').events.click({
+      target: { closest: asked => (asked === '[data-awesome-card]'
+        ? { dataset: { awesomeCard: String(index) } } : null) }
+    });
+
+    view.element('awesomeFlowRows').events.click({ target: { closest: () => null } });
+    assert.deepEqual(plain(view.board.draftSlugs()), [],
+      'a click that landed on the row instead of the button makes nothing');
+
+    const withId = data.awesomeFlow().findIndex(entry => entry.arxivId === '2611.00001');
+    click(withId);
+    assert.deepEqual(plain(view.board.draftSlugs()), ['paper-2611-00001'],
+      'the file name follows the arXiv id, so the same paper in two lists is one card');
+    assert.equal(view.board.findRow('paper-2611-00001').status, 'proposal',
+      'a row a list vouched for is a proposal, not something the reader already did');
+    assert.match(view.element('taskCanvas').innerHTML, /data-task-card="paper-2611-00001"/,
+      'the canvas the toast points at really does hold the new card');
+    assert.match(app.toasts.at(-1), /它还在这台浏览器里/);
+    assert.match(app.toasts.at(-1), /推送才进仓库/);
+
+    click(withId);
+    assert.match(app.toasts.at(-1), /paper-2611-00001 已经在看板上/);
+    assert.equal(view.board.draftSlugs().length, 1, 'a second click is refused, not a second card');
+
+    // The composed file is what a push would write, so this is where "only what
+    // the row said" is checked: the link and the section are in, the list's own
+    // counts stay out.
+    const fromId = plain(view.board.compose(view.board.patchFor('paper-2611-00001'), '',
+      { at: '2026-11-03' }));
+    assert.match(fromId.text, /# A paper\n\n条目来自清单 isLinXu\/own。\n\n原文：https:\/\/arxiv\.org\/abs\/2611\.00001\n\n/,
+      'the card is prose a reader can scan, not one run-on line');
+    assert.match(fromId.text, /分区：最新。\n\n清单的条目数/);
+    assert.match(fromId.text, /^title: A paper$/m);
+    assert.match(fromId.text, /^status: proposal$/m);
+
+    const other = data.awesomeFlow().findIndex(entry => entry.id === 'title:Another paper');
+    click(other);
+    const fromTitle = plain(view.board.compose(view.board.patchFor('paper-another-paper'), '',
+      { at: '2026-11-03' }));
+    assert.match(fromTitle.text, /条目来自清单 isLinXu\/other/, 'the list it came from is the one fact kept');
+    assert.match(fromTitle.text, /没有给这一行一个链接/, 'and a missing link is said, not guessed');
+    assert.ok(!/\n\n\n/.test(fromTitle.text),
+      'a row with no section costs a paragraph, not an empty block in the file');
+    for (const count of ['42', '400']) {
+      assert.ok(!fromTitle.text.includes(count),
+        `the card carries no count from the list board: ${count} would be a second owner of one number`);
+    }
+
+    const anonymous = data.awesomeFlow().findIndex(entry => entry.id === '');
+    click(anonymous);
+    assert.match(app.toasts.at(-1), /既没有 arXiv id 也没有条目 id/);
+    assert.equal(view.board.draftSlugs().length, 2,
+      'a row with nothing to name it gets a refusal, not a card with a random file name');
+  });
+
+// --- 采集健康：data/runs.json -----------------------------------------------
+// The one payload about the collector instead of the numbers it collects. It is
+// the only sentence on the page that can name a failure `continue-on-error`
+// swallowed, so what it must never do is turn "this browser could not read the
+// file" into "the collection failed".
+
+function runRow(extra = {}) {
+  return {
+    run_id: '12345', run_number: 312, attempt: 1, date: '2026-11-03',
+    recorded_at: '2026-11-03T02:23:00Z', job_status: 'success', status: 'ok',
+    steps_watched: 15, steps_failed: [], steps_missing: [],
+    run_url: 'https://github.com/isLinXu/model-observatory/actions/runs/12345',
+    ...extra
+  };
+}
+
+function runsPayload(rows = [runRow()], extra = {}) {
+  return {
+    schema_version: 1, source_id: 'runs', updated_at: '2026-11-03T02:23:00Z',
+    covers: '采集与索引这一段；构建与 Pages 部署排在这份记录提交之后，不在这里',
+    statuses: ['ok', 'partial', 'failed', 'unknown'],
+    retention: { runs: 60, kept: rows.length },
+    runs: rows,
+    ...extra
+  };
+}
+
+function runsData(payload, globals = {}) {
+  return loadData(async url => (url.includes('runs.json')
+    ? jsonResponse(payload)
+    : jsonResponse({ schema_version: 1, source_id: 'other' })), globals);
+}
+
+const healthClock = () => testClock('2026-11-03T06:00:00.000Z');
+
+test('the health line reads the run\'s own report and keeps its boundary in the title', async () => {
+  const data = runsData(runsPayload());
+  await data.loadRuns();
+  const health = data.runHealth();
+  assert.equal(health.loaded, true);
+  assert.equal(health.latest.runId, '12345');
+  assert.equal(health.kept, 1);
+  assert.equal(health.notOk, 0, 'a clean run is not counted as one that was not clean');
+
+  const view = loadModelView(data, { Date: healthClock().Date });
+  view.render.renderRunHealth();
+  const line = view.element('runHealth');
+  assert.match(line.innerHTML, /最近一次运行 2026-11-03（第 312 次）15 步都成功/);
+  assert.match(line.innerHTML, /href="https:\/\/github\.com\/isLinXu\/model-observatory\/actions\/runs\/12345"/);
+  assert.match(line.innerHTML, /rel="noopener noreferrer"/);
+  assert.equal(line.className, 'run-health good');
+  assert.match(line.title, /构建与 Pages 部署排在这份记录提交之后/,
+    'a green line here is not a claim that the site redeployed');
+  assert.match(line.title, /作业状态 success/);
+});
+
+test('a failure continue-on-error swallowed is named, with the step it was', async () => {
+  const data = runsData(runsPayload([
+    runRow({ status: 'partial', steps_failed: ['会议截止目录'], steps_missing: ['star 图谱'] }),
+    runRow({ run_id: '12344', run_number: 311, status: 'ok' })
+  ]));
+  await data.loadRuns();
+  assert.equal(data.runHealth().notOk, 1);
+  const view = loadModelView(data, { Date: healthClock().Date });
+  view.render.renderRunHealth();
+  const line = view.element('runHealth');
+  assert.match(line.innerHTML, /2 步没成功/);
+  assert.match(line.innerHTML, /会议截止目录（失败）/);
+  assert.match(line.innerHTML, /star 图谱（没跑到）/);
+  assert.match(line.innerHTML, /保留的 2 次记录里 1 次不干净/,
+    'the retention window is spoken about as what it holds, not as the whole history');
+  assert.equal(line.className, 'run-health warn');
+});
+
+test('an unread record file is said as unread, never as a failed collection', async () => {
+  const data = loadData(async url => {
+    if (url.includes('runs.json')) throw new TypeError('Failed to fetch');
+    return jsonResponse({ schema_version: 1, source_id: 'other' });
+  }, { TypeError });
+  await data.loadRuns();
+  assert.equal(data.state.runs, null);
+  assert.equal(data.runHealth().loaded, false);
+  assert.match(data.runHealth().error, /Failed to fetch/);
+  const view = loadModelView(data);
+  view.render.renderRunHealth();
+  const line = view.element('runHealth');
+  assert.match(line.textContent, /这台浏览器没读到运行记录/);
+  assert.match(line.textContent, /读不到不等于采集失败/);
+  assert.match(line.title, /Failed to fetch/);
+  assert.equal(line.className, 'run-health warn');
+});
+
+test('a record file nothing has written to yet is empty, not broken', async () => {
+  const data = runsData(runsPayload([]));
+  await data.loadRuns();
+  assert.equal(data.runHealth().latest, null);
+  const view = loadModelView(data);
+  view.render.renderRunHealth();
+  const line = view.element('runHealth');
+  assert.match(line.textContent, /记录文件还没有任何运行/);
+  assert.ok(!/失败/.test(line.textContent), 'an empty file blames nobody');
+  assert.equal(line.className, 'run-health');
+});
+
+test('a status word the page does not know degrades to unknown rather than to ok', async () => {
+  const data = runsData(runsPayload([runRow({ status: 'green' })]));
+  await data.loadRuns();
+  assert.equal(data.runHealth().latest.status, 'unknown');
+  const view = loadModelView(data, { Date: healthClock().Date });
+  view.render.renderRunHealth();
+  assert.match(view.element('runHealth').innerHTML, /没交出步骤结果/);
+});
+
+test('a record older than the daily cadence says its own age instead of going quiet', async () => {
+  const data = runsData(runsPayload([runRow({
+    date: '2026-10-30', recorded_at: '2026-10-30T02:23:00Z', status: 'unknown'
+  })]));
+  await data.loadRuns();
+  const view = loadModelView(data, { Date: healthClock().Date });
+  view.render.renderRunHealth();
+  assert.match(view.element('runHealth').innerHTML, /距今 4 天/);
+});
+
+test('a run with no number loses the clause rather than printing 第 — 次', async () => {
+  const data = runsData(runsPayload([runRow({ run_number: null, steps_watched: null })]));
+  await data.loadRuns();
+  const view = loadModelView(data, { Date: healthClock().Date });
+  view.render.renderRunHealth();
+  const line = view.element('runHealth');
+  assert.match(line.innerHTML, /最近一次运行 2026-11-03各步都成功/);
+  assert.ok(!/—/.test(line.innerHTML), 'absence silences a sentence instead of decorating it');
+});
+
+test('the run line refuses another board\'s payload and a non-http link', async () => {
+  const foreign = runsData(runsPayload([runRow()], { source_id: 'github' }));
+  await foreign.loadRuns();
+  assert.equal(foreign.state.runs, null, 'a payload for a different file is not read as run health');
+  assert.match(foreign.state.runsError, /不兼容/);
+
+  const hostile = runsData(runsPayload([runRow({
+    run_url: 'javascript:alert(1)',
+    steps_failed: ['<img src=x onerror=alert(1)>']
+  })]));
+  await hostile.loadRuns();
+  assert.equal(hostile.runHealth().latest.runUrl, null, 'only an http(s) url becomes a link');
+  const view = loadModelView(hostile, { Date: healthClock().Date });
+  view.render.renderRunHealth();
+  const line = view.element('runHealth');
+  assert.ok(!/href="javascript:/i.test(line.innerHTML), line.innerHTML);
+  assert.ok(!/<img/i.test(line.innerHTML), 'a step label is text, never markup');
+  assert.match(line.innerHTML, /&lt;img/);
+});
+
+test('the run line survives a failed payload read, because that is when it matters', async () => {
+  const view = loadBoardView();
+  const app = await startApp(view, ['renderRunHealth'], {
+    loadAll: async () => { throw new Error('history.json 读取失败'); }
+  });
+  assert.equal(view.element('freshLabel').textContent, '数据读取失败');
+  const line = view.element('runHealth');
+  assert.match(line.textContent, /这台浏览器没读到运行记录/,
+    'the health line paints from its own file, so a broken latest.json still leaves the reader with a sentence');
+  assert.equal(line.className, 'run-health warn');
+});
+
+test('boot paints the run line from the record file, next to the boards it can read', async () => {
+  const view = loadBoardView({ runs: runsPayload([runRow()]) });
+  await view.data.loadRuns();
+  await startApp(view, ['renderRunHealth']);
+  assert.match(view.element('runHealth').innerHTML, /最近一次运行 2026-11-03（第 312 次）15 步都成功/,
+    'renderAll has to reach the new line, not just export a function nobody calls');
+  assert.equal(view.element('runHealth').className, 'run-health good');
+});
 
