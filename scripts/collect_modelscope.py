@@ -140,7 +140,13 @@ def http_get_json(opener: Any, url: str, deadline: float) -> Any:
     try:
         response = opener.open(request, timeout=remaining())
     except urllib.error.HTTPError as error:
-        error.close()  # Do not read or retain an error response body.
+        try:
+            error.close()  # Do not read or retain an error response body.
+        except Exception:
+            # Cleanup must never replace the status code: a close() that raises
+            # would surface as an unrelated error and the published reason would
+            # lose "HTTP 403".
+            pass
         raise
     with response:
         if response.status != 200:

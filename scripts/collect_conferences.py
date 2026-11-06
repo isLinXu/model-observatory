@@ -523,7 +523,14 @@ def fetch_once(opener: Any, source_url: str, deadline: float) -> tuple[Any, str 
     try:
         response = opener.open(request, timeout=min(REQUEST_TIMEOUT, _remaining(deadline)))
     except urllib.error.HTTPError as error:
-        error.close()
+        try:
+            error.close()
+        except Exception:
+            # An HTTPError with no body attached cannot always be closed (3.9
+            # raises out of its own tempfile teardown). Letting that escape here
+            # would replace the status code with an unrelated exception, and the
+            # reader would be told "collection failed" instead of "HTTP 500".
+            pass
         raise
     with response:
         if getattr(response, "status", 200) != 200:

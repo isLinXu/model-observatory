@@ -649,9 +649,10 @@ class SaveTests(unittest.TestCase):
 
 class TransportTests(unittest.TestCase):
     def http_error(self, code, message=""):
-        error = urllib.error.HTTPError(cf.SOURCE_URL, code, message, {}, None)
-        self.addCleanup(error.close)
-        return error
+        # A real HTTP error always arrives with a body attached; closing one built
+        # with fp=None is not a thing the collector does -- and on 3.9 it raises out
+        # of the stdlib's own teardown, which would report the harness as a failure.
+        return urllib.error.HTTPError(cf.SOURCE_URL, code, message, {}, Mock())
 
     def test_anonymous_opener_ignores_ambient_proxies(self):
         native_builder = urllib.request.build_opener
@@ -907,6 +908,17 @@ class CollectTests(unittest.TestCase):
                 latest = json.loads((directory / "conferences.json").read_text(encoding="utf-8"))
                 self.assertEqual(latest["error"], message)
                 self.assertNotIn("secret", (directory / "conferences.json").read_text())
+
+    def test_a_failed_close_on_the_response_does_not_steal_the_status_code(self):
+        class Unclosable(urllib.error.HTTPError):
+            def close(self):
+                raise RuntimeError("token=secret")
+
+        opener = Mock(open=Mock(side_effect=Unclosable(cf.SOURCE_URL, 503, "secret", {}, None)))
+        with patch.object(cf.time, "sleep"):
+            self.assertEqual(cf.collect(self.data_dir, at(), opener=opener), "unavailable")
+        self.assertEqual(self.read()["error"], "Conference source HTTP 503.")
+        self.assertNotIn("secret", self.path.read_text(encoding="utf-8"))
 
     def test_unexpected_errors_are_sanitized(self):
         opener = Mock(open=Mock(side_effect=RuntimeError("token=secret")))

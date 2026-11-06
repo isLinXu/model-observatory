@@ -278,6 +278,17 @@ class TransportTests(unittest.TestCase):
         body.close.assert_called_once()
         self.assertEqual(ms.safe_error(error), "ModelScope HTTP 403.")
 
+    def test_a_failed_close_does_not_replace_the_status_code(self):
+        class Unclosable(urllib.error.HTTPError):
+            def close(self):
+                raise RuntimeError("token=secret")
+
+        error = Unclosable(ms.MODELS_API, 403, "secret", {}, Mock())
+        with self.assertRaises(urllib.error.HTTPError) as raised:
+            ms.http_get_json(Mock(open=Mock(side_effect=error)), ms.MODELS_API, float("inf"))
+        self.assertEqual(raised.exception.code, 403)
+        self.assertEqual(ms.safe_error(raised.exception), "ModelScope HTTP 403.")
+
     def test_json_and_http_status_fail_closed(self):
         for response in (Response(b"not json secret"), Response(b"\xff"), Response({}, 204)):
             with self.subTest(response=response), self.assertRaises(ms.ModelScopeError):
