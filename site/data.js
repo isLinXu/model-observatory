@@ -125,6 +125,20 @@ MO.data = (() => {
     awesomeOpen: null,
     awesomeFlowSort: 'published',
     awesomeFlowPage: 1,
+    homc: null,
+    homcHistory: null,
+    homcHistoryError: null,
+    homcHistoryRetention: null,
+    homcTrendMetric: 'measured',
+    homcSnapshotCheckedAt: null,
+    homcRefreshError: null,
+    homcSearch: '',
+    homcState: 'all',
+    homcGrade: 'all',
+    homcVendor: 'all',
+    homcAttention: 'all',
+    homcSort: 'date',
+    homcPage: 1,
     runs: null,
     runsError: null,
     status: 'loading'
@@ -1979,6 +1993,368 @@ MO.data = (() => {
     return awesomeFlow().slice(start, start + AWESOME_FLOW_PAGE_SIZE);
   }
 
+  // --- HOMC 核实总表：别人清单里的三态表，本站逐行数过 ----------------
+
+  const HOMC_SOURCE_ID = 'homc';
+  // The collector's own contract: one repository, so a run either read it or did
+  // not. Anything else in the file is a payload from a different pipeline.
+  const HOMC_SNAPSHOT_STATUSES = ['ok', 'stale', 'unavailable'];
+  const HOMC_STATES = ['new', 'updated', 'unverified'];
+  const HOMC_GRADES = ['A', 'B', 'C'];
+  const HOMC_DATE_STATES = ['unverified', 'unpublished', 'undisclosed', 'not_applicable'];
+  const HOMC_DATE_LABELS = {
+    unverified: '待核实', unpublished: '未发布', undisclosed: '未披露', not_applicable: '不适用'
+  };
+  const HOMC_TABLE_PAGE_SIZE = 25;
+  const HOMC_TEXT_LIMIT = 240;
+
+  // Normalised once per payload: a refresh must never mix two snapshots.
+  let homcRowCache = null;
+
+  const homcCount = value => (Number.isFinite(value) ? value : null);
+  const homcFlag = value => (value === true);
+  const homcText = (value, limit = HOMC_TEXT_LIMIT) =>
+    (typeof value === 'string' && value ? value.slice(0, limit) : null);
+  const homcUrl = value => (HTTP_URL_RE.test(String(value || '')) ? String(value) : null);
+  const homcWord = (value, allowed) => (allowed.includes(value) ? value : null);
+  // A day cell is checked against a shape, not a vocabulary: `截至 2026-11-05` is
+  // the list's own claim, and anything that is not an ISO day is not a date.
+  const homcDay = value => (typeof value === 'string' && DAY_RE.test(value) ? value : null);
+
+  /** Counts keyed by a source-side word: keep the shape, drop a non-number. */
+  function homcBuckets(value) {
+    if (!value || typeof value !== 'object') return null;
+    const out = {};
+    for (const [key, count] of Object.entries(value)) {
+      if (Number.isFinite(count)) out[key] = count;
+    }
+    return out;
+  }
+
+  function validateHomcSnapshot(payload) {
+    if (payload?.schema_version !== 1 || payload?.source?.id !== HOMC_SOURCE_ID ||
+        !HOMC_SNAPSHOT_STATUSES.includes(payload.status) ||
+        !Array.isArray(payload.rows) ||
+        payload.rows.some(row => typeof row?.id !== 'string' || typeof row?.name !== 'string')) {
+      throw new Error('模型清单快照格式或数据来源不兼容');
+    }
+    return payload;
+  }
+
+  /**
+   * Re-read the published snapshot. Their repository is crawled once a day by the
+   * workflow: a reader's click must not turn into traffic on somebody else's
+   * site, so this only ever fetches the file we already shipped.
+   */
+  async function refreshHomcSnapshot() {
+    try {
+      const payload = validateHomcSnapshot(await getJSON(
+        './data/homc.json', '模型清单核实', { signal: AbortSignal.timeout(20000) }));
+      state.homc = payload;
+      state.homcSnapshotCheckedAt = new Date().toISOString();
+      state.homcRefreshError = null;
+      notify();
+      return payload;
+    } catch (error) {
+      state.homcRefreshError = error.name === 'TimeoutError'
+        ? '读取模型清单快照超时，请稍后重试' : error.message;
+      throw new Error(state.homcRefreshError);
+    }
+  }
+
+  async function loadHomc() {
+    try {
+      await refreshHomcSnapshot();
+    } catch (error) {
+      if (!state.homc) {
+        state.homc = { status: 'unavailable', source: { id: HOMC_SOURCE_ID }, rows: [],
+                       measured: null, self_reported: null, comparison: null,
+                       error: error.message };
+      }
+      console.warn('模型清单快照读取失败：', error);
+    }
+    await loadHomcHistory();
+  }
+
+  /** A missing history file costs the trend line only, never the board's status. */
+  async function loadHomcHistory(stamp) {
+    try {
+      const payload = await getJSON(`./data/homc_history.json${stamp ? `?t=${stamp}` : ''}`,
+        '模型清单历史', { signal: AbortSignal.timeout(20000) });
+      if (payload?.schema_version !== 1 || payload?.source?.id !== HOMC_SOURCE_ID ||
+          !Array.isArray(payload.snapshots)) {
+        throw new Error('模型清单历史格式或数据来源不兼容');
+      }
+      state.homcHistory = payload.snapshots
+        .filter(row => typeof row?.date === 'string' && DAY_RE.test(row.date))
+        .map(row => ({
+          date: row.date,
+          capturedAt: homcText(row.captured_at, 32),
+          asOf: homcDay(row.as_of),
+          rowsNew: homcCount(row.rows_new),
+          rowsUpdated: homcCount(row.rows_updated),
+          rowsUnverified: homcCount(row.rows_unverified),
+          rowsTotal: homcCount(row.rows_total),
+          claimedIncrement: homcCount(row.claimed_increment),
+          added: homcCount(row.added),
+          removed: homcCount(row.removed)
+        }))
+        .sort((a, b) => a.date.localeCompare(b.date));
+      state.homcHistoryRetention = payload.retention || null;
+    } catch (error) {
+      state.homcHistory = null;
+      state.homcHistoryError = error.name === 'TimeoutError'
+        ? '读取模型清单历史超时' : error.message;
+      console.warn('模型清单历史读取失败：', error);
+    }
+  }
+
+  /**
+   * The published sample, normalised. `rows` is a window the collector chose by
+   * round-robin over the three tables, so every count on the board comes from
+   * `measured`, not from the length of this array.
+   */
+  function homcRows() {
+    const payload = state.homc;
+    if (!Array.isArray(payload?.rows)) return [];
+    if (homcRowCache && homcRowCache.payload === payload) return homcRowCache.rows;
+    const rows = payload.rows.map(row => {
+      const linkList = (Array.isArray(row.links) ? row.links : []).map(homcUrl).filter(Boolean);
+      return {
+        id: row.id,
+        name: homcText(row.name, HOMC_TEXT_LIMIT) || row.id,
+        vendor: homcText(row.vendor, 80),
+        state: homcWord(row.state, HOMC_STATES),
+        group: homcText(row.group, 60),
+        date: homcDay(row.date),
+        precision: homcText(row.precision, 16),
+        dateState: homcWord(row.date_state, HOMC_DATE_STATES),
+        category: homcText(row.category),
+        capability: homcText(row.capability),
+        availability: homcText(row.availability),
+        grades: (Array.isArray(row.grades) ? row.grades : [])
+          .map(grade => homcWord(grade, HOMC_GRADES)).filter(Boolean),
+        singleB: homcFlag(row.single_b_source),
+        linkCount: homcCount(row.link_count),
+        links: linkList,
+        url: homcUrl(row.url),
+        marker: homcText(row.marker, 4),
+        note: homcText(row.note),
+        markerState: homcWord(row.marker_state, HOMC_STATES),
+        sectionRef: homcFlag(row.is_section_reference),
+        suit: homcText(row.suit, 8),
+        isNew: homcFlag(row.is_new)
+      };
+    });
+    homcRowCache = { payload, rows };
+    return rows;
+  }
+
+  /** Everything the page says as a number, taken from the counts, never the sample. */
+  function homcStats() {
+    const payload = state.homc || {};
+    const measured = payload.measured || {};
+    const rows = measured.rows || {};
+    const comparison = payload.comparison || {};
+    const diff = payload.diff || {};
+    const cadence = payload.cadence || {};
+    const sizes = payload.sizes || {};
+    const sample = homcRows();
+    const claimed = payload.self_reported || null;
+    // A status the collector's own contract does not name is not this board's
+    // "ok", and it is not a board full of numbers either: the whole section has
+    // to say 没读到, not pair that headline with counts nobody confirmed.
+    const status = HOMC_SNAPSHOT_STATUSES.includes(payload.status)
+      ? payload.status : 'unavailable';
+    return {
+      status,
+      available: status !== 'unavailable' && Boolean(measured.rows),
+      error: homcText(payload.error, 120),
+      unavailableReason: homcText(payload.unavailable_reason, 60),
+      capturedAt: homcText(payload.captured_at, 32),
+      lastAttemptAt: homcText(payload.last_attempt_at, 32),
+      asOf: homcDay(payload.as_of),
+      asOfAgeDays: homcCount(payload.as_of_age_days),
+      rowsTotal: homcCount(rows.total),
+      rowsNew: homcCount(rows.new),
+      rowsUpdated: homcCount(rows.updated),
+      rowsUnverified: homcCount(rows.unverified),
+      rowsParsed: homcCount(measured.rows_parsed),
+      distinctVendors: homcCount(measured.distinct_vendors),
+      withLink: homcCount(measured.with_link),
+      withoutLink: homcCount(measured.without_link),
+      grades: homcBuckets(measured.grades),
+      withoutGrade: homcCount(measured.without_grade),
+      singleB: homcCount(measured.single_b_source),
+      withNote: homcCount(measured.with_note),
+      markerMismatch: homcCount(measured.marker_mismatch),
+      sectionRefs: homcCount(measured.section_reference_rows),
+      dates: homcBuckets(measured.dates),
+      suitIndex: homcBuckets(measured.suit_index),
+      suitMatched: homcCount(measured.suit_matched),
+      suitUnmatched: homcCount(measured.suit_unmatched),
+      byteCapped: homcFlag(measured.byte_capped),
+      files: (Array.isArray(measured.files) ? measured.files : []).map(file => ({
+        path: homcText(file?.path, 60),
+        bytes: homcCount(file?.bytes),
+        truncated: homcFlag(file?.truncated)
+      })),
+      claimed,
+      claimedIncrement: homcCount(comparison.claimed_increment),
+      // A missing half is not a gap of zero: `null` says the comparison has no
+      // second number to stand next to.
+      delta: homcCount(comparison.delta),
+      diff: {
+        baseline: homcFlag(diff.baseline),
+        added: homcCount(diff.added),
+        removed: homcCount(diff.removed),
+        held: homcCount(diff.held),
+        truncated: homcFlag(diff.truncated)
+      },
+      cadence: {
+        state: homcText(cadence.status, 16) || 'unknown',
+        lastCommitAt: homcText(cadence.last_file_commit_at, 32),
+        author: homcText(cadence.author, 40),
+        isBot: typeof cadence.is_bot === 'boolean' ? cadence.is_bot : null,
+        message: homcText(cadence.message, 120),
+        cadence: homcText(cadence.cadence, 16),
+        staleDays: homcCount(cadence.stale_days),
+        stalled: homcFlag(cadence.stalled),
+        commitsSeen: homcCount(cadence.commits_seen)
+      },
+      fetches: {
+        files: homcCount(payload.fetches?.files),
+        bytes: homcCount(payload.fetches?.bytes),
+        maxFiles: homcCount(payload.fetches?.max_files),
+        budgetHit: homcFlag(payload.fetches?.budget_hit)
+      },
+      sampleSize: sample.length,
+      rowLimit: homcCount(sizes.row_limit_applied),
+      sizes: {
+        payloadBytes: homcCount(sizes.payload_bytes),
+        payloadBudget: homcCount(sizes.payload_budget_bytes),
+        ledgerBytes: homcCount(sizes.ledger_bytes),
+        ledgerBudget: homcCount(sizes.ledger_budget_bytes)
+      },
+      caliber: payload.source?.caliber && typeof payload.source.caliber === 'object'
+        ? payload.source.caliber : null,
+      budget: payload.source?.budget && typeof payload.source.budget === 'object'
+        ? payload.source.budget : null,
+      siteUrl: homcUrl(payload.source?.site_url),
+      readmeUrl: homcUrl(payload.source?.repo
+        ? `https://github.com/${payload.source.repo}/blob/main/${payload.source.readme_path || 'README.md'}`
+        : null),
+      repo: homcText(payload.source?.repo, 60),
+      warnings: (Array.isArray(payload.warnings) ? payload.warnings : [])
+        .map(note => homcText(note, 400)).filter(Boolean)
+    };
+  }
+
+  /** Why this row deserves a second look, in the source's own words where it has them. */
+  function homcWatch(row) {
+    const notes = [];
+    if (row.sectionRef) notes.push('这一行指向清单的某一节，不是一个模型：本站照数并标注，不替他们决定算不算。');
+    if (row.singleB) notes.push('信息来源只有一个 [B]：清单自己把这种行标为须复核日期。');
+    if (!row.links.length && (row.linkCount ?? 0) === 0) notes.push('这一行没留下任何可点的外部链接。');
+    if (!row.date) notes.push(`没有日期（${HOMC_DATE_LABELS[row.dateState] || '空格'}）：排序时它不冒充最旧的一条。`);
+    if (row.state && row.markerState && row.state !== row.markerState) {
+      notes.push('行首标记和它所在的表不一致：本站按所在的表归类，不代替清单改判。');
+    }
+    return notes;
+  }
+
+  function homcFacets() {
+    const rows = homcRows();
+    const tally = values => {
+      const counts = new Map();
+      rows.forEach(row => values(row).forEach(value => {
+        counts.set(value, (counts.get(value) || 0) + 1);
+      }));
+      return [...counts].map(([value, count]) => ({ value, count }))
+        .sort((a, b) => b.count - a.count || String(a.value).localeCompare(String(b.value)));
+    };
+    return {
+      states: tally(row => (row.state ? [row.state] : [])),
+      grades: tally(row => row.grades),
+      vendors: tally(row => (row.vendor ? [row.vendor] : []))
+    };
+  }
+
+  function homcFiltered() {
+    const needle = state.homcSearch.trim().toLowerCase();
+    return homcRows().filter(row => {
+      if (state.homcState !== 'all' && row.state !== state.homcState) return false;
+      if (state.homcGrade !== 'all' && !row.grades.includes(state.homcGrade)) return false;
+      if (state.homcVendor !== 'all' && row.vendor !== state.homcVendor) return false;
+      if (state.homcAttention === 'watch' && !homcWatch(row).length) return false;
+      if (state.homcAttention === 'undated' && row.date) return false;
+      if (state.homcAttention === 'linkless' && row.links.length) return false;
+      if (state.homcAttention === 'new' && !row.isNew) return false;
+      if (state.homcAttention === 'section' && !row.sectionRef) return false;
+      if (needle) {
+        const hay = [row.name, row.vendor, row.category, row.capability, row.availability,
+          row.note, row.group, row.suit].filter(Boolean).join(' ').toLowerCase();
+        if (!hay.includes(needle)) return false;
+      }
+      return true;
+    }).sort((a, b) => {
+      const sort = state.homcSort;
+      if (sort === 'name') return a.name.localeCompare(b.name, 'zh-Hans-CN');
+      if (sort === 'vendor') {
+        return String(a.vendor || '').localeCompare(String(b.vendor || ''), 'zh-Hans-CN') ||
+          a.name.localeCompare(b.name, 'zh-Hans-CN');
+      }
+      if (sort === 'added') return (b.isNew ? 1 : 0) - (a.isNew ? 1 : 0) ||
+        String(b.date || '').localeCompare(String(a.date || ''));
+      if (sort === 'linkless') return (a.links.length ? 1 : 0) - (b.links.length ? 1 : 0) ||
+        String(b.date || '').localeCompare(String(a.date || ''));
+      // Undated rows sort to the bottom rather than posing as the oldest.
+      return String(b.date || '').localeCompare(String(a.date || '')) ||
+        a.name.localeCompare(b.name, 'zh-Hans-CN');
+    });
+  }
+
+  function homcPageCount() {
+    return Math.max(1, Math.ceil(homcFiltered().length / HOMC_TABLE_PAGE_SIZE));
+  }
+
+  function homcPage() {
+    const start = (Math.min(Math.max(1, state.homcPage), homcPageCount()) - 1) * HOMC_TABLE_PAGE_SIZE;
+    return homcFiltered().slice(start, start + HOMC_TABLE_PAGE_SIZE);
+  }
+
+  /**
+   * Two numbers per day, from two different owners: what this site counted and
+   * what the list says it verified. They are drawn on one chart and never added.
+   */
+  function homcTrend() {
+    const snapshots = state.homcHistory || [];
+    const series = key => snapshots
+      .filter(row => Number.isFinite(row[key]))
+      .map(row => ({ date: row.date, value: row[key] }));
+    const measured = series('rowsTotal');
+    const points = snapshots.filter(row => Number.isFinite(row.rowsTotal));
+    let readyOn = null;
+    if (snapshots.length && measured.length < 3) {
+      const day = new Date(`${snapshots.at(-1).date}T00:00:00Z`);
+      day.setUTCDate(day.getUTCDate() + (3 - measured.length));
+      readyOn = day.toISOString().slice(0, 10);
+    }
+    const first = measured[0];
+    const last = measured.at(-1);
+    return {
+      snapshots,
+      measured,
+      claimed: series('claimedIncrement'),
+      added: series('added'),
+      enough: measured.length >= 3,
+      first,
+      last,
+      readyOn,
+      netChange: measured.length >= 3 ? last.value - first.value : null
+    };
+  }
+
   // --- 采集健康：这份载荷说的是运行本身，不是数据 ---------------------
 
   const RUNS_SOURCE_ID = 'runs';
@@ -2443,6 +2819,20 @@ MO.data = (() => {
     awesomeFlowPage,
     awesomeFlowPageCount,
     awesomeFlowPageSize: () => AWESOME_FLOW_PAGE_SIZE,
+    loadHomc,
+    loadHomcHistory,
+    refreshHomcSnapshot,
+    homcRows,
+    homcStats,
+    homcWatch,
+    homcFacets,
+    homcFiltered,
+    homcPage,
+    homcPageCount,
+    homcPageSize: () => HOMC_TABLE_PAGE_SIZE,
+    homcTrend,
+    homcDateLabels: () => HOMC_DATE_LABELS,
+    homcStateWords: () => HOMC_STATES,
     loadRuns,
     runHealth
   };

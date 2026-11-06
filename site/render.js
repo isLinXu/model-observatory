@@ -1684,6 +1684,366 @@ MO.render = (() => {
     else renderAwesomeFlow();
   }
 
+  // --- HOMC 核实总表 --------------------------------------------------------
+
+  const HOMC_STATE_LABELS = { new: '新增', updated: '更新', unverified: '待确认' };
+  const HOMC_STATE_GLYPHS = { new: '🆕', updated: '🔄', unverified: '⚠️' };
+  // The same read_cadence words the list-tracking collector publishes, so one
+  // vocabulary gets one set of labels rather than two that can drift apart.
+  const HOMC_CADENCE_LABELS = AWESOME_CADENCE_LABELS;
+  const HOMC_CLAIM_LABELS = {
+    model_series: '模型系列', arxiv_papers: 'arXiv 论文', github_repos: 'GitHub 仓库',
+    hf_links: 'Hugging Face 链接', vendors: '厂商 / 组织', benchmarks: '评测基准',
+    increment: '本轮核实增量'
+  };
+  const HOMC_GRADE_EXPLAINED = {
+    A: '一手来源', B: '独立二手来源', C: '单一二手或传闻'
+  };
+
+  const homcValue = value => (value === null || value === undefined ? '—' : fmt(value));
+  const homcStateLabel = word => (word
+    ? `${HOMC_STATE_GLYPHS[word] || ''} ${HOMC_STATE_LABELS[word] || word}`.trim() : '未归表');
+  const homcGradeText = (stats, grade) => (stats.grades && Number.isFinite(stats.grades[grade])
+    ? fmt(stats.grades[grade]) : '—');
+  const homcKb = value => (Number.isFinite(value) ? `${(value / 1024).toFixed(0)} KB` : '—');
+
+  /** The list's own 核心统计 rows, in the shape it wrote them: "200+" stays a range. */
+  function homcClaims(claimed) {
+    return Object.entries(HOMC_CLAIM_LABELS)
+      .filter(([key]) => typeof (claimed || {})[`${key}_claimed`] === 'string')
+      .map(([key, label]) => ({
+        key, label, value: claimed[`${key}_claimed`],
+        exact: Number.isFinite(claimed[key]) ? claimed[key] : null
+      }));
+  }
+
+  function homcNumberCell(label, value, note, toneClass) {
+    return `<div class="awesome-number${toneClass ? ` ${toneClass}` : ''}">` +
+      `<span class="awesome-number-label">${esc(label)}</span>` +
+      `<span class="awesome-number-value">${value}</span>` +
+      `<span class="awesome-number-note micro muted">${esc(note || '')}</span></div>`;
+  }
+
+  function renderHomcStatus() {
+    const state = data.state, stats = data.homcStats();
+    const payload = state.homc || {};
+    const age = ageInDays(stats.capturedAt);
+    const lines = [];
+    if (!state.homc) lines.push('正在读取模型清单快照…');
+    else if (stats.status === 'unavailable') {
+      lines.push(`这次没读到 HOMC 总表${stats.error ? `：${stats.error}` : ''}` +
+        `${stats.unavailableReason ? `（${stats.unavailableReason}）` : ''}，页面没有可发布的内容`);
+    } else if (stats.status === 'stale') {
+      lines.push('今天没读到 HOMC 总表，下面是上次快照的内容并标注为「沿用上次」');
+    } else {
+      lines.push(`三态总表 · 实测 ${homcValue(stats.rowsTotal)} 行` +
+        `（🆕 ${homcValue(stats.rowsNew)} / 🔄 ${homcValue(stats.rowsUpdated)} / ` +
+        `⚠️ ${homcValue(stats.rowsUnverified)}）`);
+      lines.push(stats.claimedIncrement === null
+        ? '清单这次没写出核心统计表，自报数缺席'
+        : `清单自报本轮核实 ${homcValue(stats.claimedIncrement)} 条`);
+    }
+    if (stats.asOf) {
+      lines.push(`清单标注「截至 ${stats.asOf}」` +
+        (stats.asOfAgeDays === null ? '' : ` · 已经 ${fmt(Math.floor(stats.asOfAgeDays))} 天`));
+    }
+    if (state.homcRefreshError) lines.push(`快照读取失败，保留上次数据：${state.homcRefreshError}`);
+    $('homcStatus').textContent = lines.join(' · ');
+    $('homcStatus').title = [stats.error, state.homcRefreshError].filter(Boolean).join('\n');
+    $('homcStatus').classList.toggle('neg', stats.status !== 'ok' || lines.length > 3);
+    $('homcFreshness').textContent = (stats.capturedAt
+      ? `快照采集于 ${timestamp(stats.capturedAt)} UTC · ` : '') +
+      (Number.isFinite(age) ? `距今 ${fmt(Math.floor(age))} 天` : '采集时间未知') +
+      (stats.cadence.lastCommitAt
+        ? ` · 清单文件上次改动 ${timestamp(stats.cadence.lastCommitAt)} UTC` +
+          `（${esc(stats.cadence.author || '作者未知')}${stats.cadence.isBot ? ' · 机器人' : ''}）`
+        : '') +
+      (stats.cadence.stalled ? ` · 已停更 ${fmt(stats.cadence.staleDays)} 天` : '');
+    $('homcFreshness').classList.toggle('neg', stats.cadence.stalled || stats.status === 'stale');
+    $('homcCheckedAt').textContent = `${state.homcSnapshotCheckedAt
+      ? `最近成功读取快照 ${timestamp(state.homcSnapshotCheckedAt)} UTC` : '尚未成功读取快照'
+      } · 采集由每日工作流完成`;
+    if (stats.fetches.files !== null) {
+      $('homcCheckedAt').textContent += ` · 本次抓取 ${fmt(stats.fetches.files)} 个文件` +
+        `，读到 ${homcKb(stats.fetches.bytes ?? 0)}`;
+    }
+    if (stats.sizes.payloadBytes !== null && stats.sizes.payloadBudget !== null) {
+      const over = stats.sizes.payloadBytes >= stats.sizes.payloadBudget;
+      $('homcCheckedAt').textContent += ` · 快照 ${homcKb(stats.sizes.payloadBytes)}` +
+        `（预算 ${homcKb(stats.sizes.payloadBudget)}）`;
+      $('homcCheckedAt').classList.toggle('neg', over);
+    }
+    $('homcExport').disabled = !stats.available || !data.homcFiltered().length;
+    $('homcFilterReset').disabled = !state.homcSearch && state.homcState === 'all' &&
+      state.homcGrade === 'all' && state.homcVendor === 'all' && state.homcAttention === 'all';
+    // The two buttons that reach outside the board are links to their owner's
+    // page; a payload without them leaves the buttons off rather than guessing.
+    $('homcSiteLink').hidden = !stats.siteUrl;
+    if (stats.siteUrl) $('homcSiteLink').href = stats.siteUrl;
+    $('homcReadmeLink').hidden = !stats.readmeUrl;
+    if (stats.readmeUrl) $('homcReadmeLink').href = stats.readmeUrl;
+  }
+
+  function renderHomcSummary() {
+    const stats = data.homcStats();
+    $('homcCountBadge').textContent = homcValue(stats.rowsTotal);
+    $('statHomcRows').textContent = homcValue(stats.rowsTotal);
+    $('statHomcRowsSub').textContent = !stats.available ? '这次没有数出行数'
+      : stats.rowsParsed === null || stats.rowsParsed === stats.rowsTotal
+      ? `本站逐行数过 · ${homcValue(stats.distinctVendors)} 个提供方`
+      : `逐行数过，去重后 ${fmt(stats.rowsParsed)} 个名字：${stats.byteCapped
+        ? '文件在抓取上限处截断，行数为下限' : '同名同提供方的行按首次计，重复的另有一行说明'}`;
+    $('statHomcSplit').textContent = stats.rowsTotal === null ? '—'
+      : `${homcValue(stats.rowsNew)} / ${homcValue(stats.rowsUpdated)} / ${homcValue(stats.rowsUnverified)}`;
+    $('statHomcSplitSub').textContent = stats.markerMismatch
+      ? `${fmt(stats.markerMismatch)} 行的行首标记与所在表不一致，按所在表归类`
+      : `带说明的行 ${homcValue(stats.withNote)} 行 · 指向章节的行 ${homcValue(stats.sectionRefs)} 行`;
+    $('statHomcDelta').textContent = !stats.available ? '—'
+      : stats.diff.baseline ? '基线'
+      : stats.diff.added === null ? '—'
+      : `${signed(stats.diff.added)} / ${signed(-(stats.diff.removed ?? 0))}`;
+    $('statHomcDeltaSub').textContent = !stats.available ? '本站第一次读到这张总表之前不报变化'
+      : stats.diff.baseline ? `首次读到：记下 ${homcValue(stats.diff.held)} 个 id，明日起才是变化量`
+      : stats.diff.added === null
+        ? (stats.diff.truncated ? '上次台账被 id 上限截断，增删按下限报告' : '没有可比对的上一日台账')
+        : `保留 ${homcValue(stats.diff.held)} 行${stats.diff.truncated ? ' · 增删为下限' : ''}`;
+    $('statHomcSingleB').textContent = homcValue(stats.singleB);
+    $('statHomcSingleBSub').textContent = `来源等级 A ${homcGradeText(stats, 'A')} · B ${homcGradeText(stats, 'B')}` +
+      ` · C ${homcGradeText(stats, 'C')}${stats.withoutGrade ? ` · 无等级 ${fmt(stats.withoutGrade)} 行` : ''}`;
+    $('statHomcLinkless').textContent = homcValue(stats.withoutLink);
+    $('statHomcLinklessSub').textContent = `可对上花色索引 ${homcValue(stats.suitMatched)} 行` +
+      ` · 对不上 ${homcValue(stats.suitUnmatched)} 行`;
+  }
+
+  function renderHomcCompare() {
+    const stats = data.homcStats();
+    const claims = homcClaims(stats.claimed);
+    $('homcCompareNote').textContent = stats.available
+      ? `三态表：本站数出来的行数，与清单在「核心统计」里自报的拆分`
+      : '等待模型清单快照';
+    const states = [
+      { key: 'new', measured: stats.rowsNew, claimed: stats.claimed?.increment_new },
+      { key: 'updated', measured: stats.rowsUpdated, claimed: stats.claimed?.increment_updated },
+      { key: 'unverified', measured: stats.rowsUnverified, claimed: stats.claimed?.increment_unverified }
+    ].filter(item => item.measured !== null || Number.isFinite(item.claimed));
+    const scale = Math.max(1, ...states.map(item => Math.max(item.measured || 0, item.claimed || 0)));
+    $('homcCompareList').innerHTML = states.length ? states.map(item => {
+      const claimed = Number.isFinite(item.claimed) ? item.claimed : null;
+      const gap = claimed !== null && item.measured !== null && claimed !== item.measured;
+      return `<div class="awesome-cmp">` +
+        `<div class="awesome-cmp-head"><code>${esc(item.key)}</code>` +
+        `<span class="micro muted">${esc(homcStateLabel(item.key))}</span></div>` +
+        `<div class="awesome-cmp-bar">` +
+        `<i class="measured" style="width:${(((item.measured || 0) / scale) * 100).toFixed(1)}%"></i>` +
+        (claimed !== null
+          ? `<i class="reported" style="width:${(((claimed) / scale) * 100).toFixed(1)}%"></i>` : '') +
+        `</div><div class="micro muted">实测 ${homcValue(item.measured)}` +
+        `${claimed === null ? ' · 清单没有自报这一态的拆分' : ` · 自报 ${fmt(claimed)}`}` +
+        `${gap ? ' · 两边都发布，差距请自己看行' : ''}</div></div>`;
+    }).join('') : '<div class="chart-empty">等待模型清单快照</div>';
+    $('homcClaimNote').textContent = claims.length
+      ? `清单自己的「核心统计」表，原样引用：${fmt(claims.length)} 项`
+      : '这次没读到他们的核心统计表';
+    $('homcClaimList').innerHTML = claims.length ? claims.map(claim =>
+      `<div class="homc-claim"><span class="homc-claim-label">${esc(claim.label)}</span>` +
+      `<span class="homc-claim-value">${esc(claim.value)}</span>` +
+      `<span class="micro muted">${claim.exact === null
+        ? '区间或约数，本站不替他们取整' : `写作整数即 ${fmt(claim.exact)}`}</span></div>`).join('')
+      : '<div class="chart-empty">清单这次没写出核心统计表：自报数缺席，本站只报实测</div>';
+  }
+
+  function renderHomcNotes() {
+    const stats = data.homcStats();
+    // A row the board may not publish is also a row it may not call 待读: the
+    // count has to follow the same availability as the table below it.
+    const rows = stats.available ? data.homcFiltered() : [];
+    const watch = rows.filter(row => data.homcWatch(row).length);
+    // The collector's own warning list belongs to the payload, so a run that
+    // read nothing still says how many warnings it raised. With no payload at
+    // all, "0 alerts" would be a count nobody made — and the 待读 half is a
+    // claim about the sample this page publishes, so no sample reports none.
+    $('homcNoteCount').textContent = stats.available
+      ? `${fmt(stats.warnings.length)} 条采集告警 · ` +
+        `本页样本里 ${fmt(watch.length)} 行有待读理由`
+      : stats.warnings.length
+        ? `${fmt(stats.warnings.length)} 条采集告警 · 这次没读到样本，待读行数无数可报`
+        : '这次没读到快照：告警与待读都没有可报的数';
+    const caliber = stats.caliber || {};
+    const lines = [];
+    if (stats.warnings.length) {
+      lines.push(...stats.warnings.map(note =>
+        `<div class="awesome-note warn">${esc(note)}</div>`));
+    }
+    Object.entries(caliber).forEach(([key, text]) => {
+      if (typeof text === 'string') {
+        lines.push(`<div class="awesome-note"><code>${esc(key)}</code>：${esc(text)}</div>`);
+      }
+    });
+    if (stats.diff.baseline && stats.available) {
+      lines.push('<div class="awesome-note">这次只建立基线：台账里的 id 是第一次记下的，' +
+        '明天的新增与移出才是变化量，今天报 0 会是假的。</div>');
+    }
+    if (stats.diff.truncated) {
+      lines.push('<div class="awesome-note">上次台账被 id 上限截断，本次不报新增与移出：' +
+        '比对不了的就不是变化，而是下限。</div>');
+    }
+    if (stats.rowLimit !== null && stats.rowsTotal !== null && stats.rowsTotal > stats.rowLimit) {
+      lines.push(`<div class="awesome-note">下方表格只是样本：三态轮转取前 ${fmt(stats.rowLimit)} 行，` +
+        `实测 ${fmt(stats.rowsTotal)} 行的计数与台账都不因此变小。</div>`);
+    }
+    $('homcNotes').innerHTML = lines.length ? lines.join('')
+      : `<div class="chart-empty">${stats.available
+        ? '没有告警：总表读到了，行首标记与所在表也一致'
+        : '这次没读到总表：读不到不等于没有告警，这里不替它宣布干净。'}</div>`;
+  }
+
+  function renderHomcTrend() {
+    const state = data.state;
+    const trend = data.homcTrend();
+    const claimed = state.homcTrendMetric === 'claimed';
+    $('homcTrendMetric').value = state.homcTrendMetric;
+    $('homcTrendLabel').textContent = claimed
+      ? '清单在「核心统计」里自报的本轮核实条数，不是本站数出来的行数'
+      : '本站每天逐行数出来的三态总表行数';
+    charts.line($('homcTrendChart'), [{
+      name: claimed ? '清单自报核实增量' : '实测行数',
+      points: claimed ? trend.claimed : trend.measured,
+      color: claimed ? 'var(--chart-4)' : 'var(--chart-1)'
+    }], {
+      area: true,
+      label: 'HOMC 三态总表逐日快照',
+      emptyText: trend.snapshots.length
+        ? '逐日历史里还没有可画的整数：可能是历史文件比快照更早，等下一次采集补齐。'
+        : '还没有逐日历史。每天采集一次后开始积累，本站不补造历史数据。'
+    });
+    const lines = [];
+    if (state.homcHistoryError) lines.push(`历史读取失败，趋势暂缺：${state.homcHistoryError}`);
+    else if (!trend.snapshots.length) lines.push('还没有逐日历史文件');
+    else {
+      lines.push(`${fmt(trend.snapshots.length)} 个逐日快照`);
+      if (trend.enough && Number.isFinite(trend.netChange)) {
+        lines.push(`自 ${trend.first.date} 起实测行数净变化 ${signed(trend.netChange)}` +
+          `（${fmt(trend.first.value)} → ${fmt(trend.last.value)}，只比两端，不逐日累加）`);
+      } else if (trend.snapshots.length) {
+        lines.push('样本太少，看不出趋势：两点连成的直线说明不了中间发生过什么，第 3 天起才有净变化' +
+          (trend.readyOn ? `——按每天一次的节奏推算，${trend.readyOn} 才够 3 个点，本站不补造历史` : ''));
+      }
+      const gap = trend.snapshots.filter(row => !Number.isFinite(row.rowsTotal)).length;
+      if (gap) {
+        lines.push(`其中 ${fmt(gap)} 天没数出行数，那天的点是断开的，不是零`);
+      }
+      const retention = state.homcHistoryRetention;
+      if (retention?.daily_days) {
+        lines.push(`留存：最近 ${fmt(retention.daily_days)} 天逐日，更早每月留一个点` +
+          `（最多 ${fmt(retention.monthly_points)} 个月）`);
+      }
+    }
+    $('homcTrendNote').textContent = lines.join(' · ');
+    $('homcTrendNote').classList.toggle('neg', Boolean(state.homcHistoryError));
+  }
+
+  function homcSourceCell(row) {
+    const grades = row.grades.length
+      ? row.grades.map(grade => `<span class="chip tiny homc-grade" ` +
+        `title="${esc(HOMC_GRADE_EXPLAINED[grade] || '由该清单判定的来源等级')}">${esc(grade)}</span>`).join('')
+      : '<span class="chip tiny homc-grade none">无等级</span>';
+    return `<div class="homc-sources">${grades}` +
+      (row.singleB ? '<span class="chip tiny homc-flag">单一 B 源</span>' : '') +
+      (row.links.length
+        ? `<a class="ext-link" href="${esc(row.links[0])}" target="_blank" ` +
+          `rel="noopener noreferrer">来源 ↗</a>` +
+          (row.links.length > 1 || (row.linkCount ?? 0) > row.links.length
+            ? `<span class="micro muted">共 ${fmt(row.linkCount ?? row.links.length)} 个</span>` : '')
+        : '<span class="micro muted">无链接</span>') +
+      `</div>`;
+  }
+
+  function homcRowCell(row) {
+    const labels = data.homcDateLabels();
+    // A row without a date says which kind of "without" it is; the list writes
+    // its own word for 待核实 / 未发布 / 未披露 / 不适用, and a blank cell is a
+    // fifth case that is not the same thing as any of them.
+    const when = row.date
+      ? `<span class="homc-date">${esc(row.date)}</span>` +
+        (row.precision === 'month' || row.precision === 'year'
+          ? `<span class="micro muted">（清单只写到${row.precision === 'month' ? '月' : '年'}）</span>`
+          : '')
+      : `<span class="micro muted">${row.dateState
+        ? `无日期：${esc(labels[row.dateState] || row.dateState)}` : '日期栏是空的'}</span>`;
+    return `<div class="homc-name-cell">` +
+      `<div class="homc-name"><code class="homc-suit">${esc(row.suit || '')}</code>` +
+      `${row.url
+        ? `<a class="model-link" href="${esc(row.url)}" target="_blank" rel="noopener noreferrer">` +
+          `${esc(row.name)} ↗</a>`
+        : `<span class="model-title">${esc(row.name)}</span>`}` +
+      `${row.isNew ? '<span class="chip tiny awesome-fresh">本次新增</span>' : ''}` +
+      `${row.sectionRef ? '<span class="chip tiny homc-flag">指向章节</span>' : ''}</div>` +
+      `<div class="micro muted">${esc([row.vendor || '提供方未标注', row.group, row.category]
+        .filter(Boolean).join(' · '))}</div>` +
+      (row.capability ? `<div class="homc-prose micro">${esc(row.capability)}</div>` : '') +
+      (row.availability ? `<div class="micro muted">${esc(row.availability)}</div>` : '') +
+      `<div class="micro">${when}${row.note
+        ? ` <span class="homc-note">${esc(row.note)}</span>` : ''}</div>` +
+      `</div>`;
+  }
+
+  function renderHomcTable() {
+    const state = data.state;
+    const total = data.homcFiltered().length;
+    const pages = data.homcPageCount();
+    state.homcPage = Math.min(Math.max(1, state.homcPage), pages);
+    const stats = data.homcStats();
+    const rows = stats.available ? data.homcPage() : [];
+    $('homcRowCount').textContent = stats.available
+      ? `${fmt(total)} 行样本 · 第 ${state.homcPage} / ${pages} 页` +
+        `（每页 ${fmt(data.homcPageSize())} 行；实测共 ${homcValue(stats.rowsTotal)} 行，` +
+        '样本是三态轮转取的窗口，不是全量）'
+      : '这次没读到快照，本页没有可展示的样本行';
+    $('homcTableRows').innerHTML = rows.length ? rows.map((row, index) =>
+      `<tr class="homc-row${row.isNew ? ' fresh' : ''}${row.state ? ` s-${esc(row.state)}` : ''}">` +
+      `<td>${homcRowCell(row)}</td>` +
+      `<td><span class="chip tiny homc-state-${esc(row.state || 'none')}">` +
+      `${esc(homcStateLabel(row.state))}</span>` +
+      (row.marker && row.markerState !== row.state
+        ? `<div class="micro muted">行首写作 ${esc(row.marker)}</div>` : '') + '</td>' +
+      `<td class="align-right">${esc(row.date || '—')}</td>` +
+      `<td>${homcSourceCell(row)}</td>` +
+      `<td><button type="button" class="button text-button" data-homc-card="${index}" ` +
+      `title="把这一行变成本机任务草稿：推送后才会成为 tasks/ 下的文件">建卡</button>` +
+      (data.homcWatch(row).length
+        ? `<div class="micro muted homc-watch">${esc(data.homcWatch(row)[0])}</div>` : '') +
+      `</td></tr>`).join('')
+      : `<tr><td colspan="5" class="no-rows">${stats.available && data.homcRows().length
+        ? '当前筛选下没有样本行。样本只是三态轮转的窗口，这里没有不等于清单里没有'
+        : '快照还没读到：滚动到本节会自动读取，也可以点上方「刷新已发布快照」重试'}</td></tr>`;
+    $('homcPageInfo').textContent = `${state.homcPage} / ${pages}`;
+    $('homcPrev').disabled = state.homcPage === 1;
+    $('homcNext').disabled = state.homcPage === pages;
+    $('homcPagination').hidden = total <= data.homcPageSize();
+  }
+
+  function renderHomc() {
+    const state = data.state;
+    fillSelect('homcState', data.homcFacets().states.map(item => ({
+      value: item.value, label: `${homcStateLabel(item.value)} (${fmt(item.count)})`
+    })), 'homcState', '全部三态');
+    fillSelect('homcGrade', data.homcFacets().grades.map(item => ({
+      value: item.value, label: `${item.value} · ${HOMC_GRADE_EXPLAINED[item.value] || '等级'} (${fmt(item.count)})`
+    })), 'homcGrade', '全部来源等级');
+    fillSelect('homcVendor', data.homcFacets().vendors.map(item => ({
+      value: item.value, label: `${item.value} (${fmt(item.count)})`
+    })), 'homcVendor', '全部提供方');
+    $('homcAttention').value = state.homcAttention;
+    $('homcSort').value = state.homcSort;
+    $('homcSearch').value = state.homcSearch;
+    renderHomcStatus();
+    renderHomcSummary();
+    renderHomcCompare();
+    renderHomcNotes();
+    renderHomcTrend();
+    renderHomcTable();
+  }
+
   // --- Models ---------------------------------------------------------------
 
   function renderSummary() {
@@ -2458,6 +2818,13 @@ MO.render = (() => {
     renderAwesomeTrend,
     renderAwesomeCards,
     renderAwesomeFlow,
+    renderHomc,
+    renderHomcStatus,
+    renderHomcSummary,
+    renderHomcCompare,
+    renderHomcNotes,
+    renderHomcTrend,
+    renderHomcTable,
     renderConferenceStatus,
     renderConferenceSummary,
     renderConferenceUpcoming,

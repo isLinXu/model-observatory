@@ -1394,6 +1394,36 @@ select { height: 40px; background: var(--input-bg); border: 1px solid var(--inpu
 .awesome-flow-table code { font-size: 10.5px; color: var(--muted); overflow-wrap: anywhere; }
 .awesome-flow-table .button.text-button { padding: 0; margin-left: 6px; font-size: 10px; color: var(--blue); vertical-align: baseline; }
 .awesome-flow-row.fresh > td { background: rgba(94, 234, 212, .05); }
+
+/* --- HOMC 核实总表 -------------------------------------------------------- */
+.homc-trend-panel { margin-top: var(--gap); }
+.homc-claims { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 7px; margin-top: 9px; }
+.homc-claim { display: grid; gap: 1px; border-left: 2px solid var(--chart-3); padding-left: 9px; min-width: 0; }
+.homc-claim-label { font-size: 10px; letter-spacing: .06em; text-transform: uppercase; color: var(--subtle); }
+.homc-claim-value { font-size: 14px; font-weight: 640; color: var(--txt-strong); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.homc-claim .micro { line-height: 1.5; }
+.homc-table td:first-child { min-width: 240px; max-width: 470px; white-space: normal; overflow-wrap: anywhere; }
+.homc-table td { white-space: normal; }
+.homc-name-cell { display: grid; gap: 3px; min-width: 0; }
+.homc-name { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.homc-name .model-link, .homc-name .model-title { white-space: normal; text-align: left; font-weight: 660; }
+.homc-suit { font-size: 11px; color: var(--txt-soft); border: 1px solid var(--line-2); border-radius: 5px; padding: 0 4px; }
+.homc-suit:empty { display: none; }
+.homc-prose { line-height: 1.65; color: var(--txt-soft); }
+.homc-note { color: var(--muted); border-left: 2px solid var(--line-3); padding-left: 7px; }
+.homc-date { font-variant-numeric: tabular-nums; }
+.homc-flag { color: var(--orange); border-style: dashed; }
+.homc-watch { line-height: 1.6; color: var(--muted); }
+.homc-sources { display: flex; flex-wrap: wrap; gap: 6px; align-items: baseline; }
+.homc-grade { color: var(--blue); }
+.homc-grade.none { color: var(--subtle); border-style: dotted; }
+.homc-sources .micro { color: var(--subtle); }
+.homc-table .button.text-button { padding: 0; font-size: 10px; color: var(--blue); }
+.homc-state-new { color: var(--teal); }
+.homc-state-updated { color: var(--blue); }
+.homc-state-unverified { color: var(--orange); border-style: dashed; }
+.homc-row.s-unverified > td:first-child { border-left: 2px solid var(--orange); }
+.homc-row.fresh > td { background: rgba(94, 234, 212, .05); }
 @media (max-width: 760px) {
   .awesome-cards { grid-template-columns: 1fr; }
   .awesome-cov-row { grid-template-columns: 66px minmax(0, 1fr) 84px; }

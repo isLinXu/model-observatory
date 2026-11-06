@@ -2921,10 +2921,11 @@ test('the star board pulls the detail on viewport entry, filters the wall, and e
 
   const detailCalls = () => requested.filter(url => url === './data/stars_repos.json').length;
   assert.equal(detailCalls(), 0, 'first paint must not download the detail file');
-  // Three sections read on entry: the star detail, the task canvas and the paper
-  // lists. None of them is asked for before the reader gets near it.
+  // Four sections read on entry: the star detail, the task canvas, the paper
+  // lists and the HOMC table. None of them is asked for before the reader gets
+  // near it.
   assert.deepEqual(observers.map(observer => observer.target),
-    [view.element('stars'), view.element('tasks'), view.element('awesome')]);
+    [view.element('stars'), view.element('tasks'), view.element('awesome'), view.element('homc')]);
   const observers0 = observers;
   const starObserver = observers0[0];
   assert.equal(starObserver.options.rootMargin, '300px 0px');
@@ -3884,7 +3885,7 @@ function taskPayload(tasks, extra = {}) {
 const TASK_REF_FIXTURES = ['resolved', 'unresolved', 'missing_index'];
 
 function loadBoardView({ tasks = null, payload = null, entities = [], token = '', routes = {},
-  awesome = null, history, runs = null, globals = {} } = {}) {
+  awesome = null, history, homc = null, homcHistory, runs = null, globals = {} } = {}) {
   const index = payload || taskPayload(tasks || [
     taskFile('parent', { status: 'doing' }),
     taskFile('child', { status: 'proposal', parent: 'parent' }),
@@ -3933,6 +3934,16 @@ function loadBoardView({ tasks = null, payload = null, entities = [], token = ''
       // that never reached the fold cannot quietly depend on a missing reply.
       if (!awesome) throw new Error(`测试没有准备论文清单快照：${url}`);
       return jsonResponse(awesome);
+    }
+    if (url.includes('/data/homc_history.json')) {
+      // Same split as the paper lists: a missing history costs the trend only.
+      if (homcHistory === null) throw new Error(`测试没有准备模型清单历史：${url}`);
+      return jsonResponse(homcHistory === undefined
+        ? { schema_version: 1, source: { id: 'homc' }, snapshots: [] } : homcHistory);
+    }
+    if (url.includes('/data/homc.json')) {
+      if (!homc) throw new Error(`测试没有准备模型清单快照：${url}`);
+      return jsonResponse(homc);
     }
     throw new Error(`测试没有准备 ${url} 的响应`);
   };
@@ -4001,6 +4012,7 @@ async function startApp(view, keep, {
 
 const startTaskApp = (view, options) => startApp(view, ['renderTask'], options);
 const startAwesomeApp = (view, options) => startApp(view, ['renderAwesome'], options);
+const startHomcApp = (view, options) => startApp(view, ['renderHomc'], options);
 
 const canvasPoint = (x, y, extra = {}) => ({ clientX: x, clientY: y, pointerId: 7, preventDefault() {}, ...extra });
 
@@ -4470,9 +4482,10 @@ test('the canvas reads its snapshot when the reader reaches it and never re-read
   const app = await startTaskApp(view, { IntersectionObserver });
   assert.equal(view.data.state.taskSnapshotCheckedAt, null);
   assert.match(view.element('taskCheckedAt').textContent, /尚未成功读取快照/);
-  // Three lazy sections watch the page; the task one is the box under test.
+  // Four lazy sections watch the page; the task one is the box under test.
   const taskObserver = observers.find(observer => observer.target === view.element('tasks'));
-  assert.equal(observers.length, 3, 'the star wall, the canvas and the paper lists each get one watcher');
+  assert.equal(observers.length, 4,
+    'the star wall, the canvas, the paper lists and the HOMC table each get one watcher');
   assert.ok(taskObserver, 'the canvas is watched, not downloaded at boot');
 
   taskObserver.callback([{ isIntersecting: true }]);
@@ -5573,6 +5586,816 @@ test('a row of the paper flow becomes a card on the canvas, and carries only wha
     assert.equal(view.board.draftSlugs().length, 2,
       'a row with nothing to name it gets a refusal, not a card with a random file name');
   });
+
+// --- 模型清单核实：data/homc.json -------------------------------------------
+// The 🆕 / 🔄 / ⚠️ verification table another repository owns. Two authors publish
+// numbers in this section - ours, counted row by row, and theirs, written in
+// their own 核心统计 table - so the board lives or dies on one rule: show both,
+// add neither, and never let a sample of 120 rows talk about itself as the 194.
+
+// A row in the shape the collector publishes: the list's own words, snake_case,
+// with the grades that list judged and nothing this site added.
+function homcRowFixture(id, extra = {}) {
+  return {
+    id, name: 'Nova 7B', vendor: 'Example Labs', state: 'new', group: null,
+    date: '2026-11-03', precision: 'day', date_state: null, category: 'LLM',
+    capability: '文本生成 · 128k 上下文', availability: '开放权重',
+    grades: ['A', 'B'], single_b_source: false, link_count: 2,
+    links: ['https://github.com/example/nova', 'https://arxiv.org/abs/2611.00003'],
+    url: 'https://github.com/example/nova', marker: '🆕', marker_state: 'new',
+    note: null, is_section_reference: false, suit: '♠', is_new: true,
+    ...extra
+  };
+}
+
+function homcSnapshotFixture(rows, extra = {}) {
+  return {
+    schema_version: 1,
+    source: {
+      id: 'homc', repo: 'isLinXu/model-list', readme_path: 'README.md',
+      site_url: 'https://islinxu.github.io/model-list/',
+      states: ['new', 'updated', 'unverified'], grades: ['A', 'B', 'C'],
+      statuses: ['ok', 'stale', 'unavailable'],
+      budget: { row_limit: 120, links_per_row: 4, ledger_id_limit: 4000, max_bytes: 2500000,
+        payload_budget_bytes: 163840, ledger_budget_bytes: 204800, stall_after_days: 45 },
+      caliber: {
+        graded_by: 'A 一手来源、B 独立二手、C 单一二手或传闻，均由该清单判定，本站不重复核实。',
+        cadence: 'README 的提交里含他们自己的每日自动日报，所以 cadence 说的是这个文件多久动一次，' +
+          '不代表人工核实表的更新节奏。',
+        never_merged: '本站的 Hugging Face 下载观测与该清单的条目数不是同一批对象，永不相加。'
+      },
+      url: 'https://github.com/isLinXu/model-observatory'
+    },
+    status: 'ok', captured_at: '2026-11-05T02:20:00Z', last_attempt_at: '2026-11-05T02:20:00Z',
+    error: null, as_of: '2026-11-05', as_of_age_days: 0,
+    measured: {
+      rows: { new: 150, updated: 40, unverified: 4, total: 194 }, rows_parsed: 193,
+      distinct_vendors: 45, with_link: 95, without_link: 98,
+      grades: { A: 141, B: 73, C: 6 }, without_grade: 0, single_b_source: 47,
+      with_note: 103, marker_mismatch: 0, section_reference_rows: 3,
+      dates: { day: 163, none: 1, month: 12, undisclosed: 13, year: 1 },
+      suit_index: { '♠': 6, '♥': 18, '♦': 10, '♣': 8, '🃏': 6 },
+      suit_matched: 8, suit_unmatched: 185, bytes_read: 259402, byte_capped: false,
+      files: [{ path: 'README.md', bytes: 259402, truncated: false }]
+    },
+    self_reported: {
+      model_series_claimed: '200+', arxiv_papers_claimed: '230+ 条',
+      github_repos_claimed: '152 个', github_repos: 152, hf_links_claimed: '162 个',
+      hf_links: 162, vendors_claimed: '25+', benchmarks_claimed: '30+',
+      increment_claimed: '191 条', increment: 191, increment_new: 150,
+      increment_updated: 37, increment_unverified: 4, increment_quote: '本轮共核实 191 条'
+    },
+    comparison: { measured_rows: 194, claimed_increment: 191, delta: 3 },
+    cadence: { status: 'ok', last_file_commit_at: '2026-11-05T01:40:00Z',
+      author: 'isLinXu-bot', is_bot: true, message: 'docs: 每日日报', cadence: 'daily',
+      stale_days: 0, stalled: false, commits_seen: 3 },
+    diff: { baseline: false, added: 6, removed: 1, held: 193, truncated: false },
+    fetches: { files: 1, bytes: 259402, max_files: 80, budget_hit: false },
+    warnings: [], rows,
+    sizes: { payload_bytes: 79821, payload_budget_bytes: 163840, ledger_bytes: 6748,
+      ledger_budget_bytes: 204800, row_limit_applied: 120 },
+    ...extra
+  };
+}
+
+// The shape `loadHomcHistory` writes into state, for the branches that re-render
+// without a second fetch.
+const homcHistoryDay = (date, rowsTotal, claimedIncrement) => ({
+  date, capturedAt: `${date}T02:20:00Z`, asOf: date, rowsNew: null, rowsUpdated: null,
+  rowsUnverified: null, rowsTotal, claimedIncrement, added: 2, removed: 1
+});
+
+test('what the list says about its own core stats never joins what this site counted', () => {
+  const data = loadData();
+  data.state.homc = homcSnapshotFixture([homcRowFixture('homc:nova-7b|example-labs')]);
+  const stats = data.homcStats();
+  assert.equal(stats.rowsTotal, 194, 'the headline is what this site counted, row by row');
+  assert.equal(stats.claimedIncrement, 191, 'their claim is a separate number with a separate owner');
+  assert.equal(stats.delta, 3, 'and the gap between them is published, not smoothed away');
+
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  const kpis = ['statHomcRows', 'statHomcRowsSub', 'statHomcSplit', 'statHomcSplitSub',
+    'statHomcDelta', 'statHomcDeltaSub', 'statHomcSingleB', 'statHomcSingleBSub',
+    'statHomcLinkless', 'statHomcLinklessSub'].map(id => view.element(id).textContent).join(' ');
+  for (const claim of ['200', '152', '162', '230', '30+']) {
+    assert.ok(!kpis.includes(claim), `no self-reported figure reaches a total: ${claim}`);
+  }
+  assert.match(view.element('statHomcRowsSub').textContent,
+    /逐行数过，去重后 193 个名字：同名同提供方的行按首次计/,
+    'the row count and the name count are two numbers, and the card says which is which');
+  assert.match(view.element('homcStatus').textContent, /实测 194 行（🆕 150 \/ 🔄 40 \/ ⚠️ 4）/);
+  assert.match(view.element('homcStatus').textContent, /清单自报本轮核实 191 条/);
+
+  const compare = view.element('homcCompareList').innerHTML;
+  assert.equal((compare.match(/class="awesome-cmp"/g) || []).length, 3,
+    'one bar pair per state, so no side of the comparison is only ever shown as a total');
+  assert.match(compare, /<i class="measured" style="width:26\.7%">/);
+  assert.match(compare, /<i class="reported" style="width:24\.7%">/);
+  assert.match(compare, /实测 40 · 自报 37 · 两边都发布，差距请自己看行/,
+    'a gap is shown as a gap: neither number is edited to agree with the other');
+  assert.match(compare, /实测 150 · 自报 150<\/div>/,
+    'where the two agree the page says nothing more than the two numbers');
+
+  assert.match(view.element('homcCompareNote').textContent,
+    /本站数出来的行数，与清单在「核心统计」里自报的拆分/);
+});
+
+test('a claim written as a range is quoted as a range, and a bare number says so too', () => {
+  const data = loadData();
+  data.state.homc = homcSnapshotFixture([homcRowFixture('homc:nova-7b|example-labs')]);
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  const claims = view.element('homcClaimList').innerHTML;
+  assert.match(claims, /模型系列<\/span><span class="homc-claim-value">200\+<\/span>/);
+  assert.match(claims, /区间或约数，本站不替他们取整/);
+  assert.match(claims, /GitHub 仓库<\/span><span class="homc-claim-value">152 个<\/span>/);
+  assert.match(claims, /写作整数即 152/);
+  assert.match(view.element('homcClaimNote').textContent, /原样引用：7 项/);
+});
+
+test('a list that published no core-stat table costs only its own clause', () => {
+  const data = loadData();
+  data.state.homc = homcSnapshotFixture([homcRowFixture('homc:nova-7b|example-labs')],
+    { self_reported: null, comparison: {} });
+  const stats = data.homcStats();
+  assert.equal(stats.claimed, null);
+  assert.equal(stats.claimedIncrement, null, 'a claim nobody wrote is not a claim of zero');
+  assert.equal(stats.delta, null, 'and there is no second number to subtract from');
+  assert.equal(stats.rowsTotal, 194, 'our own count is untouched by their silence');
+
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  assert.match(view.element('homcStatus').textContent, /清单这次没写出核心统计表，自报数缺席/);
+  assert.match(view.element('homcCompareList').innerHTML,
+    /实测 150 · 清单没有自报这一态的拆分/);
+  assert.equal((view.element('homcCompareList').innerHTML.match(/"reported"/g) || []).length, 0,
+    'a missing claim does not borrow a bar');
+  assert.match(view.element('homcClaimNote').textContent, /这次没读到他们的核心统计表/);
+  assert.match(view.element('homcClaimList').innerHTML, /自报数缺席，本站只报实测/);
+});
+
+test('a run that read nothing says 没读到 everywhere, and an absent count never becomes a zero', () => {
+  const data = loadData();
+  data.state.homc = {
+    schema_version: 1, source: { id: 'homc', repo: 'isLinXu/model-list' },
+    status: 'unavailable', captured_at: null, last_attempt_at: '2026-11-05T02:20:00Z',
+    error: '清单文件这次没取回', unavailable_reason: 'HTTP 502', as_of: null,
+    as_of_age_days: null, self_reported: null, measured: null, comparison: null,
+    cadence: { status: 'unknown', commits_seen: 0 },
+    diff: { baseline: true, added: 0, removed: 0, held: 0, truncated: false },
+    fetches: { files: 0, bytes: 0, max_files: 80, budget_hit: false },
+    warnings: ['清单文件这次没取回'], rows: [], sizes: {}
+  };
+  const stats = data.homcStats();
+  assert.equal(stats.available, false);
+  assert.equal(stats.rowsTotal, null, 'a count nobody made is not a count of nothing');
+  assert.equal(data.homcRows().length, 0);
+
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  assert.match(view.element('homcStatus').textContent,
+    /这次没读到 HOMC 总表：清单文件这次没取回（HTTP 502），页面没有可发布的内容/);
+  for (const id of ['homcCountBadge', 'statHomcRows', 'statHomcSplit', 'statHomcDelta',
+    'statHomcSingleB', 'statHomcLinkless']) {
+    assert.equal(view.element(id).textContent, '—', `${id} reads 未数过, not 0`);
+  }
+  assert.equal(view.element('statHomcRowsSub').textContent, '这次没有数出行数',
+    'the caption may not claim a count it just reported as missing');
+  assert.equal(view.element('statHomcDeltaSub').textContent, '本站第一次读到这张总表之前不报变化');
+  assert.match(view.element('homcRowCount').textContent, /这次没读到快照，本页没有可展示的样本行/);
+  assert.match(view.element('homcTableRows').innerHTML, /快照还没读到：滚动到本节会自动读取/);
+  assert.match(view.element('homcNotes').innerHTML, /awesome-note warn">清单文件这次没取回/);
+  assert.ok(!view.element('homcNotes').innerHTML.includes('这次只建立基线'),
+    'a run that held nothing did not establish a baseline either');
+  assert.equal(view.element('homcNoteCount').textContent,
+    '1 条采集告警 · 这次没读到样本，待读行数无数可报',
+    'the collector keeps its own warning count, but absence is not a sample of zero 待读 rows');
+  assert.ok(view.element('homcExport').disabled);
+  assert.equal(view.element('homcSiteLink').hidden, true, 'no payload, no link out');
+});
+
+test('a board that has read nothing yet does not announce that the table is clean', () => {
+  const data = loadData();
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  assert.match(view.element('homcNotes').innerHTML,
+    /这次没读到总表：读不到不等于没有告警，这里不替它宣布干净。/,
+    '"no alerts" is a sentence about a table this page has actually counted');
+  assert.ok(!view.element('homcNotes').innerHTML.includes('没有告警：总表读到了'),
+    'the clean bill of health is not painted before a read');
+  assert.equal(view.element('homcNoteCount').textContent,
+    '这次没读到快照：告警与待读都没有可报的数',
+    'a payload that never arrived cannot be reported as a clean bill of zero alerts');
+});
+
+test('a status this collector never publishes is not read as a board full of numbers', () => {
+  const data = loadData();
+  // `partial` is the word the paper-list pipeline uses; it is not in this
+  // collector's contract, so a file carrying it did not come from this board.
+  data.state.homc = homcSnapshotFixture([homcRowFixture('homc:nova-7b|example-labs')],
+    { status: 'partial' });
+  const stats = data.homcStats();
+  assert.equal(stats.status, 'unavailable');
+  assert.equal(stats.available, false,
+    'the numbers follow the word the board could not name, instead of one panel trusting it');
+
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  assert.match(view.element('homcStatus').textContent, /这次没读到 HOMC 总表/);
+  assert.match(view.element('homcTableRows').innerHTML, /快照还没读到/);
+  assert.ok(view.element('homcExport').disabled, 'and there is nothing to export');
+});
+
+test('a payload written for another board is refused rather than dressed up as this one', async () => {
+  const foreign = loadData(async () => jsonResponse(homcSnapshotFixture(
+    [homcRowFixture('homc:nova-7b|example-labs')], { source: { id: 'awesome' } })));
+  await foreign.loadHomc();
+  assert.equal(foreign.state.homc.status, 'unavailable',
+    "a different source's rows never borrow this section's markup");
+  assert.match(foreign.state.homc.error, /不兼容|格式/);
+  assert.equal(foreign.state.homc.rows.length, 0, 'the board keeps an empty table, not a foreign one');
+
+  // A file that parses but whose rows are not rows is the same kind of stranger.
+  const broken = loadData(async () => jsonResponse(homcSnapshotFixture([{ name: 'no id' }])));
+  await broken.loadHomc();
+  assert.equal(broken.state.homc.rows.length, 0);
+  assert.match(broken.state.homc.error, /不兼容|格式/);
+});
+
+test('a failed refresh keeps the snapshot the reader already trusted and says the read failed', async () => {
+  let fail = false;
+  const data = loadData(async url => {
+    if (fail && url.includes('/data/homc.json')) throw new TypeError('Failed to fetch');
+    return jsonResponse(homcSnapshotFixture([homcRowFixture('homc:nova-7b|example-labs')]));
+  }, { TypeError });
+  await data.loadHomc();
+  const payload = data.state.homc;
+  fail = true;
+  await assert.rejects(() => data.refreshHomcSnapshot(), /Failed to fetch/);
+  assert.equal(data.state.homc, payload, 'a failed read never wipes a board that was working');
+  assert.match(data.state.homcRefreshError, /Failed to fetch/);
+
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  assert.match(view.element('homcStatus').textContent, /快照读取失败，保留上次数据：Failed to fetch/);
+  assert.match(view.element('homcStatus').textContent, /实测 194 行/,
+    'the numbers stay the numbers the reader already saw, marked as kept rather than fresh');
+});
+
+test('a row that lost its state, its grade or its date still gets a line and says which is missing', () => {
+  const data = loadData();
+  data.state.homc = homcSnapshotFixture([
+    homcRowFixture('homc:odd|x', { state: '🆕 新增', marker_state: 'unknown',
+      grades: ['A', 'S', null], precision: 'era', date: '11-05', link_count: 'two',
+      links: 'https://ok.test/a', url: '', suit: null, group: undefined }),
+    homcRowFixture('homc:bare|y', { name: '', vendor: null, state: null, date: null,
+      date_state: null, grades: [], links: [], link_count: 0, url: null, marker: null,
+      marker_state: null, is_new: false })
+  ]);
+  const rows = plain(data.homcRows());
+  assert.equal(rows[0].state, null, 'a word outside the three states is not one of them');
+  assert.deepEqual(rows[0].grades, ['A'], 'a grade this board has no rule for is dropped, not guessed');
+  assert.equal(rows[0].date, null, 'a date that is not an ISO day is not a date');
+  assert.equal(rows[0].precision, 'era', "but the list's own word for its precision is kept");
+  assert.equal(rows[0].linkCount, null, 'a count that is not a number is not a zero either');
+  assert.deepEqual(rows[0].links, [], 'a link list shaped like a string publishes no links');
+  assert.equal(rows[0].url, null, 'and an empty url is not a url');
+  assert.equal(rows[0].name, 'Nova 7B');
+  assert.equal(rows[1].name, 'homc:bare|y', 'a row with an empty name cell names itself by its id');
+
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  const table = view.element('homcTableRows').innerHTML;
+  assert.match(table, /homc-state-none">未归表</, 'a row nobody filed is shown as unfilled');
+  assert.match(table, /无等级</);
+  assert.match(table, /日期栏是空的</, 'a blank date cell is not read as 待核实');
+  assert.match(table, /无链接</);
+});
+
+test('the row\'s own reasons for a second look are named one by one, and never invented', () => {
+  const data = loadData();
+  const rows = [
+    homcRowFixture('homc:section|x', { is_section_reference: true, links: [], link_count: 0,
+      date: null, date_state: 'unverified' }),
+    homcRowFixture('homc:single-b|y', { grades: ['B'], single_b_source: true }),
+    homcRowFixture('homc:mismatch|z', { state: 'new', marker: '🔄', marker_state: 'updated' }),
+    homcRowFixture('homc:blank-date|w', { date: null, date_state: null }),
+    homcRowFixture('homc:quiet|v')
+  ];
+  data.state.homc = homcSnapshotFixture(rows);
+  const notes = rows.map(row => plain(data.homcWatch(
+    data.homcRows().find(filled => filled.id === row.id))));
+  assert.match(notes[0].join(' '), /指向清单的某一节，不是一个模型/);
+  assert.match(notes[0].join(' '), /没有日期（待核实）：排序时它不冒充最旧的一条/);
+  assert.match(notes[0].join(' '), /没留下任何可点的外部链接/);
+  assert.match(notes[1].join(' '), /信息来源只有一个 \[B\]：清单自己把这种行标为须复核日期/);
+  assert.match(notes[2].join(' '), /行首标记和它所在的表不一致：本站按所在的表归类/);
+  assert.match(notes[3].join(' '), /没有日期（空格）/);
+  assert.deepEqual(notes[4], [], 'a row that agrees with itself asks for nothing');
+
+  data.state.homcAttention = 'watch';
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.id)).sort(), [
+    'homc:blank-date|w', 'homc:mismatch|z', 'homc:section|x', 'homc:single-b|y'
+  ].sort(), 'the 待读 filter is the union of those reasons, not a fifth one');
+});
+
+test('the table is a window the collector chose, and never gets to speak as the total', () => {
+  const data = loadData();
+  const many = Array.from({ length: 30 }, (unused, index) => homcRowFixture(
+    `homc:model-${index}|vendor-${index % 3}`, {
+      name: `Model ${String(index).padStart(2, '0')}`,
+      date: `2026-10-${String(30 - index).padStart(2, '0')}`,
+      is_new: index < 4
+    }));
+  data.state.homc = homcSnapshotFixture(many);
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  assert.match(view.element('homcRowCount').textContent,
+    /30 行样本 · 第 1 \/ 2 页（每页 25 行；实测共 194 行，样本是三态轮转取的窗口，不是全量）/);
+  assert.equal((view.element('homcTableRows').innerHTML.match(/<tr class="homc-row/g) || []).length, 25,
+    'one page of markup, even though the board holds thirty sample rows');
+  assert.equal(view.element('homcPagination').hidden, false);
+  assert.equal(view.element('homcPageInfo').textContent, '1 / 2');
+  assert.equal(view.element('homcPrev').disabled, true);
+  assert.equal(view.element('homcNext').disabled, false);
+
+  data.state.homcPage = 7;
+  view.render.renderHomcTable();
+  assert.equal(data.state.homcPage, 2,
+    'a page past the end is clamped, not shown as an empty table that looks like an empty filter');
+  assert.equal(view.element('homcNext').disabled, true);
+  assert.match(view.element('homcNotes').innerHTML,
+    /下方表格只是样本：三态轮转取前 120 行，实测 194 行的计数与台账都不因此变小/,
+    'the window is stated in the notes too, with the number it is a window of');
+
+  data.state.homcSearch = 'no such model';
+  view.render.renderHomcTable();
+  assert.match(view.element('homcTableRows').innerHTML,
+    /当前筛选下没有样本行。样本只是三态轮转的窗口，这里没有不等于清单里没有/);
+});
+
+test('filters, search and every sort order answer to what the row says, not to what is missing', () => {
+  const data = loadData();
+  data.state.homc = homcSnapshotFixture([
+    homcRowFixture('homc:mystery|x-lab', { name: 'Mystery X', vendor: 'X Lab',
+      state: 'unverified', date: null, date_state: 'undisclosed', precision: null,
+      grades: [], links: [], link_count: 0, url: null, marker: '⚠️', marker_state: 'unverified',
+      capability: null, is_section_reference: true, suit: '🃏', is_new: false }),
+    homcRowFixture('homc:nova-7b|example-labs'),
+    homcRowFixture('homc:sora-2|openai', { name: 'Sora 2', vendor: 'OpenAI', state: 'updated',
+      date: '2026-10-01', precision: 'month', grades: ['B'], link_count: 1,
+      links: ['https://example.test/sora'], url: 'https://example.test/sora', marker: '🔄',
+      marker_state: 'updated', suit: '♥', is_new: false, capability: null })
+  ]);
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.name)),
+    ['Nova 7B', 'Sora 2', 'Mystery X'],
+    'newest first, and the undated row goes to the bottom instead of posing as the oldest');
+
+  data.state.homcState = 'updated';
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.id)), ['homc:sora-2|openai']);
+  data.state.homcState = 'all';
+  data.state.homcGrade = 'B';
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.id)).sort(),
+    ['homc:nova-7b|example-labs', 'homc:sora-2|openai'].sort(),
+    'a row that lists two grades answers to either filter');
+  data.state.homcGrade = 'all';
+  data.state.homcVendor = 'X Lab';
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.id)), ['homc:mystery|x-lab']);
+  data.state.homcVendor = 'all';
+
+  data.state.homcSearch = '文本生成';
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.id)), ['homc:nova-7b|example-labs'],
+    'what the list wrote in the capability column is searchable');
+  data.state.homcSearch = 'SORA';
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.id)), ['homc:sora-2|openai'],
+    'a reader typing in the wrong case still finds the row');
+  data.state.homcSearch = '♣';
+  assert.equal(data.homcFiltered().length, 0, 'a suit no row carries is not a fuzzy match');
+  data.state.homcSearch = '🃏';
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.id)), ['homc:mystery|x-lab']);
+  data.state.homcSearch = '';
+
+  data.state.homcAttention = 'undated';
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.id)), ['homc:mystery|x-lab']);
+  data.state.homcAttention = 'linkless';
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.id)), ['homc:mystery|x-lab']);
+  data.state.homcAttention = 'section';
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.id)), ['homc:mystery|x-lab']);
+  data.state.homcAttention = 'new';
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.id)), ['homc:nova-7b|example-labs'],
+    '本次新增 is the collector\'s flag for this run, not the 🆕 column');
+  data.state.homcAttention = 'all';
+
+  data.state.homcSort = 'name';
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.name)),
+    ['Mystery X', 'Nova 7B', 'Sora 2']);
+  data.state.homcSort = 'added';
+  assert.equal(data.homcFiltered()[0].id, 'homc:nova-7b|example-labs',
+    'the rows this run saw for the first time come up top');
+  data.state.homcSort = 'linkless';
+  assert.equal(data.homcFiltered()[0].id, 'homc:mystery|x-lab');
+
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  assert.match(view.element('homcState').innerHTML, /🆕 新增 \(1\)/,
+    'the filter lists the states the sample really has, each with its count');
+  assert.match(view.element('homcGrade').innerHTML, /B · 独立二手来源 \(2\)/);
+  assert.match(view.element('homcTableRows').innerHTML,
+    /2026-10-01<\/span><span class="micro muted">（清单只写到月）/,
+    'a row the list only dated to a month says so beside the date');
+  assert.match(view.element('homcTableRows').innerHTML, /无日期：未披露</);
+});
+
+test('a row\'s own words are escaped, and a link that is not http(s) is never made clickable', () => {
+  const data = loadData();
+  data.state.homc = homcSnapshotFixture([homcRowFixture('homc:evil|x', {
+    name: '<script>alert(1)</script>', vendor: '"><img src=x onerror=alert(1)>',
+    capability: '<b>bold claim</b>', group: '"><u>分组</u>', note: '<i>说明</i>',
+    links: ['javascript:alert(1)', 'data:text/html,<script>alert(1)</script>', 'https://ok.test/a'],
+    link_count: 3, url: 'javascript:alert(1)'
+  })]);
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  const markup = view.element('homcTableRows').innerHTML + view.element('homcNotes').innerHTML;
+  assert.ok(!/<script/i.test(markup), 'no markup survives from the list into the page');
+  assert.ok(!/href="javascript:/i.test(markup), 'a javascript url is never made clickable');
+  assert.ok(!/href="data:/i.test(markup), 'nor is a data url');
+  assert.ok(!/onerror=/i.test(markup.replace(/&lt;[\s\S]*?&gt;/g, '')),
+    'an event handler stays where esc() put it');
+  assert.match(markup, /&lt;script&gt;/, 'the attack is still readable as text');
+  assert.match(markup, /href="https:\/\/ok\.test\/a"/, 'the one allowed link is clickable');
+
+  const row = data.homcRows()[0];
+  assert.deepEqual(row.links, ['https://ok.test/a'], 'the allowlist rejects them before the renderer');
+  assert.equal(row.url, null);
+});
+
+test('the caliber the collector wrote is published as the list\'s own words, next to our warnings', () => {
+  const data = loadData();
+  data.state.homc = homcSnapshotFixture([homcRowFixture('homc:nova-7b|example-labs')], {
+    warnings: ['README 已 61 天没动过：三态总表按人工核对节奏看待，不当日更来源。'],
+    diff: { baseline: true, added: 0, removed: 0, held: 193, truncated: false }
+  });
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  const notes = view.element('homcNotes').innerHTML;
+  assert.match(notes, /awesome-note warn">README 已 61 天没动过/);
+  assert.match(notes, /<code>graded_by<\/code>：A 一手来源/);
+  assert.match(notes, /<code>never_merged<\/code>：本站的 Hugging Face 下载观测/);
+  assert.match(notes, /这次只建立基线：台账里的 id 是第一次记下的/);
+  assert.match(view.element('homcNoteCount').textContent, /1 条采集告警 · 本页样本里 0 行有待读理由/,
+    'a row with a date, a link and a matching marker stays out of the 待读 count');
+
+  data.state.homc = homcSnapshotFixture([homcRowFixture('homc:nova-7b|example-labs')], {
+    warnings: [], diff: { baseline: false, added: null, removed: null, held: 193, truncated: true }
+  });
+  view.render.renderHomc();
+  assert.match(view.element('homcNotes').innerHTML, /上次台账被 id 上限截断，本次不报新增与移出/);
+  assert.equal(view.element('statHomcDelta').textContent, '—',
+    'a ledger that cannot be compared reports nothing rather than a floor of zero');
+  assert.match(view.element('statHomcDeltaSub').textContent,
+    /上次台账被 id 上限截断，增删按下限报告/);
+});
+
+test('a baseline reports 基线, a compared day reports numbers, and a stale day says 沿用上次', () => {
+  const data = loadData();
+  data.state.homc = homcSnapshotFixture([homcRowFixture('homc:nova-7b|example-labs')], {
+    diff: { baseline: true, added: 0, removed: 0, held: 193, truncated: false }
+  });
+  const view = loadModelView(data);
+  view.render.renderHomc();
+  assert.equal(view.element('statHomcDelta').textContent, '基线',
+    'a first read is not reported as "zero changes"');
+  assert.match(view.element('statHomcDeltaSub').textContent,
+    /首次读到：记下 193 个 id，明日起才是变化量/);
+
+  data.state.homc = homcSnapshotFixture([homcRowFixture('homc:nova-7b|example-labs')], {
+    status: 'stale', as_of: '2026-10-01', as_of_age_days: 35,
+    cadence: { status: 'ok', last_file_commit_at: '2026-09-05T01:40:00Z', author: 'isLinXu-bot',
+      is_bot: true, cadence: 'daily', stale_days: 61, stalled: true, commits_seen: 3 }
+  });
+  view.render.renderHomc();
+  assert.match(view.element('homcStatus').textContent,
+    /今天没读到 HOMC 总表，下面是上次快照的内容并标注为「沿用上次」/);
+  assert.match(view.element('homcStatus').textContent,
+    /清单标注「截至 2026-10-01」 · 已经 35 天/,
+    'how new the verification is comes from the list\'s own date, not our file history');
+  assert.ok(view.element('homcStatus').classes.has('neg'));
+  assert.ok(view.element('homcFreshness').classes.has('neg'));
+  assert.match(view.element('homcFreshness').textContent, /isLinXu-bot · 机器人/);
+  assert.match(view.element('homcFreshness').textContent, /已停更 61 天/,
+    'a file that moves on a bot schedule is not a table being re-verified');
+  assert.match(view.element('homcTrendNote').textContent, /还没有逐日历史文件/);
+});
+
+test('the trend draws our counted rows, names the day to come back, and keeps its own failures', async () => {
+  const view = loadBoardView({
+    homc: homcSnapshotFixture([homcRowFixture('homc:nova-7b|example-labs')]),
+    homcHistory: {
+      schema_version: 1, source: { id: 'homc' },
+      retention: { daily_days: 120, monthly_points: 24 },
+      // out of order on purpose: the file is drawn as a series, not as a log
+      snapshots: [
+        { date: '2026-11-03', captured_at: '2026-11-03T02:20:00Z', rows_total: 196,
+          claimed_increment: 191, added: 2, removed: 1 },
+        { date: 'not-a-day', captured_at: '2026-11-02T02:20:00Z', rows_total: 999 },
+        { date: '2026-11-01', captured_at: '2026-11-01T02:20:00Z', rows_total: 180,
+          claimed_increment: 175, added: 0, removed: 0 },
+        { date: '2026-11-02', captured_at: '2026-11-02T02:20:00Z', rows_total: null,
+          claimed_increment: 184, added: null, removed: null }
+      ]
+    }
+  });
+  const line = [];
+  view.context.MO.charts.line = (node, series, opts) => line.push({ node, series, opts });
+  const app = await startHomcApp(view);
+  await view.data.loadHomc();
+  view.render.renderHomc();
+
+  const trend = view.data.homcTrend();
+  assert.deepEqual(plain(trend.snapshots.map(row => row.date)),
+    ['2026-11-01', '2026-11-02', '2026-11-03'], 'a row without a real day is dropped, not drawn');
+  assert.equal(trend.enough, false);
+  assert.equal(trend.netChange, null, 'two points do not get a slope');
+  assert.equal(trend.readyOn, '2026-11-04', 'the reader gets a date, not "later"');
+  assert.equal(line.at(-1).series[0].name, '实测行数');
+  assert.deepEqual(plain(line.at(-1).series[0].points.map(point => point.value)), [180, 196],
+    'the day we could not count costs a break in the line, not a zero');
+  assert.match(view.element('homcTrendNote').textContent, /样本太少，看不出趋势/);
+  assert.match(view.element('homcTrendNote').textContent, /2026-11-04 才够 3 个点，本站不补造历史/);
+  assert.match(view.element('homcTrendNote').textContent, /其中 1 天没数出行数，那天的点是断开的，不是零/);
+  assert.match(view.element('homcTrendNote').textContent, /留存：最近 120 天逐日/);
+
+  view.data.state.homcHistory = [homcHistoryDay('2026-11-01', 180, 175),
+    homcHistoryDay('2026-11-02', 190, 184), homcHistoryDay('2026-11-03', 198, 191)];
+  view.render.renderHomcTrend();
+  assert.match(view.element('homcTrendNote').textContent,
+    /自 2026-11-01 起实测行数净变化 \+18（180 → 198，只比两端，不逐日累加）/);
+
+  view.data.state.homcTrendMetric = 'claimed';
+  view.render.renderHomcTrend();
+  assert.equal(line.at(-1).series[0].name, '清单自报核实增量',
+    "the other owner's number is drawn as its own series, never mixed into ours");
+  assert.deepEqual(plain(line.at(-1).series[0].points.map(point => point.value)), [175, 184, 191]);
+  assert.match(view.element('homcTrendLabel').textContent, /不是本站数出来的行数/);
+  assert.equal(app.toasts.length, 0);
+});
+
+test('a history file the board cannot read costs the trend and nothing else', async () => {
+  const view = loadBoardView({
+    homc: homcSnapshotFixture([homcRowFixture('homc:nova-7b|example-labs')]),
+    homcHistory: null
+  });
+  const app = await startHomcApp(view);
+  await view.data.loadHomc();
+  view.render.renderHomc();
+  assert.equal(view.data.state.homcHistory, null);
+  assert.match(view.element('homcTrendNote').textContent, /历史读取失败，趋势暂缺/);
+  assert.ok(view.element('homcTrendNote').classes.has('neg'));
+  assert.match(view.element('homcTableRows').innerHTML, /Nova 7B/,
+    'the snapshot the reader came for still renders');
+  assert.match(view.element('homcStatus').textContent, /实测 194 行/);
+  assert.equal(app.toasts.length, 0, 'a missing side file is not a toast');
+});
+
+test('the export keeps our count and their claim in separate columns, and guards a name that looks like a formula', async () => {
+  const view = loadBoardView({ homc: homcSnapshotFixture([
+    homcRowFixture('homc:nova-7b|example-labs'),
+    homcRowFixture('homc:sum-2|x', { name: '=SUM(1,2)', vendor: 'X', url: 'javascript:alert(1)',
+      links: ['javascript:alert(1)'], link_count: 1, grades: ['C'], single_b_source: true,
+      date: null, date_state: 'unverified', note: '一句, 带逗号的说法', suit: null,
+      is_section_reference: true, is_new: false }),
+    homcRowFixture('homc:unfilled|y', { state: null, marker: null, marker_state: null,
+      precision: null, links: [], link_count: 0, url: null, grades: [], is_new: false })
+  ]) });
+  await startHomcApp(view);
+  await view.data.loadHomc();
+  view.element('homcExport').onclick();
+  const text = await view.blobs[0].text();
+  const [header, ...records] = text.replace(/^﻿/, '').split('\r\n').map(row =>
+    Array.from(row.matchAll(/"((?:[^"]|"")*)"/g), match => match[1].replace(/""/g, '"')));
+  assert.equal(header.length, 27);
+  assert.equal(header[3], 'state_table', 'the table the row sits in, not a state we re-judged');
+  assert.equal(header[22], 'measured_rows_total');
+  assert.equal(header[23], 'claimed_increment',
+    'two columns because two owners: our count of rows and their claim of verification');
+  const sum = records.find(row => row[0] === 'homc:sum-2|x');
+  assert.equal(sum[1], "'=SUM(1,2)", 'a formula stays a string when the csv is opened');
+  assert.equal(sum[15], '', 'a rejected url exports as nothing, not as a guess');
+  assert.equal(sum[7], 'unverified', "and the list's own word for a missing date is kept");
+  assert.equal(sum[18], '一句, 带逗号的说法', 'a comma inside a quoted cell survives the round trip');
+  assert.equal(sum[19], 'yes');
+  for (const row of records) {
+    assert.equal(row[22], '194', 'every row carries the count it was sampled out of');
+    assert.equal(row[23], '191');
+    assert.equal(row[24], '2026-11-05', 'and the date the list says its table is current to');
+    assert.equal(row[25], 'ok', 'plus the run that produced this file');
+    assert.equal(row[26], '2026-11-05T02:20:00Z');
+  }
+  assert.equal(view.anchors.at(-1).download, 'homc-model-list-2026-11-05.csv');
+
+  // The filters narrow the export, because the button promises the rows on screen.
+  view.data.state.homcAttention = 'section';
+  view.render.renderHomcTable();
+  view.element('homcExport').onclick();
+  const narrowed = (await view.blobs[1].text()).replace(/^﻿/, '').split('\r\n').length;
+  assert.equal(narrowed, 2, 'header plus the one row the filter left');
+});
+
+test('a row of the table becomes a card on the canvas, and carries only what the row said', async () => {
+  const view = loadBoardView({ homc: homcSnapshotFixture([
+    homcRowFixture('homc:nova-7b|example-labs'),
+    homcRowFixture('homc:sora-2|openai', { name: 'Sora 2', vendor: 'OpenAI', state: 'updated',
+      date: '2026-10-01', precision: 'month', grades: ['B'], link_count: 1,
+      links: ['https://example.test/sora'], url: 'https://example.test/sora', marker: '🔄',
+      marker_state: 'updated', capability: null, availability: null, note: '单一 B 源，日期须复核',
+      suit: '♥', is_new: false }),
+    homcRowFixture('gpt-5|openai', { name: 'GPT-5', state: null }),
+    homcRowFixture('homc:|openai', { name: 'No name part' })
+  ]) });
+  const app = await startApp(view, ['renderHomc', 'renderTask']);
+  await view.data.loadHomc();
+  const data = view.data;
+  data.state.homcSort = 'name';
+  view.render.renderHomc();
+
+  const table = view.element('homcTableRows').innerHTML;
+  assert.deepEqual(plain([...table.matchAll(/data-homc-card="(\d+)"/g)].map(match => match[1])),
+    ['0', '1', '2', '3'], 'one button per row, numbered by the place the reader sees it in');
+  assert.deepEqual(plain(data.homcPage().map(row => row.name)),
+    ['GPT-5', 'No name part', 'Nova 7B', 'Sora 2'],
+    'the buttons are numbered in the order the sort put on screen, not the order the file was written');
+
+  const click = name => view.element('homcTableRows').events.click({
+    target: { closest: asked => (asked === '[data-homc-card]'
+      ? { dataset: { homcCard: String(data.homcPage().findIndex(row => row.name === name)) } }
+      : null) }
+  });
+
+  view.element('homcTableRows').events.click({ target: { closest: () => null } });
+  assert.deepEqual(plain(view.board.draftSlugs()), [],
+    'a click that landed on the row instead of the button makes nothing');
+
+  click('No such row');
+  assert.equal(app.toasts.length, 0,
+    'an index the page no longer has — the reader filtered between paint and click — makes nothing');
+
+  click('Nova 7B');
+  assert.deepEqual(plain(view.board.draftSlugs()), ['homc-nova-7b'],
+    'the file name is the row id\'s own name part, so the same row in two runs is one card');
+  assert.equal(view.board.findRow('homc-nova-7b').status, 'proposal',
+    'a row a list vouched for is a proposal, not something the reader already did');
+  assert.match(view.element('taskCanvas').innerHTML, /data-task-card="homc-nova-7b"/,
+    'the canvas the toast points at really does hold the new card');
+  assert.match(app.toasts.at(-1), /它还在这台浏览器里/);
+  assert.match(app.toasts.at(-1), /推送才进仓库/);
+
+  click('Nova 7B');
+  assert.match(app.toasts.at(-1), /homc-nova-7b 已经在看板上/);
+  assert.equal(view.board.draftSlugs().length, 1, 'a second click is refused, not a second card');
+
+  const fromId = plain(view.board.compose(view.board.patchFor('homc-nova-7b'), '', { at: '2026-11-05' }));
+  assert.match(fromId.text, /# Nova 7B\n\n这一行来自 Example Labs，被 HOMC 清单记在🆕 新增总表。\n\n/,
+    'the card is prose a reader can scan, not one run-on line');
+  assert.match(fromId.text, /清单给的出处：https:\/\/github\.com\/example\/nova/);
+  assert.match(fromId.text, /清单给的类别：LLM。/);
+  assert.match(fromId.text, /清单写的日期：2026-11-03（精度到日）。/);
+  assert.match(fromId.text, /来源等级由该清单判定：A \/ B。本站不重复核实。/);
+  assert.match(fromId.text, /^title: Nova 7B$/m);
+  assert.match(fromId.text, /三态行数、来源等级分布与更新节奏都归「模型清单核实」栏目/);
+
+  click('Sora 2');
+  const fromMonth = plain(view.board.compose(view.board.patchFor('homc-sora-2'), '', { at: '2026-11-05' }));
+  assert.match(fromMonth.text, /清单写的日期：2026-10-01（精度只到月）。/);
+  assert.match(fromMonth.text, /清单在这一行写的说明：单一 B 源，日期须复核/);
+  for (const count of ['194', '150', '120']) {
+    assert.ok(!fromMonth.text.includes(count),
+      `the card carries no count from this board: ${count} would be a second owner of one number`);
+  }
+
+  click('GPT-5');
+  assert.match(app.toasts.at(-1), /这一行的 id 认不出名称部分/);
+  click('No name part');
+  assert.match(app.toasts.at(-1), /这一行的 id 认不出名称部分/);
+  assert.equal(view.board.draftSlugs().length, 2,
+    'a row whose id has no readable name part gets a refusal, not a card with a random file name');
+});
+
+test('the board reads itself once, on scroll, and never asks for the id ledger', async () => {
+  const observers = [];
+  class IntersectionObserver {
+    constructor(callback) { this.callback = callback; observers.push(this); }
+    observe(target) { this.target = target; }
+    disconnect() { this.disconnected = (this.disconnected || 0) + 1; }
+  }
+  const view = loadBoardView({ homc: homcSnapshotFixture([
+    homcRowFixture('homc:nova-7b|example-labs')]) });
+  const app = await startHomcApp(view, { IntersectionObserver });
+  const homc = observers.find(observer => observer.target === view.element('homc'));
+  assert.ok(homc, 'the model list board is watched, not downloaded at boot');
+  assert.equal(view.requests.filter(request => request.url.includes('/data/homc.json')).length, 0);
+
+  homc.callback([{ isIntersecting: true }]);
+  await nextTurn();
+  await nextTurn();
+  const asked = () => view.requests.filter(request => request.url.includes('/data/homc.json')).length;
+  assert.equal(asked(), 1);
+  assert.equal(homc.disconnected, 1);
+  assert.match(view.element('homcCheckedAt').textContent,
+    /最近成功读取快照 2026-11-\d{2} \d{2}:\d{2} UTC · 采集由每日工作流完成/);
+  assert.match(view.element('homcCheckedAt').textContent, /本次抓取 1 个文件，读到 253 KB/);
+  assert.match(view.element('homcCheckedAt').textContent, /快照 78 KB（预算 160 KB）/,
+    'the size the collector reported for the file the reader just downloaded');
+  assert.equal(view.element('homcExport').disabled, false);
+  assert.equal(view.element('homcSiteLink').hidden, false,
+    'the two ways out are the owner\'s own pages, taken from the payload');
+  assert.equal(view.element('homcSiteLink').href, 'https://islinxu.github.io/model-list/');
+  assert.equal(view.element('homcReadmeLink').href,
+    'https://github.com/isLinXu/model-list/blob/main/README.md');
+
+  homc.callback([{ isIntersecting: true }]);
+  await nextTurn();
+  assert.equal(asked(), 1, 'a second entry into the section is not a second download');
+  assert.equal(app.toasts.length, 0, 'an entry read stays quiet');
+  assert.ok(!view.requests.some(request => /ledger/.test(request.url)),
+    'the id ledger stays in the repository: the page never asks for it');
+
+  view.element('homcRefresh').events.click();
+  await nextTurn();
+  await nextTurn();
+  assert.equal(asked(), 2);
+  assert.match(app.toasts.at(-1),
+    /已读取模型清单快照；刷新只读本站已发布的文件，不去抓别人的仓库，也不触发后台采集。/);
+  assert.equal(view.element('homcRefresh').textContent, '刷新已发布快照');
+  assert.equal(view.element('homcRefresh').attributes.ariaBusy, undefined);
+});
+
+test('a payload with no sizes and no links out still renders: only those lines are lost', async () => {
+  const snapshot = homcSnapshotFixture([homcRowFixture('homc:nova-7b|example-labs')]);
+  delete snapshot.sizes;
+  delete snapshot.fetches;
+  snapshot.source.site_url = 'javascript:alert(1)';
+  delete snapshot.source.repo;
+  delete snapshot.source.caliber;
+  const view = loadBoardView({ homc: snapshot });
+  const app = await startHomcApp(view);
+  await view.data.loadHomc();
+  view.render.renderHomc();
+  assert.match(view.element('homcCheckedAt').textContent, /采集由每日工作流完成$/);
+  assert.ok(!/KB/.test(view.element('homcCheckedAt').textContent));
+  assert.equal(view.element('homcSiteLink').hidden, true,
+    'a link out that is not http(s) is switched off, not trusted because the field was filled');
+  assert.equal(view.element('homcReadmeLink').hidden, true, 'and a payload that names no repo guesses none');
+  assert.match(view.element('homcNotes').innerHTML,
+    /没有告警：总表读到了，行首标记与所在表也一致/);
+  assert.equal(app.toasts.length, 0);
+});
+
+test('the toolbar filters the table in place and reset hands the board back whole', async () => {
+  const view = loadBoardView({ homc: homcSnapshotFixture([
+    homcRowFixture('homc:nova-7b|example-labs'),
+    homcRowFixture('homc:sora-2|openai', { name: 'Sora 2', vendor: 'OpenAI', state: 'updated',
+      grades: ['B'], links: ['https://example.test/sora'], link_count: 1,
+      url: 'https://example.test/sora', marker: '🔄', marker_state: 'updated', is_new: false })
+  ]) });
+  await startHomcApp(view);
+  await view.data.loadHomc();
+  const data = view.data;
+
+  assert.equal(view.element('homcFilterReset').disabled, true,
+    'a board nobody has filtered has nothing to reset');
+  view.element('homcSearch').events.input({ target: { value: 'sora' } });
+  assert.equal(data.state.homcSearch, 'sora');
+  assert.match(view.element('homcTableRows').innerHTML, /Sora 2/);
+  assert.ok(!view.element('homcTableRows').innerHTML.includes('Nova 7B'));
+  assert.equal(view.element('homcFilterReset').disabled, false,
+    'a filter that hid a row has to be escapable by one click');
+
+  view.element('homcState').events.change({ target: { value: 'updated' } });
+  assert.equal(data.state.homcState, 'updated');
+  assert.deepEqual(plain(data.homcFiltered().map(row => row.id)), ['homc:sora-2|openai']);
+
+  data.state.homcPage = 3;
+  view.element('homcGrade').events.change({ target: { value: 'B' } });
+  assert.equal(data.state.homcPage, 1, 'a narrower filter does not park the reader on an empty page');
+
+  view.element('homcFilterReset').events.click();
+  assert.equal(data.state.homcSearch, '');
+  assert.equal(data.state.homcState, 'all');
+  assert.equal(data.state.homcGrade, 'all');
+  assert.match(view.element('homcTableRows').innerHTML, /Nova 7B/, 'reset puts every sample row back');
+  assert.equal(view.element('homcFilterReset').disabled, true);
+
+  view.element('homcSort').events.change({ target: { value: 'name' } });
+  assert.equal(data.state.homcSort, 'name');
+  view.element('homcTrendMetric').events.change({ target: { value: 'claimed' } });
+  assert.equal(data.state.homcTrendMetric, 'claimed');
+  assert.match(view.element('homcTrendLabel').textContent, /清单在「核心统计」里自报的本轮核实条数/);
+
+  view.element('homcNext').events.click();
+  assert.equal(data.state.homcPage, 1, 'one page of rows leaves no next page to turn to');
+});
 
 // --- 采集健康：data/runs.json -----------------------------------------------
 // The one payload about the collector instead of the numbers it collects. It is

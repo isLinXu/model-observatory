@@ -52,6 +52,7 @@
         <a href="#entities"><span class="navglyph">⌗</span> 实体注册表</a>
         <a href="#tasks"><span class="navglyph">▧</span> 任务看板</a>
         <a href="#awesome"><span class="navglyph">≡</span> 论文清单跟踪</a>
+        <a href="#homc"><span class="navglyph">◍</span> 模型清单核实</a>
         <a href="#scholar"><span class="navglyph">✦</span> 学术主页</a>
         <a href="#social"><span class="navglyph">◎</span> 社交媒体</a>
         <a href="#github"><span class="navglyph">◐</span> GitHub 看板</a>
@@ -384,6 +385,42 @@
           <span class="micro muted">流水只覆盖每份清单最近抽样的条目，不是全量清单；全量数字看上方「实测」。</span>
         </div>
         <div class="table-bottom"><span>说明：清单条目身份是稳定的小键（有 arXiv ID 用 ID，否则用标题 slug），记在仓库内的条目台账里，「新增」「移出」由它与昨日快照比对得出；<code>isLinXu/paper-list</code> 的比对单位是「某主题归档了更新的月份」，一次算一条而不是几千行。滚动窗口式清单（如 awesome-agent-world-model）会按设计丢弃旧行，其移出标注为正常收缩。没成为条目的行按「无标题 / 表格行没链接 / 报告行既无会议也无日期」三类归账，每条卡上都能对回数。单文件超过抓取上限的清单，实测条目数标注为下限；本轮没轮到的清单标「本次未读取」，和「读到了但失败」分开写。正文之外的原始 Markdown 从不进入本站快照，页面上的每个链接都先按 http(s) 白名单重查一遍。</span></div>
+      </section>
+
+      <section id="homc" class="model-section">
+        <div class="section-heading"><div><div class="section-eyebrow">MODEL LIST &amp; VERIFICATION / HOMC</div><h2>模型清单核实 <span id="homcCountBadge">0</span></h2><p>isLinXu/model-list 的 🆕 / 🔄 / ⚠️ 三态总表：本站逐行数过，与它自己的说法并排放，永不相加</p></div><div class="section-actions"><a class="button secondary" id="homcSiteLink" href="https://islinxu.github.io/model-list/" target="_blank" rel="noopener noreferrer">HOMC 站点 ↗</a><a class="button secondary" id="homcReadmeLink" href="https://github.com/isLinXu/model-list/blob/main/README.md" target="_blank" rel="noopener noreferrer">清单原文 ↗</a><button class="button secondary" id="homcRefresh">刷新已发布快照</button><button class="button" id="homcExport" disabled>↓ 导出筛选 CSV</button></div></div>
+        <div class="modelscope-data-status" role="status" aria-live="polite">
+          <p id="homcStatus" class="collection-note">正在读取模型清单快照…</p>
+          <p id="homcFreshness" class="micro muted">等待采集时间</p>
+          <p id="homcCheckedAt" class="micro muted">尚未成功读取快照</p>
+        </div>
+        <p class="collection-note">这一栏读的是别人仓库里的 <code>README.md</code>：三张人工核对总表（🆕 新增 / 🔄 更新 / ⚠️ 待确认）逐行数过，来源等级 <strong>A / B / C</strong> 由该清单自己判定，本站不重复核实、也不替他们改判。<strong>实测与自报分列</strong>——实测是本站这次数出来的表格行，自报是他们「核心统计」表里写给自己的说法（<code>200+</code> 这类区间原样保留，不取整成我们自己的数字），两边都发布，绝不相减也不合并成一个总数。清单标题里的<strong>「截至」日期与它的月龄单独报</strong>：该仓库的提交节奏里含他们自己的每日自动日报，所以「日更」说的是这个文件多久动一次，不代表人工核实表每天更新一遍。下方的表格<strong>只是样本</strong>：三态轮转取前若干行，砍掉的是样本而不是任何计数，实测行数与 id 台账都不因此变小。同名同提供方重复出现的行按首次计，所以总行数可能比去重后的名字多，页面把两个数都写出来。本站的 Hugging Face 下载观测数的是模型仓库，与该清单的条目不是同一批对象，<strong>永不相加</strong>。</p>
+        <div class="kpis">
+          <div class="kpi accent-kpi"><div class="kpi-label">实测三态行 <span class="kpi-symbol teal">≡</span></div><div id="statHomcRows" class="kpi-value">—</div><div id="statHomcRowsSub" class="kpi-caption">本站逐行数过</div></div>
+          <div class="kpi"><div class="kpi-label">🆕 / 🔄 / ⚠️ <span class="kpi-symbol blue">◍</span></div><div id="statHomcSplit" class="kpi-value">—</div><div id="statHomcSplitSub" class="kpi-caption">按所在表归类，行首标记不一致的另报</div></div>
+          <div class="kpi"><div class="kpi-label">新增 / 移出 <span class="kpi-symbol">◧</span></div><div id="statHomcDelta" class="kpi-value">—</div><div id="statHomcDeltaSub" class="kpi-caption">首次读到只建基线</div></div>
+          <div class="kpi"><div class="kpi-label">单一 B 源 <span class="kpi-symbol">◐</span></div><div id="statHomcSingleB" class="kpi-value">—</div><div id="statHomcSingleBSub" class="kpi-caption">清单自己标注须复核日期的行</div></div>
+          <div class="kpi"><div class="kpi-label">没有链接的行 <span class="kpi-symbol">⛓</span></div><div id="statHomcLinkless" class="kpi-value">—</div><div id="statHomcLinklessSub" class="kpi-caption">读者点不到出处的行</div></div>
+        </div>
+        <div class="dashboard-grid">
+          <div class="panel entity-coverage-panel"><div class="panel-head"><div><div class="panel-overline">MEASURED &amp; SELF-REPORTED</div><h2>实测与自报</h2><p id="homcCompareNote">等待模型清单快照</p></div><span class="mini-icon">▤</span></div><div id="homcCompareList" class="entity-cov-list"><div class="chart-empty">等待模型清单快照</div></div><div id="homcClaimNote" class="micro muted">清单自己的说法</div><div id="homcClaimList" class="homc-claims"></div><div class="top-footer">深色＝本站逐行数过 <span>● 浅色＝清单写在「核心统计」里的说法</span></div></div>
+          <div class="panel entity-problem-panel"><div class="panel-head"><div><div class="panel-overline">CALIBRE &amp; WARNINGS</div><h2>口径与告警</h2><p id="homcNoteCount">等待模型清单快照</p></div><span class="mini-icon">⚑</span></div><div id="homcNotes" class="entity-problem-list"><div class="chart-empty">等待模型清单快照</div></div><div class="chart-footer"><span class="muted micro">「今天没读到」与「清单里少了条目」是两件事：前者沿用上次快照并标记，后者才由 id 台账比出来。</span></div></div>
+        </div>
+        <div class="panel homc-trend-panel"><div class="panel-head"><div><div class="panel-overline">DAILY SNAPSHOTS</div><h2>逐日观测趋势</h2><p id="homcTrendLabel">本站每天数出来的三态行数，不是清单自己的说法</p></div><div class="section-actions"><select id="homcTrendMetric" aria-label="趋势指标"><option value="measured">实测行数</option><option value="claimed">清单自报核实增量</option></select></div></div><div id="homcTrendChart" class="chart-area"></div><div class="chart-footer"><span id="homcTrendNote" class="micro muted">等待模型清单历史</span></div></div>
+        <div class="table-toolbar">
+          <label class="search-box"><span>⌕</span><input id="homcSearch" placeholder="搜索模型名、提供方、类别、能力、可用状态或说明" aria-label="搜索模型清单" autocomplete="off"></label>
+          <select id="homcState" aria-label="三态"><option value="all">全部三态</option></select>
+          <select id="homcGrade" aria-label="来源等级"><option value="all">全部来源等级</option></select>
+          <select id="homcVendor" aria-label="提供方"><option value="all">全部提供方</option></select>
+          <select id="homcAttention" aria-label="行的状态"><option value="all">全部行</option><option value="watch">仅待读（有任何一条理由）</option><option value="new">仅本次新增的行</option><option value="undated">仅没有日期的行</option><option value="linkless">仅没有链接的行</option><option value="section">仅指向章节的行</option></select>
+          <select id="homcSort" aria-label="排序"><option value="date">按日期（新→旧）</option><option value="added">先看本次新增</option><option value="name">按模型名</option><option value="vendor">按提供方</option><option value="linkless">先看没有链接的</option></select>
+          <button class="button secondary" id="homcFilterReset">重置筛选</button>
+          <span class="toolbar-spacer"></span>
+          <span id="homcRowCount" class="micro muted">—</span>
+        </div>
+        <div class="table-scroll"><table class="models-table homc-table"><thead><tr><th>模型与它自己说的话</th><th>所在表</th><th class="align-right">日期</th><th>来源等级与链接</th><th>建卡</th></tr></thead><tbody id="homcTableRows"><tr><td colspan="5" class="no-rows">等待模型清单快照</td></tr></tbody></table></div>
+        <div id="homcPagination" class="pagination" hidden><button class="button secondary" id="homcPrev">上一页</button><span id="homcPageInfo" class="micro muted">—</span><button class="button secondary" id="homcNext">下一页</button></div>
+        <div class="table-bottom"><span>说明：行的身份是 <code>homc:&lt;名称 slug&gt;|&lt;提供方 slug&gt;</code>，纯中文名会退化成一段哈希，因为它没有别的可写的形式；台账记在仓库里、<strong>不发给读者</strong>（<code>data/homc_ledger.json</code> 不进 <code>_site/</code>），「新增」「移出」由它与昨日快照比对得出，台账被 id 上限截断时增删按下限报告。每行的外部链接都先按 http(s) 白名单重查一遍才写进快照，正文之外的原始 Markdown 从不发布。花色索引（♠ ♥ ♦ ♣ 🃏）是清单自己的排序记号，本站只对同名行把它抄到行首，不赋予任何排名含义。</span></div>
       </section>
 
       <section id="scholar" class="model-section">

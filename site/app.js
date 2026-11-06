@@ -587,6 +587,8 @@
   let taskSnapshotRead = false;
   // --- Paper-list tracking --------------------------------------------------
   let awesomeSnapshotRead = false;
+  // --- HOMC model list ------------------------------------------------------
+  let homcSnapshotRead = false;
 
   /**
    * Where the pointer is *on the canvas*, not on the screen: the box scrolls, so
@@ -1026,6 +1028,133 @@
     observer.observe($('awesome'));
   }
 
+  // --- HOMC 核实总表 --------------------------------------------------------
+
+  /**
+   * Manual read of the published snapshot of somebody else's list. Their
+   * repository is crawled once a day by the workflow, so this button cannot turn
+   * a reader's click into traffic on their site.
+   */
+  async function refreshHomc() {
+    const button = $('homcRefresh');
+    if (button.disabled) return;
+    button.disabled = true;
+    button.setAttribute('aria-busy', 'true');
+    button.textContent = '读取已发布快照…';
+    try {
+      const payload = await data.refreshHomcSnapshot();
+      await data.loadHomcHistory(Date.now());
+      render.showToast(payload.status === 'ok'
+        ? '已读取模型清单快照；刷新只读本站已发布的文件，不去抓别人的仓库，也不触发后台采集。'
+        : payload.status === 'stale'
+          ? '已读取快照，但后台最近一次没能读到清单：页面显示上次结果并标注「沿用上次」。'
+          : '已读取快照，但这份清单的内容这次没数出来：页面按未读到处理。');
+    } catch (error) {
+      render.showToast(`模型清单快照读取失败：${error.message}。保留上次数据。`);
+    } finally {
+      button.disabled = false;
+      button.removeAttribute('aria-busy');
+      button.textContent = '刷新已发布快照';
+      render.renderHomc();
+    }
+  }
+
+  /**
+   * The export is the published sample with the filters applied, and it keeps
+   * 实测 and 自报 in separate columns: one shared total would invite a
+   * spreadsheet to treat two owners' numbers as one.
+   */
+  function exportHomcCsv() {
+    const stats = data.homcStats();
+    const header = ['row_id', 'name', 'vendor', 'state_table', 'group', 'date', 'date_precision',
+      'date_state', 'category', 'capability', 'availability', 'source_grades',
+      'single_b_source', 'link_count', 'links', 'primary_url', 'row_marker', 'marker_state',
+      'list_note', 'is_section_reference', 'suit', 'is_new', 'measured_rows_total',
+      'claimed_increment', 'list_as_of', 'snapshot_status', 'snapshot_captured_at'];
+    const rows = data.homcFiltered().map(row => [
+      row.id, row.name, row.vendor || '', row.state || '', row.group || '', row.date || '',
+      row.precision || '', row.dateState || '', row.category || '', row.capability || '',
+      row.availability || '', row.grades.join(' '), row.singleB ? 'yes' : '',
+      row.linkCount ?? '', row.links.join(' '), row.url || '', row.marker || '',
+      row.markerState || '', row.note || '', row.sectionRef ? 'yes' : '', row.suit || '',
+      row.isNew ? 'yes' : '', stats.rowsTotal ?? '', stats.claimedIncrement ?? '',
+      stats.asOf || '', stats.status, stats.capturedAt || '']);
+    const date = String(stats.capturedAt || stats.asOf || '').slice(0, 10) || 'latest';
+    download(`homc-model-list-${date}.csv`,
+      '\uFEFF' + [header, ...rows].map(row => row.map(value => csvEscape(csvCell(value))).join(',')).join('\r\n'),
+      'text/csv;charset=utf-8');
+  }
+
+  /**
+   * The file name is the row id's own name part, because that is the only form
+   * the list gives us: a Chinese-only name has already become a hash on their
+   * side, and inventing a readable slug here would put our spelling on their row.
+   */
+  function homcCardSlug(row) {
+    const match = /^homc:([^|]+)/.exec(String(row.id || ''));
+    return match ? match[1].replace(/^-+|-+$/g, '') : '';
+  }
+
+  /** Only what the row already says goes into the card: name, link, table, note. */
+  function cardFromHomcRow(index) {
+    const row = data.homcPage()[index];
+    if (!row) return;
+    const slug = homcCardSlug(row);
+    if (!slug) {
+      render.showToast('这一行的 id 认不出名称部分，取不出一个能重复点击的文件名。');
+      return;
+    }
+    const labels = data.homcDateLabels();
+    const stateText = { new: '🆕 新增', updated: '🔄 更新', unverified: '⚠️ 待确认' }[row.state];
+    const paragraphs = [`# ${row.name}`,
+      `这一行来自 ${row.vendor || '未标注提供方'}，被 HOMC 清单记在${stateText || '某张'}总表` +
+      `${row.group ? `的「${row.group}」分组` : ''}。`,
+      row.url ? `清单给的出处：${row.url}` : '这一行没留下可点的外部链接。',
+      row.category ? `清单给的类别：${row.category}。` : '',
+      row.capability ? `清单写的能力：${row.capability}` : '',
+      row.availability ? `可用状态：${row.availability}` : '',
+      row.date
+        ? `清单写的日期：${row.date}（精度${{ month: '只到月', year: '只到年', day: '到日' }[row.precision] || '未标注'}）。`
+        : `这一行没有日期${row.dateState ? `，清单写的是「${labels[row.dateState] || row.dateState}」` : '，日期栏是空的'}。`,
+      row.grades.length
+        ? `来源等级由该清单判定：${row.grades.join(' / ')}。本站不重复核实。`
+        : '这一行没写来源等级。',
+      row.singleB ? '清单自己把这一行标为单一 B 源、日期须复核。' : '',
+      row.note ? `清单在这一行写的说明：${row.note}` : '',
+      row.sectionRef ? '注意：这一行指向清单的某一节，未必是一个模型；本站照数并标注，不替他们决定算不算。' : '',
+      '三态行数、来源等级分布与更新节奏都归「模型清单核实」栏目，这张卡只欠一个「要不要跟进」的判断。']
+      .filter(Boolean);
+    const result = MO.board.create({ slug: `homc-${slug}`, title: row.name, body: paragraphs.join('\n\n') });
+    if (result.ok) {
+      data.state.taskView = 'board';
+      render.renderTasks();
+      render.showToast(`画布上多了一张卡：${result.slug}。它还在这台浏览器里，` +
+        '推送才进仓库；行的核实状态与清单行数仍归清单栏目。');
+    } else {
+      render.showToast(result.reason);
+    }
+    return result;
+  }
+
+  /** Below the fold and crawled elsewhere: scroll close is what asks for it. */
+  function watchHomcSection() {
+    const read = () => {
+      if (homcSnapshotRead) return;
+      homcSnapshotRead = true;
+      data.loadHomc().then(() => render.renderHomc());
+    };
+    if (!('IntersectionObserver' in window)) {
+      read();
+      return;
+    }
+    const observer = new IntersectionObserver(entries => {
+      if (!entries.some(entry => entry.isIntersecting)) return;
+      observer.disconnect();
+      read();
+    }, { rootMargin: '300px 0px' });
+    observer.observe($('homc'));
+  }
+
   function bind() {
     $('modelscopeRefresh').addEventListener('click', () => refreshModelScope());
     $('modelscopeLiveRefresh').addEventListener('click', () => refreshModelScope(true));
@@ -1361,6 +1490,49 @@
     });
     render.renderAwesome();
     watchAwesomeSection();
+    // HOMC: one filter bar drives the table; the KPI panels above it always read
+    // the whole payload, because their numbers are the collector's counts. The
+    // status line travels with the filter only because it owns the two buttons
+    // that would otherwise export or reset a screen the reader has narrowed.
+    for (const [id, key, eventName] of [
+      ['homcSearch', 'homcSearch', 'input'], ['homcState', 'homcState', 'change'],
+      ['homcGrade', 'homcGrade', 'change'], ['homcVendor', 'homcVendor', 'change'],
+      ['homcAttention', 'homcAttention', 'change'], ['homcSort', 'homcSort', 'change']]) {
+      $(id).addEventListener(eventName, event => {
+        data.state[key] = event.target.value;
+        data.state.homcPage = 1;
+        render.renderHomcStatus();
+        render.renderHomcNotes();
+        render.renderHomcTable();
+      });
+    }
+    $('homcTrendMetric').addEventListener('change', event => {
+      data.state.homcTrendMetric = event.target.value;
+      render.renderHomcTrend();
+    });
+    $('homcFilterReset').addEventListener('click', () => {
+      Object.assign(data.state, {
+        homcSearch: '', homcState: 'all', homcGrade: 'all', homcVendor: 'all',
+        homcAttention: 'all', homcSort: 'date', homcPage: 1
+      });
+      render.renderHomc();
+    });
+    $('homcRefresh').addEventListener('click', refreshHomc);
+    $('homcExport').onclick = exportHomcCsv;
+    $('homcPrev').addEventListener('click', () => {
+      data.state.homcPage--;
+      render.renderHomcTable();
+    });
+    $('homcNext').addEventListener('click', () => {
+      data.state.homcPage++;
+      render.renderHomcTable();
+    });
+    $('homcTableRows').addEventListener('click', event => {
+      const button = event.target.closest('[data-homc-card]');
+      if (button) cardFromHomcRow(Number(button.dataset.homcCard));
+    });
+    render.renderHomc();
+    watchHomcSection();
     $('collectionFilter').addEventListener('change', event => selectCollection(event.target.value));
     $('collectionReset').addEventListener('click', () => selectCollection('all'));
     $('collectionRefresh').addEventListener('click', refreshCollections);
@@ -1564,6 +1736,7 @@
       try { render.renderStars(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderEntities(); } catch (secondaryError) { console.error(secondaryError); }
       try { render.renderAwesome(); } catch (secondaryError) { console.error(secondaryError); }
+      try { render.renderHomc(); } catch (secondaryError) { console.error(secondaryError); }
       // The run-health line is the one sentence that is most useful when the
       // payload reads failed, so it paints from its own file and not from the
       // boards below.
