@@ -6644,6 +6644,26 @@ test('inventory shift reports only models that appeared after the snapshot', () 
   assert.ok(brief.notes.some(note => note.tone === 'ok' && note.value === 1));
 });
 
+test('the overview marks the pulse that the headline is quoting', () => {
+  const data = loadData();
+  data.state.latest = { models: [], datasets: [], captured_at: '2026-11-06T00:00:00Z' };
+  data.state.snapshots = [
+    { date: '2026-11-05', models: {}, datasets: {} },
+    { date: '2026-11-06', models: {}, datasets: {} }
+  ];
+  data.state.modelscope = { status: 'ok', profile: { downloads: 110 }, models: [] };
+  data.state.modelscopeSnapshots = [
+    { date: '2026-11-05', profile_downloads: 100 },
+    { date: '2026-11-06', profile_downloads: 110 }
+  ];
+  const view = loadModelView(data);
+  view.render.renderBriefing();
+  const html = view.element('pulseGrid').innerHTML;
+  assert.match(html, /class="pulse is-lead"/);
+  assert.equal((html.match(/is-lead/g) || []).length, 1);
+  assert.match(html, /MODELSCOPE/);
+});
+
 test('attention surfaces a deadline inside three weeks and ignores a later one', () => {
   const data = loadData();
   const now = Date.parse('2026-11-06T00:00:00Z');

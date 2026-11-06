@@ -14,6 +14,98 @@ MO.render = (() => {
 
   const $ = id => document.getElementById(id);
 
+  function pageWindow(page, pages) {
+    if (pages <= 7) return Array.from({ length: pages }, (_, index) => index + 1);
+    const picked = new Set([1, pages, page - 1, page, page + 1]);
+    if (page <= 3) [2, 3, 4].forEach(n => picked.add(n));
+    if (page >= pages - 2) [pages - 3, pages - 2, pages - 1].forEach(n => picked.add(n));
+    const items = [];
+    [...picked].filter(n => n >= 1 && n <= pages).sort((a, b) => a - b).forEach(n => {
+      if (items.length && n - items.at(-1) > 1) items.push('…');
+      items.push(n);
+    });
+    return items;
+  }
+
+  function renderPager(id, pager) {
+    const element = $(id);
+    if (!element) return pager;
+    element.hidden = pager.total <= pager.size;
+    if (element.hidden) {
+      element.innerHTML = '';
+      return pager;
+    }
+    const numbers = pageWindow(pager.page, pager.pages).map(item => item === '…'
+      ? '<span class="page-ellipsis" aria-hidden="true">…</span>'
+      : `<button type="button" class="page-num${item === pager.page ? ' is-current' : ''}" data-page="${item}"${item === pager.page ? ' aria-current="page"' : ''} aria-label="第 ${item} 页">${item}</button>`
+    ).join('');
+    element.innerHTML =
+      `<button type="button" class="button secondary" data-page="${pager.page - 1}" ${pager.page <= 1 ? 'disabled' : ''} aria-label="上一页">← 上一页</button>` +
+      `<div class="page-numbers">${numbers}</div>` +
+      `<button type="button" class="button secondary" data-page="${pager.page + 1}" ${pager.page >= pager.pages ? 'disabled' : ''} aria-label="下一页">下一页 →</button>` +
+      `<span class="micro muted page-status" aria-live="polite">第 ${fmt(pager.page)} / ${fmt(pager.pages)} 页 · 每页 ${fmt(pager.size)} 条</span>`;
+    return pager;
+  }
+
+  const HEADLINE = {
+    empty: '等待第一次公开快照。',
+    waiting: '首次快照已就位，变化从第二次采集开始。',
+    idle: '各领域公开指标保持稳定。'
+  };
+
+  function headlineText(headline) {
+    if (!headline) return '正在读取公开快照…';
+    if (headline.kind === 'delta') return `${headline.label} ${signed(headline.value)}`;
+    if (headline.kind === 'warn') return `${fmt(headline.value)} 个模型累计值下降，待核查。`;
+    return HEADLINE[headline.kind] || HEADLINE.idle;
+  }
+
+  function renderBriefing() {
+    if (typeof data.briefing !== 'function') return;
+    const brief = data.briefing();
+    const headline = $('briefingHeadline');
+    if (headline) {
+      headline.textContent = headlineText(brief.headline);
+      headline.classList.toggle('is-warn', brief.headline?.kind === 'warn');
+      headline.classList.toggle('is-down', brief.headline?.kind === 'delta' && brief.headline.value < 0);
+    }
+    const notes = $('briefingNotes');
+    if (notes) {
+      notes.hidden = !brief.notes.length;
+      notes.innerHTML = brief.notes.map(note => {
+        const body = note.href ? `<a href="${esc(note.href)}">${esc(note.text)}</a>` : esc(note.text);
+        return `<li class="briefing-note ${esc(note.tone)}"><span class="mark" aria-hidden="true"></span><span>${body}</span></li>`;
+      }).join('');
+    }
+    const grid = $('pulseGrid');
+    if (grid) grid.innerHTML = brief.pulses.map(pulse => {
+      const value = pulse.id === 'models' || pulse.id === 'datasets' || pulse.id === 'social'
+        ? countCN(pulse.value) : fmt(pulse.value);
+      const caption = pulse.id === 'github' && pulse.available
+        ? `Star ${fmt(pulse.stars)} · ${fmt(pulse.repositories)} 个仓库`
+        : pulse.caption;
+      const delta = pulse.delta === null || pulse.delta === undefined ? '—'
+        : pulse.delta === 0 ? '持平' : signed(pulse.delta);
+      const lead = brief.headline?.kind === 'delta' && pulse.label === brief.headline.label;
+      return `<a class="pulse${pulse.available ? '' : ' muted'}${lead ? ' is-lead' : ''}" href="${esc(pulse.href)}">` +
+        `<div class="pulse-kicker">${esc(pulse.kicker)}</div>` +
+        `<div class="pulse-value" title="${esc(fmt(pulse.value))}">${esc(value)}</div>` +
+        `<div class="pulse-delta ${tone(pulse.delta)}">${esc(delta)}</div>` +
+        `<div class="pulse-caption">${esc(caption)}</div></a>`;
+    }).join('');
+  }
+
+  function renderAttention() {
+    const host = $('attentionList');
+    if (!host || typeof data.attention !== 'function') return;
+    const items = data.attention();
+    host.hidden = !items.length;
+    host.innerHTML = items.map(item =>
+      `<li class="attention-item ${esc(item.tone)}"><a href="${esc(item.href)}">` +
+      `<strong>${esc(item.title)}</strong><span>${esc(item.detail || '')}</span></a></li>`
+    ).join('');
+  }
+
   // --- Shared chrome --------------------------------------------------------
 
   function stateMessage(message, type = 'error') {
@@ -47,9 +139,14 @@ MO.render = (() => {
     $('collectionFilter').disabled = !available;
     $('collectionReset').disabled = state.modelCollection === 'all';
     $('modelScopeLabel').textContent = scopeName;
-    $('modelScopeNote').textContent = state.modelCollection === 'all'
-      ? '集合选择联动模型指标、趋势、热门排行与清单；搜索仅筛选清单。'
-      : '按当前集合归属回看历史，仅统计当前公开模型；缺失字段不当作 0，不代表各日当时的集合成员。';
+    const scopeHost = $('collectionScope');
+    const onList = scopeHost && typeof scopeHost.closest === 'function'
+      && scopeHost.closest('[data-workspace]')?.dataset.workspace === 'models';
+    $('modelScopeNote').textContent = onList
+      ? '这个范围筛的是下面这份清单。同一范围的曲线在「下载趋势」。'
+      : state.modelCollection === 'all'
+        ? '这里的范围同时作用于曲线、热门模型和清单。'
+        : '按当前集合归属回看历史，仅统计当前公开模型；缺失字段不当作 0。';
     $('collectionDescription').textContent = selected?.description || '';
     $('collectionCount').textContent = fmt(collections.length);
     const error = state.collectionRefreshError || state.collections?.error;
@@ -2182,7 +2279,7 @@ MO.render = (() => {
     const max = top[0].last_30d || 1;
     $('topModels').innerHTML = top.map((model, index) =>
       `<div class="top-item"><span class="rank-index">${String(index + 1).padStart(2, '0')}</span>` +
-      `<div><div class="rank-model"><span class="rank-name" title="${esc(model.id)}">${esc(model.id.split('/').slice(1).join('/'))}</span></div>` +
+      `<div><div class="rank-model"><button type="button" class="rank-name" data-detail="${esc(model.id)}" title="查看 ${esc(model.id)} 的历史">${esc(model.id.split('/').slice(1).join('/'))}</button></div>` +
       `<div class="rank-progress"><span style="width:${(model.last_30d / max * 100).toFixed(1)}%"></span></div></div>` +
       `<span class="rank-number" title="${esc(fmt(model.last_30d))}">${esc(compact(model.last_30d))}</span></div>`
     ).join('');
@@ -2191,9 +2288,13 @@ MO.render = (() => {
   function renderTable() {
     const state = data.state;
     const rows = data.filteredModels();
+    const pager = data.paginate ? data.paginate(rows, state.modelPage, state.modelPageSize) : {
+      page: 1, pages: 1, size: rows.length || 1, total: rows.length, rows
+    };
+    if (data.paginate) state.modelPage = pager.page;
 
-    $('tableCount').textContent = `${fmt(rows.length)} / ${fmt(data.modelScope().length)} MODELS · 账户共 ${fmt(state.latest.models.length)}`;
-    $('modelRows').innerHTML = rows.length ? rows.map(model => {
+    $('tableCount').textContent = `${fmt(pager.total)} / ${fmt(data.modelScope().length)} MODELS · 账户共 ${fmt(state.latest.models.length)}`;
+    $('modelRows').innerHTML = pager.rows.length ? pager.rows.map(model => {
       const stateName = model.all_time === null ? '累计缺失' : model.d1 < 0 ? '统计修正?' : model.d1 === null ? '待积累' : '正常';
       const stateClass = model.all_time === null ? 'missing' : model.d1 < 0 ? 'alert' : model.d1 === null ? 'new' : '';
       const checked = state.compare.includes(model.id) ? 'checked' : '';
@@ -2214,6 +2315,7 @@ MO.render = (() => {
         `<td><span class="state ${stateClass}">${esc(stateName)}</span></td>` +
         `<td class="compare-col"><input type="checkbox" class="compare-check" data-compare="${esc(model.id)}" aria-label="对比 ${esc(model.id)}" ${checked}></td></tr>`;
     }).join('') : '<tr><td colspan="8" class="no-rows">没有符合条件的模型</td></tr>';
+    if (data.paginate) renderPager('modelPagination', pager);
   }
 
   function renderCompare() {
@@ -2830,6 +2932,9 @@ MO.render = (() => {
     renderConferenceUpcoming,
     renderConferenceTable,
     renderModelScopeChart,
+    renderModelScopeProfile,
+    renderBriefing,
+    renderAttention,
     renderSummary,
     renderRunHealth,
     renderOverall,

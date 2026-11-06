@@ -32,31 +32,35 @@
   <script src="./app.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#workspace">跳到主内容</a>
   <div class="shell">
     <aside class="sidebar" aria-label="侧边导航">
       <a class="brand" href="#overview" aria-label="Model Observatory 首页">
         <span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 23 12 11 19 20 28 7" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="7" r="2.7" fill="#70e6ce"/></svg></span>
-        <span class="brand-copy"><strong>MODEL<span>OBS.</span></strong><small>PRIVATE ANALYTICS</small></span>
+        <span class="brand-copy"><strong>MODEL<span>OBS.</span></strong><small>DAILY OBSERVATORY</small></span>
       </a>
-      <div class="nav-title">WORKSPACE</div>
-      <nav class="navlinks">
-        <a class="active" href="#overview"><span class="navglyph">◈</span> 账户总览</a>
-        <a href="#analytics"><span class="navglyph">◫</span> 下载趋势</a>
-        <a href="#models"><span class="navglyph">▦</span> 模型清单</a>
-        <a href="#compare"><span class="navglyph">⌁</span> 模型对比</a>
-        <a href="#collections"><span class="navglyph">▦</span> 集合分类</a>
-        <a href="#datasets"><span class="navglyph">▤</span> 数据集</a>
-        <a href="#modelscope"><span class="navglyph">▦</span> ModelScope</a>
-        <a href="#conferences"><span class="navglyph">◴</span> 顶会截止</a>
-        <a href="#stars"><span class="navglyph">✧</span> 星星墙</a>
-        <a href="#entities"><span class="navglyph">⌗</span> 实体注册表</a>
-        <a href="#tasks"><span class="navglyph">▧</span> 任务看板</a>
-        <a href="#awesome"><span class="navglyph">≡</span> 论文清单跟踪</a>
-        <a href="#homc"><span class="navglyph">◍</span> 模型清单核实</a>
-        <a href="#scholar"><span class="navglyph">✦</span> 学术主页</a>
-        <a href="#social"><span class="navglyph">◎</span> 社交媒体</a>
-        <a href="#github"><span class="navglyph">◐</span> GitHub 看板</a>
-        <a href="#templates"><span class="navglyph">◈</span> 模版库</a>
+      <nav class="navlinks" aria-label="工作区">
+        <div class="nav-group">今日</div>
+        <a class="active" href="#overview" data-view="overview"><span class="navglyph">◈</span> 账户总览</a>
+        <div class="nav-group">观测</div>
+        <a href="#analytics" data-view="analytics"><span class="navglyph">◫</span> 下载趋势</a>
+        <a href="#models" data-view="models"><span class="navglyph">▦</span> 模型清单</a>
+        <a href="#compare" data-view="models" data-focus="compare"><span class="navglyph">⌁</span> 模型对比</a>
+        <a href="#collections" data-view="collections"><span class="navglyph">▦</span> 集合分类</a>
+        <a href="#datasets" data-view="datasets"><span class="navglyph">▤</span> 数据集</a>
+        <a href="#modelscope" data-view="modelscope"><span class="navglyph">▦</span> ModelScope</a>
+        <div class="nav-group">研究</div>
+        <a href="#conferences" data-view="conferences"><span class="navglyph">◴</span> 顶会截止</a>
+        <a href="#stars" data-view="stars"><span class="navglyph">✧</span> 星星墙</a>
+        <a href="#entities" data-view="entities"><span class="navglyph">⌗</span> 实体注册表</a>
+        <a href="#tasks" data-view="tasks"><span class="navglyph">▧</span> 任务看板</a>
+        <a href="#awesome" data-view="awesome"><span class="navglyph">≡</span> 论文清单跟踪</a>
+        <a href="#homc" data-view="homc"><span class="navglyph">◍</span> 模型清单核实</a>
+        <a href="#scholar" data-view="scholar"><span class="navglyph">✦</span> 学术主页</a>
+        <div class="nav-group">账户</div>
+        <a href="#social" data-view="social"><span class="navglyph">◎</span> 社交媒体</a>
+        <a href="#github" data-view="github"><span class="navglyph">◐</span> GitHub 看板</a>
+        <a href="#templates" data-view="templates"><span class="navglyph">◈</span> 模版库</a>
       </nav>
       <div class="sidebar-bottom">
         <div class="sidebar-card"><div class="sidebar-card-head"><span class="live-led"></span> DAILY SNAPSHOTS</div><p>GitHub Actions 每日采集<br>无需始终打开浏览器</p><div class="sidebar-card-foot"><span id="snapshotCount">0</span> 个历史快照</div></div>
@@ -64,24 +68,32 @@
       </div>
     </aside>
 
-    <main class="main" id="overview">
+    <main class="main" id="workspace" tabindex="-1">
       <header class="topbar">
-        <div class="breadcrumb">WORKSPACE <span>/</span> HUGGING FACE <span>/</span> OVERVIEW</div>
-        <div class="top-right"><span class="freshness"><span id="freshLed" class="status-led"></span><span id="freshLabel">等待数据初始化</span></span><button class="theme-toggle" id="themeToggle" type="button" aria-label="切换明暗主题" title="切换明暗主题">☀</button><a class="toplink" href="https://huggingface.co/gatilin/models" target="_blank" rel="noopener noreferrer">访问 HF ↗</a></div>
+        <div class="breadcrumb">WORKSPACE <span>/</span> GATILIN <span>/</span> <b id="crumbView">总览</b></div>
+        <div class="top-right"><span class="freshness"><span id="freshLed" class="status-led"></span><span id="freshLabel">等待数据初始化</span></span><button class="theme-toggle" id="themeToggle" type="button" aria-label="切换明暗主题" title="切换明暗主题">☀</button><a class="toplink" id="topLink" href="https://huggingface.co/gatilin/models" target="_blank" rel="noopener noreferrer">访问 HF ↗</a></div>
       </header>
 
-      <section class="hero">
+      <div id="errorBanner" class="notice hidden" role="alert"></div>
+
+      <div data-workspace="overview" id="overview">
+<section class="hero">
         <div class="hero-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="hero-kicker"><span class="inline-mark"></span> GATILIN / MODEL INTELLIGENCE</div>
-        <h1>模型表现，<br><em>尽在掌握。</em></h1>
-        <p>分别观测 Hugging Face 与 ModelScope 的公开模型，记录下载计数变化，并同步学术引用与社交平台粉丝数。</p>
+        <div class="hero-kicker"><span class="inline-mark"></span> GATILIN / DAILY BRIEFING</div>
+        <h1 id="briefingHeadline">正在读取公开快照…</h1>
+        <p>这里只说今天变了什么。下载曲线、清单和截止各自留在自己的栏目里。</p>
         <div class="hero-meta"><span>账户 <b>@gatilin</b></span><i></i><span>上次采集 <b id="lastSync">—</b></span><i></i><span>时区 <b>UTC</b></span></div>
         <p id="runHealth" class="run-health" role="status">采集健康：正在读取运行记录…</p>
       </section>
 
-      <div id="errorBanner" class="notice hidden" role="alert"></div>
-      <div id="emptyBanner" class="empty-state hidden"><div class="empty-icon">◎</div><div><strong>等待第一次 Hugging Face 快照</strong><p>仓库创建后，请到 GitHub Actions 手动运行 “Sync Hugging Face & deploy Pages”。首次采集后，累计和近 30 天下载量会显示；变化趋势需要积累后续每日快照。</p></div></div>
+      <ul id="briefingNotes" class="briefing-notes" hidden aria-label="跨领域简报"></ul>
+      <section class="pulse-grid" id="pulseGrid" aria-label="跨领域指标"></section>
+      <ul id="attentionList" class="attention-list" hidden aria-label="需要处理"></ul>
 
+            <div id="emptyBanner" class="empty-state hidden"><div class="empty-icon">◎</div><div><strong>等待第一次 Hugging Face 快照</strong><p>仓库创建后，请到 GitHub Actions 手动运行 “Sync Hugging Face & deploy Pages”。首次采集后，累计和近 30 天下载量会显示；变化趋势需要积累后续每日快照。</p></div></div>
+      </div>
+
+      <div data-workspace="analytics" id="analyticsBoard" hidden>
       <section id="collectionScope" class="collection-scope" aria-label="模型集合观测范围">
         <div class="collection-controls"><label for="collectionFilter">观测范围</label><select id="collectionFilter" disabled><option value="all">全部模型</option></select><button class="button secondary" id="collectionReset" disabled>全部模型</button><button class="button secondary" id="collectionRefresh">刷新集合</button><a class="button text-button" href="#collections">浏览集合分类 ↘</a></div>
         <h2 id="modelScopeLabel">全部模型</h2><p id="collectionDescription"></p><p id="modelScopeNote">集合选择联动模型指标、趋势、热门排行与清单；搜索仅筛选清单。</p>
@@ -105,22 +117,25 @@
 
       <section class="panel changes-panel"><div class="panel-head"><div><div class="panel-overline">MOMENTUM & REVISIONS</div><h2>日度变化观测</h2><p>累计值的相邻快照净变化；负值保留用于识别统计修正</p></div><span id="correctionBadge" class="correction-pill">暂无异常</span></div><div id="deltaChart" class="bar-chart-area"></div><div class="chart-footer"><span class="muted micro">这是累计计数器的观测净差值，并非官方独立提供的每日下载次数。</span><span id="deltaPeriod" class="micro muted">—</span></div></section>
 
-      <section id="models" class="model-section">
+            </div>
+
+      <section id="models" data-workspace="models" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">INVENTORY / MODEL COLLECTIONS</div><h2>模型清单 <span id="modelCountBadge">0</span></h2><p>按观测集合筛选，点击归属标签切换集合，打开模型查看原始条目备注</p></div><div class="section-actions"><button class="button" id="exportCSV">↓ 导出筛选 CSV</button><button class="button secondary" id="exportJSON">↓ 导出全部历史 JSON</button></div></div>
         <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="modelSearch" placeholder="搜索模型名称或仓库 ID" autocomplete="off" aria-label="搜索模型"></label><select id="sortModel" aria-label="排序方式"><option value="last_30d">按近30天下载排序</option><option value="all_time">按累计下载排序</option><option value="d1">按上次变化排序</option><option value="d7">按7天变化排序</option><option value="d30">按30天变化排序</option><option value="name">按名称排序</option></select><label class="filter-check"><input type="checkbox" id="onlyAnomalies">只看累计下降</label><span class="toolbar-spacer"></span><span id="tableCount" class="micro muted">—</span></div>
         <div class="table-scroll"><table class="models-table"><thead><tr><th class="no-sort">模型名称</th><th class="align-right">历史累计</th><th class="align-right">滚动30天</th><th class="align-right">上次变化</th><th class="align-right">7日净变</th><th class="align-right">30日净变</th><th>状态</th><th class="compare-col">对比</th></tr></thead><tbody id="modelRows"><tr><td colspan="8" class="no-rows">尚未有采集数据</td></tr></tbody></table></div>
+        <nav class="pagination" id="modelPagination" hidden aria-label="模型分页"></nav>
         <div class="table-bottom"><span>说明：— 表示该对比日期缺少有效快照，不代表下载量为 0。</span><span id="snapshotDate">—</span></div>
       </section>
 
-      <section id="compare" class="panel compare-panel"><div class="panel-head"><div><div class="panel-overline">SIDE-BY-SIDE</div><h2>模型对比 <span class="light-info">最多 3 个</span></h2><p>在上方模型表的「对比」一列勾选模型</p></div><button class="button text-button" id="clearCompare">清空选择 ✕</button></div><div id="compareSelected" class="compare-selected"></div><div id="compareChart" class="chart-area compare-chart"></div></section>
+      <section id="compare" data-workspace="models" hidden class="panel compare-panel"><div class="panel-head"><div><div class="panel-overline">SIDE-BY-SIDE</div><h2>模型对比 <span class="light-info">最多 3 个</span></h2><p>在上方模型表的「对比」一列勾选模型</p></div><button class="button text-button" id="clearCompare">清空选择 ✕</button></div><div id="compareSelected" class="compare-selected"></div><div id="compareChart" class="chart-area compare-chart"></div></section>
 
-      <section id="collections" class="model-section">
+      <section id="collections" data-workspace="collections" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">HUGGING FACE / COLLECTIONS</div><h2>集合分类观测 <span id="collectionCount">—</span></h2><p id="collectionCoverage">正在关联公开模型与集合…</p></div><a class="button secondary" href="https://huggingface.co/gatilin/collections" target="_blank" rel="noopener noreferrer">HF Collections ↗</a></div>
         <p class="collection-note">分类沿用 HF 集合标题与备注，不根据模型名称猜测。一个模型可属于多个集合，各集合指标不可相加；导航集合不递归计入子集合。仅统计当前账户公开模型，仓库数量不代表已具备完整权重或可直接推理。</p>
         <div id="collectionCards" class="collection-grid"><div class="chart-empty">等待完整集合成员数据</div></div>
       </section>
 
-      <section id="datasets" class="model-section">
+      <section id="datasets" data-workspace="datasets" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">INVENTORY / ALL DATASETS</div><h2>全部数据集 <span id="datasetCountBadge">0</span></h2><p>与模型完全同口径：历史累计、滚动 30 天与每日净变化</p></div><div class="section-actions"><button class="button" id="exportDatasetCSV">↓ 导出全部 CSV</button><button class="button secondary" id="exportDatasetJSON">↓ 导出历史 JSON</button></div></div>
         <div class="kpis">
           <div class="kpi"><div class="kpi-label">数据集总数 <span class="kpi-symbol">▤</span></div><div id="statDatasets" class="kpi-value">—</div><div class="kpi-caption">当前公开数据集仓库</div></div>
@@ -140,7 +155,7 @@
         <div class="table-bottom"><span>说明：数据集与模型使用同一套 HF 公开 API 口径；— 表示该对比日期缺少有效快照。</span><span id="datasetSnapshotDate">—</span></div>
       </section>
 
-      <section id="modelscope" class="model-section">
+      <section id="modelscope" data-workspace="modelscope" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">MODELSCOPE / ISLINXU</div><h2>魔搭模型观测</h2><p>独立记录 ModelScope 公开模型，不与 Hugging Face 重复合计</p></div><div class="section-actions"><a class="button secondary" href="https://www.modelscope.cn/profile/isLinXu" target="_blank" rel="noopener noreferrer">魔搭主页 ↗</a><button class="button secondary" id="modelscopeRefresh" aria-describedby="modelscopeRefreshHelp">刷新已发布快照</button><button class="button text-button" id="modelscopeLiveRefresh" aria-describedby="modelscopeRefreshHelp">尝试实时查询</button><button class="button" id="modelscopeExport" disabled>导出筛选 CSV</button></div></div>
         <div class="modelscope-data-status" role="status" aria-live="polite">
           <p id="modelscopeStatus" class="collection-note">正在读取 ModelScope 快照…</p>
@@ -171,7 +186,7 @@
         <div class="table-bottom"><span>数据来源：ModelScope 官方公开 OpenAPI 与公开主页；不使用访问令牌，仅记录匿名可见的元数据。公开或需申请访问不代表权重可直接推理。</span></div>
       </section>
 
-      <section id="conferences" class="model-section">
+      <section id="conferences" data-workspace="conferences" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">CONFERENCE BOARD / CCF-DEADLINES</div><h2>顶会投稿截止 <span id="conferenceCountBadge">0</span></h2><p>收录公开会议日历的投稿节点，统一换算为 UTC 并倒计时</p></div><div class="section-actions"><button class="button secondary" id="conferenceRefresh">刷新已发布快照</button><button class="button" id="conferenceExport" disabled>↓ 导出筛选 CSV</button><button class="button" id="conferenceIcs" disabled title="按当前筛选生成 UTC 时刻的日历文件；日期待定或时区认不出的节点不会写入">↓ 导出筛选日历 .ics</button></div></div>
         <div class="modelscope-data-status" role="status" aria-live="polite">
           <p id="conferenceStatus" class="collection-note">正在读取会议快照…</p>
@@ -199,7 +214,7 @@
         <div class="table-bottom"><span>说明：「日期待定」与「无法解析」保留来源原文，不当作 0 也不倒推。同一会议可有多个环节与轮次，等级沿用来源的 CCF/CORE 标注。投稿前请以会议官网为准。</span></div>
       </section>
 
-      <section id="stars" class="model-section">
+      <section id="stars" data-workspace="stars" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">GITHUB / STARRED REPOSITORY WALL</div><h2>星星墙 <span id="starCountBadge">0</span></h2><p>把公开 star 列表画成一格一仓库的墙，并按聚类连成关系图</p></div><div class="section-actions"><a class="button secondary" href="https://github.com/stars/isLinXu" target="_blank" rel="noopener noreferrer">GitHub star 列表 ↗</a><button class="button secondary" id="starRefresh">刷新已发布快照</button><button class="button" id="starExport" disabled>↓ 导出筛选 CSV</button></div></div>
         <div class="modelscope-data-status" role="status" aria-live="polite">
           <p id="starStatus" class="collection-note">正在读取 star 快照…</p>
@@ -238,7 +253,7 @@
         <div class="table-bottom"><span>说明：每个仓库只归入一个聚类（语言优先，其次足够热门的主题，再次足够热门的账户），因此各聚类数量可以相加；「出现次数」按多标签成员统计，不能相加。star 数、语言与主题都是 GitHub 公开元数据的当前值，取消 star 会体现在次日快照中。</span></div>
       </section>
 
-      <section id="entities" class="model-section">
+      <section id="entities" data-workspace="entities" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">WORKSPACE / ENTITY REGISTRY</div><h2>实体注册表 <span id="entityCountBadge">0</span></h2><p>一条一文件，把模型、数据集、论文与仓库连成可核对的关系网</p></div><div class="section-actions"><a class="button secondary" href="https://github.com/isLinXu/model-observatory/tree/main/entities" target="_blank" rel="noopener noreferrer">entities/ 源文件 ↗</a><button class="button secondary" id="entityRefresh">刷新已发布快照</button><button class="button" id="entityExport" disabled>↓ 导出筛选 CSV</button></div></div>
         <div class="modelscope-data-status" role="status" aria-live="polite">
           <p id="entityStatus" class="collection-note">正在读取注册表快照…</p>
@@ -286,7 +301,7 @@
         <div class="panel entity-problem-panel"><div class="panel-head"><div><div class="panel-overline">LOCAL DRAFTS</div><h2>本地待推送草稿</h2><p id="entityDraftNote">草稿只存在这台浏览器的本地存储里，没推送之前不会进入站点数据</p></div><span class="mini-icon">✎</span></div><div id="entityDraftList" class="entity-problem-list"><div class="chart-empty">没有待推送的草稿</div></div></div>
       </section>
 
-      <section id="tasks" class="model-section">
+      <section id="tasks" data-workspace="tasks" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">WORKSPACE / TASK BOARD</div><h2>任务看板 <span id="taskCountBadge">0</span></h2><p>一个任务一个文件，拖动换道改状态，拖到别的卡上就是拆解，拉线就是依赖</p></div><div class="section-actions"><a class="button secondary" href="https://github.com/isLinXu/model-observatory/tree/main/tasks" target="_blank" rel="noopener noreferrer">tasks/ 源文件 ↗</a><button class="button secondary" id="taskRefresh">刷新已发布快照</button><button class="button" id="taskExport" disabled>↓ 导出筛选 CSV</button></div></div>
         <div class="modelscope-data-status" role="status" aria-live="polite">
           <p id="taskStatus" class="collection-note">正在读取任务快照…</p>
@@ -344,7 +359,7 @@
         <div class="panel entity-problem-panel"><div class="panel-head"><div><div class="panel-overline">PUSH QUEUE</div><h2>待推送与待索引的卡片</h2><p id="taskDraftNote">草稿只存在这台浏览器的本地存储里，没推送之前不会进入站点数据</p></div><span class="mini-icon">⇪</span></div><div id="taskDraftList" class="entity-problem-list"><div class="chart-empty">没有待推送的卡片</div></div><div class="top-footer">推送只写字段，正文归源文件 <span>● 索引次日重建</span></div></div>
       </section>
 
-      <section id="awesome" class="model-section">
+      <section id="awesome" data-workspace="awesome" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">RESEARCH FEED / PAPER LISTS</div><h2>论文清单跟踪 <span id="awesomeCountBadge">0</span></h2><p>六个 awesome 清单的内容、节奏与增删，逐行数过，不和仓库自己的徽章混为一谈</p></div><div class="section-actions"><a class="button secondary" href="https://github.com/isLinXu/awesome-agent-world-model" target="_blank" rel="noopener noreferrer">清单仓库 ↗</a><button class="button secondary" id="awesomeRefresh">刷新已发布快照</button><button class="button" id="awesomeExport" disabled>↓ 导出筛选 CSV</button></div></div>
         <div class="modelscope-data-status" role="status" aria-live="polite">
           <p id="awesomeStatus" class="collection-note">正在读取清单跟踪快照…</p>
@@ -387,7 +402,7 @@
         <div class="table-bottom"><span>说明：清单条目身份是稳定的小键（有 arXiv ID 用 ID，否则用标题 slug），记在仓库内的条目台账里，「新增」「移出」由它与昨日快照比对得出；<code>isLinXu/paper-list</code> 的比对单位是「某主题归档了更新的月份」，一次算一条而不是几千行。滚动窗口式清单（如 awesome-agent-world-model）会按设计丢弃旧行，其移出标注为正常收缩。没成为条目的行按「无标题 / 表格行没链接 / 报告行既无会议也无日期」三类归账，每条卡上都能对回数。单文件超过抓取上限的清单，实测条目数标注为下限；本轮没轮到的清单标「本次未读取」，和「读到了但失败」分开写。正文之外的原始 Markdown 从不进入本站快照，页面上的每个链接都先按 http(s) 白名单重查一遍。</span></div>
       </section>
 
-      <section id="homc" class="model-section">
+      <section id="homc" data-workspace="homc" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">MODEL LIST &amp; VERIFICATION / HOMC</div><h2>模型清单核实 <span id="homcCountBadge">0</span></h2><p>isLinXu/model-list 的 🆕 / 🔄 / ⚠️ 三态总表：本站逐行数过，与它自己的说法并排放，永不相加</p></div><div class="section-actions"><a class="button secondary" id="homcSiteLink" href="https://islinxu.github.io/model-list/" target="_blank" rel="noopener noreferrer">HOMC 站点 ↗</a><a class="button secondary" id="homcReadmeLink" href="https://github.com/isLinXu/model-list/blob/main/README.md" target="_blank" rel="noopener noreferrer">清单原文 ↗</a><button class="button secondary" id="homcRefresh">刷新已发布快照</button><button class="button" id="homcExport" disabled>↓ 导出筛选 CSV</button></div></div>
         <div class="modelscope-data-status" role="status" aria-live="polite">
           <p id="homcStatus" class="collection-note">正在读取模型清单快照…</p>
@@ -423,7 +438,7 @@
         <div class="table-bottom"><span>说明：行的身份是 <code>homc:&lt;名称 slug&gt;|&lt;提供方 slug&gt;</code>，纯中文名会退化成一段哈希，因为它没有别的可写的形式；台账记在仓库里、<strong>不发给读者</strong>（<code>data/homc_ledger.json</code> 不进 <code>_site/</code>），「新增」「移出」由它与昨日快照比对得出，台账被 id 上限截断时增删按下限报告。每行的外部链接都先按 http(s) 白名单重查一遍才写进快照，正文之外的原始 Markdown 从不发布。花色索引（♠ ♥ ♦ ♣ 🃏）是清单自己的排序记号，本站只对同名行把它抄到行首，不赋予任何排名含义。</span></div>
       </section>
 
-      <section id="scholar" class="model-section">
+      <section id="scholar" data-workspace="scholar" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">ACADEMIC PROFILE / GOOGLE SCHOLAR</div><h2>学术主页</h2><p>引用总量、h-index 与论文列表，随每日采集同步更新</p></div><div class="section-actions"><a class="button secondary" id="scholarProfileLink" href="https://scholar.google.com/citations?user=oTYM_I8AAAAJ" target="_blank" rel="noopener noreferrer">Google Scholar 档案 ↗</a></div></div>
         <div id="scholarCard" class="scholar-card"><div class="chart-empty">等待学术档案数据</div></div>
         <div class="kpis" style="margin:16px 0 20px">
@@ -441,7 +456,7 @@
         <div class="table-bottom"><span>说明：引用数据来自公开的 Google Scholar 档案页，指标口径与 Scholar 一致；仅采集档案首页可见的论文列表。</span><span id="scholarCapturedAt">—</span></div>
       </section>
 
-      <section id="social" class="model-section">
+      <section id="social" data-workspace="social" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">SOCIAL AUDIENCE / CROSS-PLATFORM</div><h2>社交媒体 <span id="socialCountBadge">0</span></h2><p>各平台公开粉丝数，按 UTC 每日快照留存，可按平台与时间维度筛选</p></div><div class="section-actions"><button class="button" id="exportSocialCSV">↓ 导出全部 CSV</button><div class="segmented" role="group" aria-label="社交数据视图"><button class="active" data-social-view="cards">卡片</button><button data-social-view="table">表格</button></div></div></div>
         <div class="kpis" style="margin-bottom:16px">
           <div class="kpi"><div class="kpi-label">粉丝总数 <span class="kpi-symbol">◎</span></div><div id="statSocialTotal" class="kpi-value">—</div><div id="statSocialTotalSub" class="kpi-caption">所选平台粉丝数合计</div></div>
@@ -461,7 +476,7 @@
         <div class="table-bottom" id="socialTableBottom" style="border-radius:12px;border-top:1px solid var(--table-row-line)"><span>说明：粉丝数来自各平台公开接口，口径以平台自身统计为准；知乎与小红书需要登录态，采集失败时保留上次成功值并标注为过期。</span><span class="social-table-foot"><span id="socialTableCount" class="micro muted">—</span><span id="socialSnapshotDate" class="micro muted">—</span></span></div>
       </section>
 
-      <section id="github" class="model-section">
+      <section id="github" data-workspace="github" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">GITHUB / ACCOUNT & REPOSITORIES</div><h2>GitHub 看板 <span id="githubRepoBadge">0</span></h2><p>粉丝历史变化、公开仓库与项目清单，支持搜索、排序、筛选与分页</p></div><div class="section-actions"><button class="button secondary" id="exportGitHubCSV">↓ 导出筛选 CSV</button><button class="button" id="githubRefresh">↻ 手动刷新</button><a class="button secondary" id="githubProfileLink" href="https://github.com/isLinXu" target="_blank" rel="noopener noreferrer">GitHub 主页 ↗</a></div></div>
         <div id="githubBanner" class="notice hidden" role="status"></div>
         <div class="kpis" style="margin-bottom:16px">
@@ -482,7 +497,7 @@
         <div class="table-bottom"><span>说明：数据来自 GitHub 公开 REST API；Projects 列表需要配置 GITHUB_TOKEN（read:project 权限）才会显示。抓取失败时保留上一次快照并标注为过期。</span><span id="githubCapturedAt">—</span></div>
       </section>
 
-      <section id="templates" class="model-section">
+      <section id="templates" data-workspace="templates" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">SKILL &amp; PROMPT LIBRARY / SYNCED TO GITHUB</div><h2>模版库 <span id="templateCountBadge">0</span></h2><p>可复用的 Skill 定义与 Prompt 模版，Markdown 即唯一事实源，可一键推送回 GitHub</p></div><div class="section-actions"><button class="button secondary" id="templateExport">↓ 导出草稿</button><button class="button" id="templateNew">＋ 新建模版</button><button class="button secondary" id="templateRefresh">↻ 手动刷新</button></div></div>
         <div id="templateBanner" class="notice hidden" role="status"></div>
         <div class="kpis" style="margin-bottom:16px">

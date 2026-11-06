@@ -429,6 +429,165 @@
     detailTrigger = null;
   }
 
+  const VIEW_LABEL = {
+    overview: ['总览', '账户总览'],
+    analytics: ['趋势', '下载趋势'],
+    models: ['模型', '模型清单'],
+    compare: ['对比', '模型对比'],
+    collections: ['集合', '集合分类'],
+    datasets: ['数据集', '数据集'],
+    modelscope: ['魔搭', 'ModelScope'],
+    conferences: ['顶会', '顶会截止'],
+    stars: ['星星墙', '星星墙'],
+    entities: ['注册表', '实体注册表'],
+    tasks: ['任务', '任务看板'],
+    awesome: ['论文清单', '论文清单跟踪'],
+    homc: ['核实', '模型清单核实'],
+    scholar: ['学术', '学术主页'],
+    social: ['社交', '社交媒体'],
+    github: ['GitHub', 'GitHub'],
+    templates: ['模版', '模版库']
+  };
+  const VIEW_SEARCH = {
+    models: 'modelSearch',
+    datasets: 'datasetSearch',
+    modelscope: 'modelscopeSearch',
+    conferences: 'conferenceSearch',
+    stars: 'starSearch',
+    entities: 'entitySearch',
+    tasks: 'taskSearch',
+    awesome: 'awesomeSearch',
+    homc: 'homcSearch',
+    scholar: 'paperSearch',
+    github: 'githubSearch',
+    templates: 'templateSearch'
+  };
+
+  function leadWorkspace() {
+    if (typeof data.briefing !== 'function') return null;
+    try {
+      const brief = data.briefing();
+      if (brief.headline?.kind !== 'delta') return null;
+      return brief.pulses.find(item => item.label === brief.headline.label)?.id || null;
+    } catch (error) {
+      return null;
+    }
+  }
+
+  function topLinkFor(workspace) {
+    if (workspace === 'overview') {
+      const lead = leadWorkspace();
+      if (lead && lead !== 'overview') return topLinkFor(lead);
+    }
+    if (workspace === 'social') {
+      const source = data.state.social?.sources?.find(item => item.url);
+      if (source) return { href: source.url, label: `${source.label} ↗` };
+    }
+    const github = data.state.github?.account?.url || 'https://github.com/isLinXu';
+    const links = {
+      github: { href: github, label: 'GitHub ↗' },
+      scholar: { href: 'https://scholar.google.com/citations?user=oTYM_I8AAAAJ', label: 'Scholar ↗' },
+      datasets: { href: 'https://huggingface.co/gatilin/datasets', label: '数据集 ↗' },
+      modelscope: { href: 'https://www.modelscope.cn/profile/isLinXu', label: '魔搭 ↗' },
+      stars: { href: 'https://github.com/isLinXu?tab=stars', label: 'Stars ↗' },
+      collections: { href: 'https://huggingface.co/gatilin/collections', label: '集合 ↗' },
+      conferences: { href: 'https://ccfddl.github.io/', label: 'CCF-DDL ↗' },
+      templates: { href: 'https://github.com/isLinXu/model-observatory', label: '仓库 ↗' },
+      entities: { href: 'https://github.com/isLinXu/model-observatory', label: '仓库 ↗' },
+      tasks: { href: 'https://github.com/isLinXu/model-observatory', label: '仓库 ↗' },
+      awesome: { href: 'https://github.com/isLinXu/model-observatory', label: '仓库 ↗' },
+      homc: { href: 'https://github.com/isLinXu/model-observatory', label: '仓库 ↗' }
+    };
+    return links[workspace] || { href: 'https://huggingface.co/gatilin/models', label: '访问 HF ↗' };
+  }
+
+  function showView(hash, options = {}) {
+    const view = data.resolveView(hash);
+    data.state.view = view.workspace;
+    document.querySelectorAll('[data-workspace]').forEach(node => {
+      const hidden = node.dataset.workspace !== view.workspace;
+      node.hidden = hidden;
+      node.inert = hidden;
+    });
+    const link = topLinkFor(view.workspace);
+    const top = $('topLink');
+    if (top && link) {
+      top.href = link.href;
+      top.textContent = link.label;
+    }
+    document.querySelectorAll('.navlinks a').forEach(item => {
+      const active = item.getAttribute('href') === `#${view.id}`;
+      item.classList.toggle('active', active);
+      if (active) item.setAttribute('aria-current', 'page');
+      else item.removeAttribute('aria-current');
+    });
+    const labels = VIEW_LABEL[view.id] || VIEW_LABEL.overview;
+    const crumb = $('crumbView');
+    if (crumb) crumb.textContent = labels[0];
+    document.title = `${labels[1]} · Model Observatory · gatilin`;
+    placeCollectionScope(view.workspace);
+    if (data.state.latest) refreshWorkspace(view.workspace);
+    if (options.moveFocus && typeof $('workspace')?.focus === 'function') {
+      $('workspace').focus({ preventScroll: true });
+    }
+    if (options.preserveScroll) return;
+    const scroll = () => {
+      if (view.focus && typeof $(view.focus)?.scrollIntoView === 'function') {
+        $(view.focus).scrollIntoView({ block: 'start', behavior: 'auto' });
+        return;
+      }
+      if (typeof window.scrollTo === 'function') window.scrollTo(0, 0);
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(scroll);
+    else scroll();
+  }
+
+  function placeCollectionScope(workspace) {
+    const scope = $('collectionScope');
+    if (!scope || typeof scope.before !== 'function') return;
+    const show = workspace === 'analytics' || workspace === 'models';
+    if (workspace === 'models' && typeof $('models')?.prepend === 'function') $('models').prepend(scope);
+    else {
+      const kpis = $('analyticsBoard')?.querySelector?.('.kpis');
+      if (kpis) kpis.before(scope);
+    }
+    scope.hidden = !show;
+    scope.inert = !show;
+  }
+
+  function refreshWorkspace(workspace) {
+    const jobs = {
+      overview: ['renderBriefing', 'renderAttention'],
+      analytics: ['renderCollections', 'renderOverall'],
+      models: ['renderCollections', 'renderCompare'],
+      datasets: ['renderDatasetChart'],
+      modelscope: ['renderModelScopeChart', 'renderModelScopeProfile'],
+      scholar: ['renderScholar'],
+      social: ['renderSocialChart'],
+      github: ['renderGitHubChart', 'renderGitHubLanguageChart'],
+      stars: ['renderStarWall', 'renderStarGraph'],
+      awesome: ['renderAwesomeTrend'],
+      homc: ['renderHomcTrend']
+    };
+    for (const name of jobs[workspace] || []) {
+      if (typeof render[name] !== 'function') continue;
+      try { render[name](); } catch (error) { console.error(error); }
+    }
+  }
+
+  function bindPager(id, key, renderFn) {
+    const element = $(id);
+    if (!element || typeof element.addEventListener !== 'function') return;
+    element.addEventListener('click', event => {
+      const button = event.target?.closest?.('[data-page]');
+      if (!button || button.disabled) return;
+      const next = Number(button.dataset.page);
+      if (!Number.isInteger(next) || next < 1 || data.state[key] === next) return;
+      data.state[key] = next;
+      renderFn();
+    });
+  }
+
   function trapDetailFocus(event) {
     const focusable = [...document.querySelectorAll(
       '#detailOverlay button:not([disabled]), #detailOverlay a[href], #detailOverlay [tabindex]:not([tabindex="-1"])'
@@ -474,6 +633,7 @@
 
   function selectCollection(slug) {
     data.state.modelCollection = slug;
+    data.state.modelPage = 1;
     renderModelScope();
   }
 
@@ -1452,6 +1612,7 @@
         selectEntityObject(registry.dataset.awesomeRegistry);
         render.showToast(`已在实体注册表里反查 ${registry.dataset.awesomeRegistry}：` +
           '关系归那个栏目，条目数与节奏仍在这里。');
+        showView('#entities', { preserveScroll: true });
         $('entities').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
         return;
       }
@@ -1540,6 +1701,7 @@
       const button = event.target.closest('[data-collection]');
       if (!button) return;
       selectCollection(button.dataset.collection);
+      showView('#overview', { preserveScroll: true });
       $('collectionFilter').focus({ preventScroll: true });
       $('collectionScope').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
     });
@@ -1572,14 +1734,17 @@
 
     $('modelSearch').addEventListener('input', event => {
       data.state.modelSearch = event.target.value;
+      data.state.modelPage = 1;
       render.renderTable();
     });
     $('sortModel').addEventListener('change', event => {
       data.state.modelSort = event.target.value;
+      data.state.modelPage = 1;
       render.renderTable();
     });
     $('onlyAnomalies').addEventListener('change', event => {
       data.state.modelOnlyAnomalies = event.target.checked;
+      data.state.modelPage = 1;
       render.renderTable();
     });
     $('modelRows').addEventListener('click', event => {
@@ -1591,6 +1756,11 @@
         $('modelSearch').focus({ preventScroll: true });
       }
     });
+    $('topModels').addEventListener('click', event => {
+      const button = event.target.closest('button[data-detail]');
+      if (button) openDetail(button.dataset.detail);
+    });
+    bindPager('modelPagination', 'modelPage', render.renderTable);
     $('modelRows').addEventListener('change', event => {
       const box = event.target.closest('input[data-compare]');
       if (!box) return;
@@ -1688,12 +1858,37 @@
       if (event.key === 'Escape') closeDetail();
       else if (event.key === 'Tab') trapDetailFocus(event);
     });
-    document.querySelectorAll('.navlinks a').forEach(link => link.addEventListener('click', () => {
-      document.querySelectorAll('.navlinks a').forEach(item => item.classList.toggle('active', item === link));
-    }));
+    if (typeof window.addEventListener === 'function') {
+      window.addEventListener('hashchange', () => showView(location.hash, { moveFocus: true }));
+    }
+    document.addEventListener('keydown', event => {
+      if (event.metaKey || event.ctrlKey || event.altKey || data.state.model) return;
+      const tag = document.activeElement?.tagName;
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || document.activeElement?.isContentEditable;
+      if (event.key === '/' && !typing) {
+        const fromOverview = data.state.view === 'overview';
+        const target = fromOverview ? 'modelSearch' : VIEW_SEARCH[data.state.view];
+        if (!target || typeof $(target)?.focus !== 'function') return;
+        event.preventDefault();
+        const focusSearch = () => $(target).focus();
+        const here = typeof location === 'undefined' ? '' : location.hash;
+        if (fromOverview && data.resolveView(here).workspace !== 'models' && typeof location !== 'undefined') {
+          window.addEventListener('hashchange', focusSearch, { once: true });
+          location.hash = 'models';
+          return;
+        }
+        focusSearch();
+        return;
+      }
+      if (event.key === 'Escape' && !typing && data.state.view !== 'overview' && typeof location !== 'undefined') {
+        location.hash = 'overview';
+      }
+    });
   }
 
   function renderAll() {
+    render.renderBriefing();
+    render.renderAttention();
     render.renderCollections();
     render.renderSummary();
     render.renderRunHealth();
@@ -1717,11 +1912,13 @@
 
   async function boot() {
     MO.theme.init();
+    showView(typeof location === 'undefined' ? '' : (location.hash || ''));
     bind();
     try {
       await data.loadAll();
       if (!data.state.latest.models.length) $('emptyBanner').classList.remove('hidden');
       renderAll();
+      showView(typeof location === 'undefined' ? '' : (location.hash || ''), { preserveScroll: true });
     } catch (error) {
       $('freshLabel').textContent = '数据读取失败';
       render.stateMessage('页面可以加载，但读取历史 JSON 失败：' + error.message +
