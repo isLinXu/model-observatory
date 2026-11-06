@@ -25,6 +25,23 @@ def step_names() -> list[str]:
     return re.findall(r"^\s*- name: (.+)$", WORKFLOW, re.MULTILINE)
 
 
+def step_block(name: str) -> str:
+    """The lines of one step, so a property can be claimed about a step and not
+    about anywhere in the file - `continue-on-error` somewhere else means nothing."""
+    match = re.search(rf"- name: {re.escape(name)}\n((?:\s{{8}}.+\n)+)", WORKFLOW)
+    return match.group(1) if match else ""
+
+
+def scripts_run() -> set[str]:
+    return {line.rsplit("/", 1)[-1] for line in re.findall(r"python (scripts/[\w.]+\.py)", WORKFLOW)}
+
+
+def staged_payloads() -> set[str]:
+    """The `data/<name>.json` files the commit step is told to keep."""
+    block = re.search(r"for snapshot in ([^;]+); do", WORKFLOW)
+    return set(block.group(1).replace("\\", " ").split()) if block else set()
+
+
 class ActionPinningTest(unittest.TestCase):
     def test_every_action_is_pinned_to_a_commit_sha(self):
         refs = re.findall(r"^\s*uses: (\S+)", WORKFLOW, re.MULTILINE)
@@ -71,6 +88,45 @@ class GateOrderTest(unittest.TestCase):
         self.assertTrue(writers, "the workflow no longer has a capture step to order against")
         self.assertLess(gate, min(writers),
                         "a collector now runs before the regression gate that reviews it")
+
+
+class CollectorWiringTest(unittest.TestCase):
+    def test_every_script_the_workflow_runs_is_in_the_repository(self):
+        missing = [item for item in re.findall(r"python (scripts/[\w.]+\.py)", WORKFLOW)
+                   if not (ROOT / item).is_file()]
+        self.assertEqual([], missing, "the daily job calls a script that is not shipped")
+
+    def test_every_collector_is_run_by_the_daily_job(self):
+        idle = sorted(path.name for path in (ROOT / "scripts").glob("collect_*.py")
+                      if path.name not in scripts_run())
+        self.assertEqual([], idle,
+                          "a collector nobody runs leaves its board frozen at the last day it did")
+
+    def test_a_third_party_list_never_blocks_the_boards_that_already_ran(self):
+        for name in ("Capture the tracked awesome lists", "Capture the HOMC model list"):
+            block = step_block(name)
+            self.assertTrue(block, f"{name} is gone from the workflow")
+            self.assertIn("continue-on-error: true", block,
+                          f"{name}: somebody else's repository may simply be unreadable today")
+
+    def test_the_daily_run_persists_the_ids_the_collectors_read_back(self):
+        # The ledgers are committed so tomorrow's diff knows today's ids; keeping
+        # them out of the browser payload is a separate claim, and test_wiring owns it.
+        for name in ("awesome", "awesome_history", "awesome_ledger",
+                     "homc", "homc_history", "homc_ledger", "runs"):
+            self.assertIn(name, staged_payloads(), f"{name}.json stopped being committed")
+
+    def test_the_side_channel_says_so_when_a_payload_is_missing_or_unclean(self):
+        # A continue-on-error collector that published nothing would otherwise be
+        # invisible: these steps re-read the file they just wrote and warn.
+        for name in ("Report list tracking sizes", "Report HOMC sizes"):
+            block = step_block(name)
+            self.assertTrue(block, f"{name} is gone from the workflow")
+            self.assertIn("is missing", block, f"{name} stopped warning about an absent payload")
+            self.assertIn("::warning::", block, f"{name} no longer has a warning channel")
+        homc = step_block("Report HOMC sizes")
+        self.assertIn("both stay published", homc,
+                      "the measured/self-reported gap is the board's point; the log should say it")
 
 
 if __name__ == "__main__":

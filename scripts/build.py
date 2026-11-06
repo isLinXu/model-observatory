@@ -20,7 +20,8 @@ OPTIONAL_DATA = ("scholar.json", "scholar_history.json", "social.json", "social_
                  "stars.json", "stars_repos.json", "stars_history.json",
                  "entities.json", "entities_history.json",
                  "tasks.json", "tasks_history.json",
-                 "awesome.json", "awesome_history.json", "runs.json")
+                 "awesome.json", "awesome_history.json", "runs.json",
+                 "homc.json", "homc_history.json")
 SHIPPED_DATA = CORE_DATA + OPTIONAL_DATA
 
 
@@ -36,10 +37,11 @@ def build():
             raise FileNotFoundError(f"{src} missing: run python scripts/collect.py first")
         shutil.copy2(src, data_dir / filename)
     # Secondary panels (academic, social, GitHub, templates, ModelScope,
-    # conferences, stars, entity registry, task board, list tracking) are
+    # conferences, stars, entity registry, task board, list tracking, HOMC) are
     # optional: the site degrades gracefully when any of them is absent.
-    # data/awesome_ledger.json is deliberately not copied: the collector reads
-    # it back from the repository the next day, and no browser ever asks for it.
+    # data/awesome_ledger.json and data/homc_ledger.json are deliberately not
+    # copied: the collectors read them back from the repository the next day, and
+    # no browser ever asks for them.
     for filename in OPTIONAL_DATA:
         src = ROOT / "data" / filename
         if src.is_file():

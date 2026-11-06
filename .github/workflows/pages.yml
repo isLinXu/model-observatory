@@ -217,6 +217,73 @@ jobs:
                        f"({', '.join(baselines)}): their added/removed is not a change yet")
           PY
 
+      # The same repository's human verification tables (§2.0.2/2.0.3/2.0.4), read
+      # from one raw file plus one commits query. More content in somebody else's
+      # repository, and the part a reader is most likely to quote: a day it cannot
+      # be read carries the last snapshot and says so, so this step must not block
+      # the boards above or the indexes below.
+      - name: Capture the HOMC model list
+        id: capture_homc
+        continue-on-error: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/collect_homc.py --data-dir data
+
+      # This collector reads a 250 KB README and publishes a row sample, so the
+      # same two files the list-tracking step watches are watched here too - and
+      # the measured/self-reported gap, which is the point of the board, is said
+      # out loud in the run log rather than only on the page.
+      - name: Report HOMC sizes
+        shell: bash
+        run: |
+          for name in homc homc_ledger homc_history; do
+            file="data/${name}.json"
+            if [ -f "$file" ]; then
+              echo "${name}: $(wc -c <"$file") bytes"
+            fi
+          done
+          if [ -f data/homc.json ] && [ "$(wc -c <data/homc.json)" -gt 147456 ]; then
+            echo "::warning::data/homc.json is over 144 KB even after the collector cut rows; the run's warnings say how far - lower ROW_LIMIT or LINKS_PER_ROW"
+          fi
+          if [ -f data/homc_ledger.json ] && [ "$(wc -c <data/homc_ledger.json)" -gt 204800 ]; then
+            echo "::warning::data/homc_ledger.json is over 200 KB; the ids it forgot read as new arrivals tomorrow - lower LEDGER_ID_LIMIT and the diff becomes an explicit lower bound"
+          fi
+          python - <<'PY'
+          import json, pathlib
+
+          def warn(message):
+              print(f"::warning::{message}")
+
+          index = pathlib.Path("data/homc.json")
+          if not index.exists():
+              warn("data/homc.json is missing: the model-card board has nothing to publish")
+          else:
+              payload = json.loads(index.read_text(encoding="utf-8"))
+              status = payload.get("status")
+              if status != "ok":
+                  warn(f"HOMC status is {status}: {payload.get('error') or 'no reason given'}; "
+                       "the page keeps the carried snapshot and labels which day it is")
+              rows = (payload.get("measured") or {}).get("rows") or {}
+              claimed = (payload.get("comparison") or {}).get("claimed_increment")
+              if rows.get("total") is not None and claimed is not None \
+                      and rows["total"] != claimed:
+                  warn(f"HOMC: this site counted {rows['total']} table rows, the list reports "
+                       f"{claimed} - both stay published; nothing here reconciles them")
+              sizes = payload.get("sizes") or {}
+              for key, label in (("payload_bytes", "data/homc.json"),
+                                 ("ledger_bytes", "data/homc_ledger.json")):
+                  value = sizes.get(key)
+                  budget = sizes.get(f"{key[:-6]}_budget_bytes")
+                  if isinstance(value, int) and isinstance(budget, int) and value >= 0.8 * budget:
+                      warn(f"{label} is at {value // 1024} KB of a {budget // 1024} KB budget; "
+                           "check the run's warnings before the list grows again")
+              cadence = payload.get("cadence") or {}
+              if cadence.get("stalled"):
+                  warn(f"HOMC's README has not moved in {cadence.get('stale_days')} days; the "
+                       "three-state tables are a human cadence, so the board reads its 截至 date "
+                       "rather than this file's commit clock")
+          PY
+
       # The template library is read from the working tree, so this step never
       # fails because of the network. A missing templates/ directory is
       # reported in the payload while the previous index is preserved.
@@ -286,7 +353,8 @@ jobs:
                           modelscope modelscope_history conferences \
                           stars stars_repos stars_history \
                           entities entities_history tasks tasks_history \
-                          awesome awesome_history awesome_ledger runs; do
+                          awesome awesome_history awesome_ledger homc homc_history homc_ledger \
+                          runs; do
             [ -f "data/${snapshot}.json" ] && git add "data/${snapshot}.json"
           done
           if ! git diff --cached --quiet; then

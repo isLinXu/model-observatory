@@ -112,9 +112,10 @@ class DataWiringTest(unittest.TestCase):
         # so "in the repo but out of _site/" is the claim that needs a test:
         # one half lives in the workflow, the other in the ship list.
         workflow = (ROOT / ".github" / "workflows" / "pages.yml").read_text(encoding="utf-8")
-        self.assertIn("awesome_ledger", workflow, "the daily run stopped persisting the ledger")
-        self.assertNotIn("awesome_ledger.json", self.asked)
-        self.assertNotIn("awesome_ledger.json", build.SHIPPED_DATA)
+        for ledger in ("awesome_ledger", "homc_ledger"):
+            self.assertIn(ledger, workflow, f"the daily run stopped persisting {ledger}")
+            self.assertNotIn(f"{ledger}.json", self.asked)
+            self.assertNotIn(f"{ledger}.json", build.SHIPPED_DATA)
 
 
 if __name__ == "__main__":

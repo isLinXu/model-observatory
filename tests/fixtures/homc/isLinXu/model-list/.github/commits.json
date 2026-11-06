@@ -1,0 +1,94 @@
+[
+  {
+    "sha": "3a1f0d2b4c5d6e7f8091a2b3c4d5e6f708192a3b",
+    "node_id": "C_kwDO3a1f0d2b4c5d",
+    "commit": {
+      "author": {
+        "name": "isLinXu",
+        "email": "isLinXu@users.noreply.github.com",
+        "date": "2026-11-02T09:12:03Z"
+      },
+      "committer": {
+        "name": "isLinXu",
+        "email": "isLinXu@users.noreply.github.com",
+        "date": "2026-11-02T09:12:03Z"
+      },
+      "message": "📝 第三轮核实：三态更新至 7 条，收敛 1 条待确认",
+      "tree": {
+        "sha": "3a1f0d2b00000000000000000000000000000000"
+      },
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/isLinXu/model-list/commits/3a1f0d2b4c5d6e7f8091a2b3c4d5e6f708192a3b",
+    "html_url": "https://github.com/isLinXu/model-list/commit/3a1f0d2b4c5d6e7f8091a2b3c4d5e6f708192a3b",
+    "author": {
+      "login": "isLinXu",
+      "id": 1,
+      "type": "User",
+      "site_admin": false,
+      "html_url": "https://github.com/isLinXu"
+    },
+    "committer": {
+      "login": "isLinXu",
+      "type": "User"
+    },
+    "parents": [
+      {
+        "sha": "0000000000000000000000000000000000000000"
+      }
+    ]
+  },
+  {
+    "sha": "9c8b7a6d5e4f3021908172635445f6e7d8c9b0a1",
+    "node_id": "C_kwDO9c8b7a6d5e4f",
+    "commit": {
+      "author": {
+        "name": "github-actions[bot]",
+        "email": "41898282+github-actions[bot]@users.noreply.github.com",
+        "date": "2026-10-30T02:15:44Z"
+      },
+      "committer": {
+        "name": "github-actions[bot]",
+        "email": "41898282+github-actions[bot]@users.noreply.github.com",
+        "date": "2026-10-30T02:15:44Z"
+      },
+      "message": "data: 自动日报 §2.0.8",
+      "tree": {
+        "sha": "9c8b7a6d00000000000000000000000000000000"
+      },
+      "comment_count": 0,
+      "verification": {
+        "verified": false,
+        "reason": "unsigned",
+        "signature": null,
+        "payload": null,
+        "verified_at": null
+      }
+    },
+    "url": "https://api.github.com/repos/isLinXu/model-list/commits/9c8b7a6d5e4f3021908172635445f6e7d8c9b0a1",
+    "html_url": "https://github.com/isLinXu/model-list/commit/9c8b7a6d5e4f3021908172635445f6e7d8c9b0a1",
+    "author": {
+      "login": "github-actions[bot]",
+      "id": 2,
+      "type": "Bot",
+      "site_admin": false,
+      "html_url": "https://github.com/apps/github-actions"
+    },
+    "committer": {
+      "login": "github-actions[bot]",
+      "type": "Bot"
+    },
+    "parents": [
+      {
+        "sha": "0000000000000000000000000000000000000000"
+      }
+    ]
+  }
+]

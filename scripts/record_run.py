@@ -71,6 +71,7 @@ STEP_LABELS = {
     "capture_stars": "star 图谱",
     "capture_conferences": "会议截止目录",
     "capture_awesome": "awesome 清单跟踪",
+    "capture_homc": "HOMC 核实总表",
     "index_templates": "模版库索引",
     "index_entities": "实体注册表索引",
     "index_tasks": "任务看板索引",
