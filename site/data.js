@@ -37,6 +37,9 @@ MO.data = (() => {
     // GitHub's own profile page lists owned repositories, so 'own' is the
     // default and keeps the headline number comparable with github.com.
     githubForks: 'own',
+    modelPage: 1,
+    modelPageSize: 20,
+    view: 'overview',
     modelSource: 'snapshot',
     modelsCapturedAt: null,
     modelRefreshError: null,
@@ -143,6 +146,39 @@ MO.data = (() => {
     runsError: null,
     status: 'loading'
   };
+
+  const WORKSPACES = [
+    'overview', 'analytics', 'models', 'collections', 'datasets', 'modelscope', 'conferences',
+    'stars', 'entities', 'tasks', 'awesome', 'homc', 'scholar', 'social', 'github', 'templates'
+  ];
+  const WORKSPACE_OF = { compare: 'models' };
+
+  /** Map a URL hash onto the workspace that should be on screen. */
+  function resolveView(hash) {
+    const id = String(hash || '').replace(/^#/, '').split(/[/?]/)[0] || 'overview';
+    const known = WORKSPACES.includes(id) || Object.prototype.hasOwnProperty.call(WORKSPACE_OF, id);
+    const workspace = WORKSPACE_OF[id] || (WORKSPACES.includes(id) ? id : 'overview');
+    return {
+      id: known ? id : 'overview',
+      workspace,
+      focus: WORKSPACE_OF[id] ? id : null
+    };
+  }
+
+  /** Slice a list into a clamped page. An empty list is still page 1 of 1. */
+  function paginate(rows, page, size) {
+    const list = Array.isArray(rows) ? rows : [];
+    const pageSize = Math.max(1, Math.trunc(Number(size)) || 1);
+    const pages = Math.max(1, Math.ceil(list.length / pageSize));
+    const current = Math.min(Math.max(1, Math.trunc(Number(page)) || 1), pages);
+    return {
+      page: current,
+      pages,
+      size: pageSize,
+      total: list.length,
+      rows: list.slice((current - 1) * pageSize, current * pageSize)
+    };
+  }
 
   const listeners = [];
 
@@ -2699,6 +2735,208 @@ MO.data = (() => {
    * scoped repositories; `excludedForks` reports how many fork repositories
    * the current scope hides, so the UI can explain the difference.
    */
+  function sumCurrent(items, key) {
+    return (items || [])
+      .filter(item => Number.isFinite(item[key]))
+      .reduce((sum, item) => sum + item[key], 0);
+  }
+
+  function snapshotDelta(snapshots, key) {
+    const series = (snapshots || []).filter(item => Number.isFinite(item[key]));
+    if (series.length < 2) return null;
+    return series.at(-1)[key] - series.at(-2)[key];
+  }
+
+  /**
+   * Models present in the live HF list but absent from the latest UTC snapshot,
+   * and the reverse. Empty unless the live refresh succeeded.
+   */
+  function inventoryShift() {
+    const snapshotIds = new Set(Object.keys(state.snapshots.at(-1)?.models || {}));
+    const liveIds = (state.latest?.models || []).map(model => model.id);
+    if (!snapshotIds.size || state.modelSource !== 'live') return { added: [], removed: [] };
+    const liveSet = new Set(liveIds);
+    return {
+      added: liveIds.filter(id => !snapshotIds.has(id)),
+      removed: [...snapshotIds].filter(id => !liveSet.has(id))
+    };
+  }
+
+  /**
+   * Account-wide briefing. Pulses carry every delta. Notes are only the
+   * exceptions a pulse cannot say: a missing baseline, a stale snapshot, a
+   * live-list drift, or a cumulative value that went down.
+   */
+  function briefing(now = Date.now()) {
+    const models = state.latest?.models || [];
+    const datasets = state.latest?.datasets || [];
+    const previous = state.snapshots.at(-2);
+    const current = state.snapshots.at(-1);
+    const modelNet = netChange(current, previous, 'models');
+    const datasetNet = netChange(current, previous, 'datasets');
+    const scholarOk = state.scholar && state.scholar.status !== 'unavailable';
+    const citeDelta = snapshotDelta(state.scholarSnapshots, 'citations_all');
+    const socialItems = socialSources();
+    const socialTotal = socialItems.reduce((sum, source) => sum + source.followers, 0);
+    const socialChange = socialItems.reduce((sum, source) => {
+      const value = socialDelta(source.id);
+      return Number.isFinite(value) ? sum + value : sum;
+    }, 0);
+    const socialHasDelta = socialItems.some(source => socialDelta(source.id) !== null);
+    const githubAccount = state.github?.account || {};
+    const githubOk = state.github && state.github.status !== 'unavailable';
+    const growth = githubGrowth();
+    const totals = githubTotals();
+    const profileDownloads = state.modelscope?.profile?.downloads;
+    const msOk = state.modelscope && state.modelscope.status !== 'unavailable';
+    const profileDelta = modelscopeProfileDelta();
+
+    const pulses = [
+      {
+        id: 'models', href: '#models', kicker: 'MODELS', label: '模型累计下载',
+        value: models.some(model => Number.isFinite(model.all_time)) ? sumCurrent(models, 'all_time') : null,
+        delta: modelNet?.value ?? null,
+        caption: models.length ? `${models.length} 个公开模型` : '尚无模型快照',
+        available: Boolean(models.length)
+      },
+      {
+        id: 'datasets', href: '#datasets', kicker: 'DATASETS', label: '数据集累计下载',
+        value: datasets.some(item => Number.isFinite(item.all_time)) ? sumCurrent(datasets, 'all_time') : null,
+        delta: datasetNet?.value ?? null,
+        caption: datasets.length ? `${datasets.length} 个公开数据集` : '尚无数据集快照',
+        available: Boolean(datasets.length)
+      },
+      {
+        id: 'scholar', href: '#scholar', kicker: 'SCHOLAR', label: '引用总数',
+        value: scholarOk && Number.isFinite(state.scholar.metrics?.citations_all) ? state.scholar.metrics.citations_all : null,
+        delta: citeDelta,
+        caption: scholarOk ? `h-index ${state.scholar.metrics?.h_index_all ?? '—'}` : (state.scholar?.error || '档案暂不可用'),
+        available: Boolean(scholarOk && Number.isFinite(state.scholar.metrics?.citations_all))
+      },
+      {
+        id: 'modelscope', href: '#modelscope', kicker: 'MODELSCOPE', label: '魔搭主页下载',
+        value: msOk && Number.isFinite(profileDownloads) ? profileDownloads : null,
+        delta: profileDelta?.value ?? null,
+        caption: msOk ? '公开主页下载计数' : (state.modelscope?.error || '魔搭暂不可用'),
+        available: Boolean(msOk && Number.isFinite(profileDownloads))
+      },
+      {
+        id: 'social', href: '#social', kicker: 'AUDIENCE', label: '社交粉丝合计',
+        value: socialItems.length ? socialTotal : null,
+        delta: socialHasDelta ? socialChange : null,
+        caption: socialItems.length ? `${socialItems.length} 个已配置平台` : '尚未配置平台',
+        available: Boolean(socialItems.length)
+      },
+      {
+        id: 'github', href: '#github', kicker: 'GITHUB', label: 'GitHub 关注者',
+        value: githubOk && Number.isFinite(githubAccount.followers) ? githubAccount.followers : null,
+        delta: growth.delta,
+        caption: githubOk ? '' : (state.github?.error || '看板暂不可用'),
+        stars: totals.stars,
+        repositories: totals.repositories,
+        available: Boolean(githubOk && Number.isFinite(githubAccount.followers))
+      }
+    ];
+
+    const warn = [];
+    const rest = [];
+    const add = note => (note.tone === 'warn' ? warn : rest).push(note);
+    const captured = Date.parse(state.latest?.captured_at || '');
+    const age = Number.isFinite(captured) ? (now - captured) / 86400000 : null;
+
+    if (!state.snapshots.length) {
+      add({ tone: 'info', domain: 'models', href: '#models', text: '等待第一次 Hugging Face 快照。运行采集工作流后，累计下载才会出现在总览里。' });
+    } else if (state.snapshots.length < 2) {
+      add({ tone: 'info', domain: 'models', href: '#analytics', text: '首次快照已就位。相邻净变化需要至少两次采集，不会用 0 去填缺失的一天。' });
+    }
+    if (age !== null && age > 2) {
+      add({ tone: 'warn', domain: 'models', href: '#overview', value: Math.floor(age), text: `公开快照已超过 ${Math.floor(age)} 天未更新。趋势停在上次成功采集，不会用 0 填空档。` });
+    }
+    if (state.modelRefreshError) {
+      add({ tone: 'warn', domain: 'models', href: '#models', text: `HF 实时清单暂不可用：${state.modelRefreshError}。总览显示已发布快照。` });
+    } else if (state.modelSource === 'live') {
+      const shift = inventoryShift();
+      if (shift.added.length) {
+        add({ tone: 'ok', domain: 'models', href: '#models', value: shift.added.length, text: `实时清单比最新快照多了 ${shift.added.length} 个模型，无需等待每日采集。` });
+      }
+      if (shift.removed.length) {
+        add({ tone: 'info', domain: 'models', href: '#models', value: shift.removed.length, text: `实时清单比最新快照少了 ${shift.removed.length} 个模型，可能已下线或改名。` });
+      }
+    }
+    if (modelNet?.revised) {
+      add({ tone: 'warn', domain: 'models', href: '#models', value: modelNet.revised, template: 'revised', text: `${modelNet.revised} 个模型的累计值下降，已保留为待核查，而不是抹平。` });
+    }
+
+    const moves = pulses.filter(pulse => Number.isFinite(pulse.delta) && pulse.delta !== 0);
+    const revised = modelNet?.revised || 0;
+    let headline;
+    if (!state.snapshots.length && !models.length) headline = { kind: 'empty' };
+    else if (!state.snapshots.length) headline = { kind: 'empty' };
+    else if (state.snapshots.length < 2 && !moves.length && !revised) headline = { kind: 'waiting' };
+    else if (revised) headline = { kind: 'warn', label: '累计值下降', value: revised };
+    else if (moves.length) {
+      const lead = moves.reduce((best, pulse) => Math.abs(pulse.delta) > Math.abs(best.delta) ? pulse : best);
+      headline = { kind: 'delta', label: lead.label, value: lead.delta };
+    } else headline = { kind: 'idle' };
+
+    return { headline, notes: [...warn, ...rest], pulses };
+  }
+
+  /**
+   * What the overview should put in front of the reader besides the pulses.
+   * Empty when nothing is due, broken, or unfinished. Tasks stay out until
+   * that board has actually been read.
+   */
+  function attention(now = Date.now()) {
+    const items = [];
+    const health = runHealth();
+    if (health.loaded && health.latest && health.latest.status && health.latest.status !== 'ok') {
+      items.push({
+        tone: 'warn', href: '#overview', domain: 'runs',
+        title: '最近一次采集没有跑干净',
+        detail: health.latest.status
+      });
+    }
+    if (state.conferences && state.conferences.status !== 'unavailable') {
+      const next = conferenceStats(now).next;
+      if (next && Number.isFinite(next.ts)) {
+        const days = (next.ts - now) / 86400000;
+        if (days >= 0 && days <= 21) {
+          const kinds = { paper: '论文截止', abstract: '摘要截止', rebuttal: 'Rebuttal', decision: '录用通知' };
+          const kind = kinds[next.kind] || next.kind || '节点';
+          items.push({
+            tone: days <= 7 ? 'warn' : 'info',
+            href: '#conferences',
+            domain: 'conferences',
+            title: `${next.title} · ${kind}`,
+            detail: `${Math.max(1, Math.ceil(days))} 天内`
+          });
+        }
+      }
+    }
+    if (['ok', 'stale'].includes(state.entities?.status)) {
+      const broken = entityProblems().filter(item => item.state === 'unresolved').length;
+      if (broken) {
+        items.push({
+          tone: 'warn', href: '#entities', domain: 'entities', value: broken,
+          title: `${broken} 条注册表链接对不上当日快照`,
+          detail: '断链'
+        });
+      }
+    }
+    if (['ok', 'stale'].includes(state.tasks?.status)) {
+      const blocked = taskStats().blocked;
+      if (blocked > 0) {
+        items.push({
+          tone: 'warn', href: '#tasks', domain: 'tasks', value: blocked,
+          title: `${blocked} 个任务停在受阻`,
+          detail: '任务看板'
+        });
+      }
+    }
+    return items.slice(0, 4);
+  }
+
   function githubTotals() {
     const all = state.github?.repositories || [];
     const repos = githubScope();
@@ -2747,6 +2985,12 @@ MO.data = (() => {
     githubLanguages,
     githubRepositories,
     githubTotals,
+    resolveView,
+    paginate,
+    inventoryShift,
+    briefing,
+    attention,
+    WORKSPACES,
     refreshModelScope,
     refreshModelScopeSnapshot,
     modelscopeModels,

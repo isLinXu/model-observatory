@@ -533,6 +533,7 @@ function loadModelView(data, globals = {}) {
       data,
       charts: {
         line() {},
+        delta() {},
         yearBars() {},
         // render.js captures MO.charts at load time, so the star panels need the
         // same entry points the chart module exposes. Record the arguments so a
@@ -6569,5 +6570,100 @@ test('boot paints the run line from the record file, next to the boards it can r
   assert.match(view.element('runHealth').innerHTML, /最近一次运行 2026-11-03（第 312 次）15 步都成功/,
     'renderAll has to reach the new line, not just export a function nobody calls');
   assert.equal(view.element('runHealth').className, 'run-health good');
+});
+
+test('resolveView keeps analytics and compare inside their parent workspaces', () => {
+  const data = loadData();
+  const analytics = data.resolveView('#analytics');
+  assert.equal(analytics.id, 'analytics');
+  assert.equal(analytics.workspace, 'analytics');
+  assert.equal(analytics.focus, null);
+  const compare = data.resolveView('#compare');
+  assert.equal(compare.id, 'compare');
+  assert.equal(compare.workspace, 'models');
+  assert.equal(compare.focus, 'compare');
+  assert.equal(data.resolveView('#stars').workspace, 'stars');
+  assert.equal(data.resolveView('#nope').workspace, 'overview');
+  assert.equal(data.resolveView('').id, 'overview');
+});
+
+test('paginate clamps overflow and keeps an empty list on page 1', () => {
+  const data = loadData();
+  const rows = ['a', 'b', 'c', 'd', 'e'];
+  assert.deepEqual([...data.paginate(rows, 2, 2).rows], ['c', 'd']);
+  assert.equal(data.paginate(rows, 99, 2).page, 3);
+  assert.equal(data.paginate(rows, 0, 2).page, 1);
+  const empty = data.paginate([], 4, 20);
+  assert.equal(empty.page, 1);
+  assert.equal(empty.pages, 1);
+  assert.equal(empty.total, 0);
+});
+
+test('briefing leads with the largest move and stays quiet when a model net is zero', () => {
+  const data = loadData();
+  data.state.latest = {
+    author: 'gatilin', captured_at: '2026-10-25T02:23:00Z',
+    models: [{ id: 'gatilin/a', all_time: 100 }, { id: 'gatilin/b', all_time: 40 }],
+    datasets: [{ id: 'gatilin/d', all_time: 10 }]
+  };
+  data.state.snapshots = [
+    { date: '2026-10-24', models: { 'gatilin/a': [80, 1], 'gatilin/b': [40, 1] }, datasets: { 'gatilin/d': [8, 1] } },
+    { date: '2026-10-25', models: { 'gatilin/a': [100, 1], 'gatilin/b': [40, 1] }, datasets: { 'gatilin/d': [10, 1] } }
+  ];
+  data.state.scholar = { status: 'ok', metrics: { citations_all: 12, h_index_all: 2 } };
+  data.state.scholarSnapshots = [
+    { date: '2026-10-24', citations_all: 10 },
+    { date: '2026-10-25', citations_all: 12 }
+  ];
+  data.state.github = { status: 'ok', account: { followers: 5, url: 'https://github.com/isLinXu' }, repositories: [] };
+  data.state.githubSnapshots = [
+    { date: '2026-10-24', followers: 5 },
+    { date: '2026-10-25', followers: 5 }
+  ];
+  const brief = data.briefing(Date.parse('2026-10-25T08:00:00Z'));
+  assert.equal(brief.headline.kind, 'delta');
+  assert.equal(brief.headline.label, '模型累计下载');
+  assert.equal(brief.headline.value, 20);
+  assert.equal(brief.pulses.find(pulse => pulse.id === 'models').delta, 20);
+  assert.equal(brief.pulses.find(pulse => pulse.id === 'scholar').delta, 2);
+  assert.equal(brief.notes.some(note => note.delta), false);
+  assert.equal(brief.pulses.find(pulse => pulse.id === 'github').delta, 0);
+  data.state.snapshots[1].models = { 'gatilin/a': [80, 1], 'gatilin/b': [40, 1] };
+  const quiet = data.briefing(Date.parse('2026-10-25T08:00:00Z'));
+  assert.equal(quiet.notes.some(note => note.domain === 'models' && note.delta === 0), false);
+});
+
+test('inventory shift reports only models that appeared after the snapshot', () => {
+  const data = loadData();
+  data.state.modelSource = 'live';
+  data.state.latest = { models: [{ id: 'gatilin/a' }, { id: 'gatilin/new' }] };
+  data.state.snapshots = [{ date: '2026-10-25', models: { 'gatilin/a': [1, 1] } }];
+  const shift = data.inventoryShift();
+  assert.deepEqual({ added: [...shift.added], removed: [...shift.removed] }, { added: ['gatilin/new'], removed: [] });
+  const brief = data.briefing(Date.parse('2026-10-25T08:00:00Z'));
+  assert.ok(brief.notes.some(note => note.tone === 'ok' && note.value === 1));
+});
+
+test('attention surfaces a deadline inside three weeks and ignores a later one', () => {
+  const data = loadData();
+  const now = Date.parse('2026-11-06T00:00:00Z');
+  assert.equal(data.attention(now).length, 0);
+  const conference = (utc) => ({
+    status: 'ok',
+    conferences: [{
+      key: 'AI/cvpr', title: 'CVPR', area: 'AI', rank: { ccf: 'A' },
+      editions: [{ id: 'cvpr27', year: 2027, events: [
+        { id: 'AI/cvpr:cvpr27:paper:1', kind: 'paper', utc }
+      ] }]
+    }]
+  });
+  data.state.conferences = conference('2026-11-09T23:59:59Z');
+  const soon = data.attention(now);
+  assert.equal(soon.length, 1);
+  assert.equal(soon[0].domain, 'conferences');
+  assert.equal(soon[0].tone, 'warn');
+  assert.match(soon[0].title, /CVPR/);
+  data.state.conferences = conference('2026-12-20T00:00:00Z');
+  assert.equal(data.attention(now).some(item => item.domain === 'conferences'), false);
 });
 
