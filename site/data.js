@@ -74,6 +74,7 @@ MO.data = (() => {
     conferenceKind: 'paper',
     conferenceWindow: '90',
     conferencePage: 1,
+    modelShift: 'all',
     stars: null,
     starDetail: null,
     starDetailStatus: 'idle',
@@ -180,9 +181,94 @@ MO.data = (() => {
     };
   }
 
-  const listeners = [];
+  /** Query string after a workspace hash, such as `#conferences?kind=abstract`. */
+  function viewQuery(hash) {
+    const query = String(hash || '').split('?')[1] || '';
+    const out = {};
+    for (const part of query.split('&')) {
+      if (!part) continue;
+      const eq = part.indexOf('=');
+      const key = eq < 0 ? part : part.slice(0, eq);
+      const value = eq < 0 ? '' : part.slice(eq + 1);
+      out[queryUnescape(key)] = queryUnescape(value);
+    }
+    return out;
+  }
+
+  function queryUnescape(value) {
+    const text = String(value).replace(/\+/g, ' ');
+    if (typeof decodeURIComponent !== 'function') return text;
+    try { return decodeURIComponent(text); } catch (error) { return text; }
+  }
+
+  function queryEscape(value) {
+    const text = String(value);
+    if (typeof encodeURIComponent === 'function') return encodeURIComponent(text);
+    return text.replace(/[^A-Za-z0-9\-_.~]/g, '');
+  }
+
+  function arrivalHref(workspace, params) {
+    const query = Object.entries(params)
+      .filter(([, value]) => value != null && value !== '')
+      .map(([key, value]) => `${queryEscape(key)}=${queryEscape(value)}`)
+      .join('&');
+    return query ? `#${workspace}?${query}` : `#${workspace}`;
+  }
+
+  /**
+   * A linked board opens already looking at the thing the overview named.
+   * An empty query leaves the board's current filters alone.
+   */
+  function applyArrival(workspace, query = {}) {
+    if (workspace === 'conferences') {
+      const kinds = ['all', 'paper', 'abstract', 'rebuttal', 'decision'];
+      const windows = ['30', '90', '180', '365', 'open', 'tbd', 'past'];
+      if (kinds.includes(query.kind)) state.conferenceKind = query.kind;
+      if (windows.includes(query.window)) state.conferenceWindow = query.window;
+      if (query.q != null) state.conferenceSearch = query.q;
+      if (query.kind || query.window || query.q != null) state.conferencePage = 1;
+    } else if (workspace === 'models') {
+      if (query.shift === 'added' || query.shift === 'all') state.modelShift = query.shift;
+      if (query.anomaly === '1' || query.anomaly === '0') state.modelOnlyAnomalies = query.anomaly === '1';
+      if (query.q != null) state.modelSearch = query.q;
+      if (query.shift || query.anomaly || query.q != null) state.modelPage = 1;
+    } else if (workspace === 'entities') {
+      const links = ['all', 'problem', 'unresolved', 'unchecked', 'out_of_scope', 'resolved'];
+      if (links.includes(query.link)) state.entityLink = query.link;
+      if (query.link) state.entityPage = 1;
+    }
+  }
+
+  /** One sentence for a board opened from the overview. Empty when the hash has no such request. */
+  function arrivalNote(workspace, query = {}) {
+    if (workspace === 'conferences' && (query.kind || query.q || query.window)) {
+      const kinds = { paper: '论文截止', abstract: '摘要截止', rebuttal: 'Rebuttal', decision: '录用通知', all: '全部环节' };
+      const bits = [query.q, kinds[query.kind] || '', query.window ? `未来 ${query.window} 天` : ''].filter(Boolean);
+      return `正在查看总览指出的 ${bits.join(' · ')}`;
+    }
+    if (workspace === 'models' && query.shift === 'added') return '正在只看实时清单里新出现的模型';
+    if (workspace === 'models' && query.anomaly === '1') return '正在只看累计值下降的模型';
+    if (workspace === 'entities' && query.link === 'unresolved') return '正在只看含断链的条目';
+    return '';
+  }
+
+  /** Bare board links drop a filter that was only there because the overview asked for it. */
+  function clearArrivalFilters(workspace) {
+    if (workspace === 'conferences') {
+      Object.assign(state, {
+        conferenceSearch: '', conferenceArea: 'all', conferenceRank: 'all',
+        conferenceKind: 'paper', conferenceWindow: '90', conferencePage: 1
+      });
+    } else if (workspace === 'models') {
+      Object.assign(state, { modelShift: 'all', modelOnlyAnomalies: false, modelSearch: '', modelPage: 1 });
+    } else if (workspace === 'entities') {
+      Object.assign(state, { entityLink: 'all', entityPage: 1 });
+    }
+  }
 
   /** Subscribe to state changes. Returns an unsubscribe function. */
+  const listeners = [];
+
   function subscribe(callback) {
     listeners.push(callback);
     return () => {
@@ -2581,8 +2667,11 @@ MO.data = (() => {
 
   function filteredModels() {
     const search = state.modelSearch.trim().toLowerCase();
+    const added = state.modelShift === 'added' ? new Set(inventoryShift().added) : null;
     const rows = localModels().filter(model =>
-      (!search || model.id.toLowerCase().includes(search)) && (!state.modelOnlyAnomalies || model.d1 < 0));
+      (!added || added.has(model.id)) &&
+      (!search || model.id.toLowerCase().includes(search)) &&
+      (!state.modelOnlyAnomalies || model.d1 < 0));
     const sort = state.modelSort;
     if (sort === 'name') rows.sort((a, b) => a.id.localeCompare(b.id));
     else rows.sort((a, b) => ((b[sort] ?? -Infinity) - (a[sort] ?? -Infinity)) || a.id.localeCompare(b.id));
@@ -2793,42 +2882,42 @@ MO.data = (() => {
 
     const pulses = [
       {
-        id: 'models', href: '#models', kicker: 'MODELS', label: '模型累计下载',
+        id: 'models', href: '#models', label: '模型累计下载',
         value: models.some(model => Number.isFinite(model.all_time)) ? sumCurrent(models, 'all_time') : null,
         delta: modelNet?.value ?? null,
         caption: models.length ? `${models.length} 个公开模型` : '尚无模型快照',
         available: Boolean(models.length)
       },
       {
-        id: 'datasets', href: '#datasets', kicker: 'DATASETS', label: '数据集累计下载',
+        id: 'datasets', href: '#datasets', label: '数据集累计下载',
         value: datasets.some(item => Number.isFinite(item.all_time)) ? sumCurrent(datasets, 'all_time') : null,
         delta: datasetNet?.value ?? null,
         caption: datasets.length ? `${datasets.length} 个公开数据集` : '尚无数据集快照',
         available: Boolean(datasets.length)
       },
       {
-        id: 'scholar', href: '#scholar', kicker: 'SCHOLAR', label: '引用总数',
+        id: 'scholar', href: '#scholar', label: '引用总数',
         value: scholarOk && Number.isFinite(state.scholar.metrics?.citations_all) ? state.scholar.metrics.citations_all : null,
         delta: citeDelta,
         caption: scholarOk ? `h-index ${state.scholar.metrics?.h_index_all ?? '—'}` : (state.scholar?.error || '档案暂不可用'),
         available: Boolean(scholarOk && Number.isFinite(state.scholar.metrics?.citations_all))
       },
       {
-        id: 'modelscope', href: '#modelscope', kicker: 'MODELSCOPE', label: '魔搭主页下载',
+        id: 'modelscope', href: '#modelscope', label: '魔搭主页下载',
         value: msOk && Number.isFinite(profileDownloads) ? profileDownloads : null,
         delta: profileDelta?.value ?? null,
         caption: msOk ? '公开主页下载计数' : (state.modelscope?.error || '魔搭暂不可用'),
         available: Boolean(msOk && Number.isFinite(profileDownloads))
       },
       {
-        id: 'social', href: '#social', kicker: 'AUDIENCE', label: '社交粉丝合计',
+        id: 'social', href: '#social', label: '社交粉丝合计',
         value: socialItems.length ? socialTotal : null,
         delta: socialHasDelta ? socialChange : null,
         caption: socialItems.length ? `${socialItems.length} 个已配置平台` : '尚未配置平台',
         available: Boolean(socialItems.length)
       },
       {
-        id: 'github', href: '#github', kicker: 'GITHUB', label: 'GitHub 关注者',
+        id: 'github', href: '#github', label: 'GitHub 关注者',
         value: githubOk && Number.isFinite(githubAccount.followers) ? githubAccount.followers : null,
         delta: growth.delta,
         caption: githubOk ? '' : (state.github?.error || '看板暂不可用'),
@@ -2850,21 +2939,29 @@ MO.data = (() => {
       add({ tone: 'info', domain: 'models', href: '#analytics', text: '首次快照已就位。相邻净变化需要至少两次采集，不会用 0 去填缺失的一天。' });
     }
     if (age !== null && age > 2) {
-      add({ tone: 'warn', domain: 'models', href: '#overview', value: Math.floor(age), text: `公开快照已超过 ${Math.floor(age)} 天未更新。趋势停在上次成功采集，不会用 0 填空档。` });
+      add({ tone: 'warn', domain: 'models', href: '#analytics', value: Math.floor(age), text: `公开快照已超过 ${Math.floor(age)} 天未更新。趋势停在上次成功采集，不会用 0 填空档。` });
     }
     if (state.modelRefreshError) {
       add({ tone: 'warn', domain: 'models', href: '#models', text: `HF 实时清单暂不可用：${state.modelRefreshError}。总览显示已发布快照。` });
     } else if (state.modelSource === 'live') {
       const shift = inventoryShift();
       if (shift.added.length) {
-        add({ tone: 'ok', domain: 'models', href: '#models', value: shift.added.length, text: `实时清单比最新快照多了 ${shift.added.length} 个模型，无需等待每日采集。` });
+        add({
+          tone: 'ok', domain: 'models', href: arrivalHref('models', { shift: 'added' }),
+          value: shift.added.length,
+          text: `实时清单比最新快照多了 ${shift.added.length} 个模型，无需等待每日采集。`
+        });
       }
       if (shift.removed.length) {
         add({ tone: 'info', domain: 'models', href: '#models', value: shift.removed.length, text: `实时清单比最新快照少了 ${shift.removed.length} 个模型，可能已下线或改名。` });
       }
     }
     if (modelNet?.revised) {
-      add({ tone: 'warn', domain: 'models', href: '#models', value: modelNet.revised, template: 'revised', text: `${modelNet.revised} 个模型的累计值下降，已保留为待核查，而不是抹平。` });
+      add({
+        tone: 'warn', domain: 'models', href: arrivalHref('models', { anomaly: '1' }),
+        value: modelNet.revised, template: 'revised',
+        text: `${modelNet.revised} 个模型的累计值下降，已保留为待核查，而不是抹平。`
+      });
     }
 
     const moves = pulses.filter(pulse => Number.isFinite(pulse.delta) && pulse.delta !== 0);
@@ -2906,7 +3003,7 @@ MO.data = (() => {
           const kind = kinds[next.kind] || next.kind || '节点';
           items.push({
             tone: days <= 7 ? 'warn' : 'info',
-            href: '#conferences',
+            href: arrivalHref('conferences', { kind: next.kind, q: next.title, window: '30' }),
             domain: 'conferences',
             title: `${next.title} · ${kind}`,
             detail: `${Math.max(1, Math.ceil(days))} 天内`
@@ -2918,7 +3015,7 @@ MO.data = (() => {
       const broken = entityProblems().filter(item => item.state === 'unresolved').length;
       if (broken) {
         items.push({
-          tone: 'warn', href: '#entities', domain: 'entities', value: broken,
+          tone: 'warn', href: arrivalHref('entities', { link: 'unresolved' }), domain: 'entities', value: broken,
           title: `${broken} 条注册表链接对不上当日快照`,
           detail: '断链'
         });
@@ -2990,6 +3087,10 @@ MO.data = (() => {
     inventoryShift,
     briefing,
     attention,
+    viewQuery,
+    applyArrival,
+    arrivalNote,
+    clearArrivalFilters,
     WORKSPACES,
     refreshModelScope,
     refreshModelScopeSnapshot,

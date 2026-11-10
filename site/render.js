@@ -7,7 +7,7 @@ window.MO = window.MO || {};
 MO.render = (() => {
   'use strict';
 
-  const { esc, fmt, compact, countCN, signed, signedCN, tone, dayLabel, timestamp, ageInDays,
+  const { esc, fmt, compact, countCN, signed, signedCN, tone, dayLabel, timestamp, plate, ageInDays,
     countdown, deadlineTone, offsetLabel } = MO.format;
   const charts = MO.charts;
   const data = MO.data;
@@ -65,7 +65,11 @@ MO.render = (() => {
     const brief = data.briefing();
     const headline = $('briefingHeadline');
     if (headline) {
-      headline.textContent = headlineText(brief.headline);
+      if (brief.headline?.kind === 'delta') {
+        headline.innerHTML = `${esc(brief.headline.label)} <em>${esc(signed(brief.headline.value))}</em>`;
+      } else {
+        headline.textContent = headlineText(brief.headline);
+      }
       headline.classList.toggle('is-warn', brief.headline?.kind === 'warn');
       headline.classList.toggle('is-down', brief.headline?.kind === 'delta' && brief.headline.value < 0);
     }
@@ -88,7 +92,7 @@ MO.render = (() => {
         : pulse.delta === 0 ? '持平' : signed(pulse.delta);
       const lead = brief.headline?.kind === 'delta' && pulse.label === brief.headline.label;
       return `<a class="pulse${pulse.available ? '' : ' muted'}${lead ? ' is-lead' : ''}" href="${esc(pulse.href)}">` +
-        `<div class="pulse-kicker">${esc(pulse.kicker)}</div>` +
+        `<div class="pulse-kicker">${esc(pulse.label)}</div>` +
         `<div class="pulse-value" title="${esc(fmt(pulse.value))}">${esc(value)}</div>` +
         `<div class="pulse-delta ${tone(pulse.delta)}">${esc(delta)}</div>` +
         `<div class="pulse-caption">${esc(caption)}</div></a>`;
@@ -100,10 +104,13 @@ MO.render = (() => {
     if (!host || typeof data.attention !== 'function') return;
     const items = data.attention();
     host.hidden = !items.length;
-    host.innerHTML = items.map(item =>
-      `<li class="attention-item ${esc(item.tone)}"><a href="${esc(item.href)}">` +
-      `<strong>${esc(item.title)}</strong><span>${esc(item.detail || '')}</span></a></li>`
-    ).join('');
+    host.innerHTML = items.map(item => {
+      const kicker = item.domain === 'conferences' ? '截止'
+        : item.tone === 'warn' ? '需处理' : '提示';
+      return `<li class="attention-item ${esc(item.tone)}"><a href="${esc(item.href)}">` +
+        `<span class="attention-kicker">${kicker}</span>` +
+        `<strong>${esc(item.title)}</strong><span>${esc(item.detail || '')}</span></a></li>`;
+    }).join('');
   }
 
   // --- Shared chrome --------------------------------------------------------
@@ -171,7 +178,7 @@ MO.render = (() => {
       const metric = (key, label) => `<div><span>${label}</span><strong title="${esc(fmt(stats[key].value))}">${esc(countCN(stats[key].value))}</strong>` +
         `<small>有效 ${stats[key].known}/${stats.count} 个</small></div>`;
       return `<article class="collection-card${state.modelCollection === collection.slug ? ' selected' : ''}" style="--collection-accent:${charts.colorAt(index)}">` +
-        `<div class="collection-card-head"><span class="collection-kind">${members.length ? 'MODEL COLLECTION' : '导航 / 其他条目'}</span><span class="micro muted">${stats.count} 个模型</span></div>` +
+        `<div class="collection-card-head"><span class="collection-kind">${members.length ? '模型集合' : '导航 / 其他条目'}</span><span class="micro muted">${stats.count} 个模型</span></div>` +
         `<h3><a href="${href}" target="_blank" rel="noopener noreferrer">${esc(collection.title)} ↗</a></h3>` +
         `<p class="collection-description" title="${esc(collection.description)}">${esc(collection.description || '暂无集合说明')}</p>` +
         `<div class="collection-metrics">${metric('all_time', '累计下载')}${metric('last_30d', '滚动 30 天')}</div>` +
@@ -184,7 +191,7 @@ MO.render = (() => {
     const state = data.state, rows = data.modelscopeModels();
     const pages = Math.max(1, Math.ceil(rows.length / 20));
     state.modelscopePage = Math.min(Math.max(1, state.modelscopePage), pages);
-    $('modelscopeTableCount').textContent = `${fmt(rows.length)} / ${fmt(state.modelscope?.models?.length || 0)} MODELS`;
+    $('modelscopeTableCount').textContent = `${fmt(rows.length)} / ${fmt(state.modelscope?.models?.length || 0)} 个模型`;
     $('modelscopeRows').innerHTML = rows.length ? rows.slice((state.modelscopePage - 1) * 20, state.modelscopePage * 20).map(model => {
       const change = data.modelscopeDelta(model.id);
       const href = `https://www.modelscope.cn/models/${model.id.split('/').map(encodeURIComponent).join('/')}`;
@@ -397,7 +404,7 @@ MO.render = (() => {
     const pages = data.conferencePageCount();
     state.conferencePage = Math.min(Math.max(1, state.conferencePage), pages);
     $('conferenceTableCount').textContent =
-      `${fmt(rows.length)} / ${fmt(data.conferenceEvents().length)} EVENTS · ${WINDOW_LABELS[state.conferenceWindow] || ''}`;
+      `${fmt(rows.length)} / ${fmt(data.conferenceEvents().length)} 个节点 · ${WINDOW_LABELS[state.conferenceWindow] || ''}`;
     const offset = (state.conferencePage - 1) * 20;
     $('conferenceRows').innerHTML = rows.length ? rows.slice(offset, offset + 20).map(row => {
       const tone = row.tbd || !row.utc ? 'unknown' : deadlineTone(row.utc);
@@ -437,6 +444,7 @@ MO.render = (() => {
     $('conferenceRank').value = state.conferenceRank;
     $('conferenceKind').value = state.conferenceKind;
     $('conferenceWindow').value = state.conferenceWindow;
+    $('conferenceSearch').value = state.conferenceSearch;
     renderConferenceStatus();
     renderConferenceSummary();
     renderConferenceUpcoming();
@@ -551,7 +559,7 @@ MO.render = (() => {
     state.starPage = Math.min(Math.max(1, state.starPage), pages);
     const offset = (state.starPage - 1) * 24;
     $('starTableCount').textContent = state.starDetailStatus === 'ready'
-      ? `${fmt(rows.length)} / ${fmt(data.starRows().length)} REPOSITORIES`
+      ? `${fmt(rows.length)} / ${fmt(data.starRows().length)} 个仓库`
       : '等待 star 明细';
     $('starRows').innerHTML = rows.length ? rows.slice(offset, offset + 24).map(row => {
       const flags = [row.archived && 'archived', row.fork && 'fork', row.org && 'org', !row.description && 'undocumented']
@@ -844,7 +852,7 @@ MO.render = (() => {
     const pages = data.entityPageCount();
     state.entityPage = Math.min(Math.max(1, state.entityPage), pages);
     const rows = data.entityPage();
-    $('entityTableCount').textContent = `${fmt(total)} / ${fmt(data.entityEntries().length)} ENTRIES` +
+    $('entityTableCount').textContent = `${fmt(total)} / ${fmt(data.entityEntries().length)} 条` +
       `${state.entityObject !== 'all' ? ' · 反查中' : ''}`;
     $('entityRows').innerHTML = rows.length ? rows.map(entry => {
       const counts = entry.links.reduce((tally, link) => {
@@ -1200,7 +1208,7 @@ MO.render = (() => {
     data.state.taskPage = Math.min(Math.max(1, data.state.taskPage), pages);
     const start = (data.state.taskPage - 1) * data.taskPageSize();
     const page = filtered.slice(start, start + data.taskPageSize());
-    $('taskTableCount').textContent = `${fmt(filtered.length)} / ${fmt(rows.length)} TASKS · ` +
+    $('taskTableCount').textContent = `${fmt(filtered.length)} / ${fmt(rows.length)} 个任务 · ` +
       '清单与画布共用同一份筛选';
     $('taskRows').innerHTML = page.length ? page.map(task => {
       const children = board.childrenOf(task.slug);
@@ -2288,12 +2296,16 @@ MO.render = (() => {
   function renderTable() {
     const state = data.state;
     const rows = data.filteredModels();
+    const onlyNew = $('onlyNewModels');
+    if (onlyNew) onlyNew.checked = state.modelShift === 'added';
+    const onlyAnomalies = $('onlyAnomalies');
+    if (onlyAnomalies) onlyAnomalies.checked = state.modelOnlyAnomalies;
     const pager = data.paginate ? data.paginate(rows, state.modelPage, state.modelPageSize) : {
       page: 1, pages: 1, size: rows.length || 1, total: rows.length, rows
     };
     if (data.paginate) state.modelPage = pager.page;
 
-    $('tableCount').textContent = `${fmt(pager.total)} / ${fmt(data.modelScope().length)} MODELS · 账户共 ${fmt(state.latest.models.length)}`;
+    $('tableCount').textContent = `${fmt(pager.total)} / ${fmt(data.modelScope().length)} 个模型 · 账户共 ${fmt(state.latest.models.length)}`;
     $('modelRows').innerHTML = pager.rows.length ? pager.rows.map(model => {
       const stateName = model.all_time === null ? '累计缺失' : model.d1 < 0 ? '统计修正?' : model.d1 === null ? '待积累' : '正常';
       const stateClass = model.all_time === null ? 'missing' : model.d1 < 0 ? 'alert' : model.d1 === null ? 'new' : '';
@@ -2397,7 +2409,7 @@ MO.render = (() => {
     if (sort === 'name') rows.sort((a, b) => a.id.localeCompare(b.id));
     else rows.sort((a, b) => ((b[sort] ?? -Infinity) - (a[sort] ?? -Infinity)) || a.id.localeCompare(b.id));
 
-    $('datasetTableCount').textContent = `${fmt(rows.length)} / ${fmt((data.state.latest.datasets || []).length)} DATASETS`;
+    $('datasetTableCount').textContent = `${fmt(rows.length)} / ${fmt((data.state.latest.datasets || []).length)} 个数据集`;
     $('datasetRows').innerHTML = rows.length ? rows.map(item => {
       const stateName = item.all_time === null ? '累计缺失' : item.d1 < 0 ? '统计修正?' : item.d1 === null ? '待积累' : '正常';
       const stateClass = item.all_time === null ? 'missing' : item.d1 < 0 ? 'alert' : item.d1 === null ? 'new' : '';
@@ -2465,7 +2477,7 @@ MO.render = (() => {
     const papers = data.state.scholar?.papers || [];
     const search = $('paperSearch').value.trim().toLowerCase();
     const rows = papers.filter(paper => !search || `${paper.title} ${paper.authors || ''} ${paper.venue || ''}`.toLowerCase().includes(search));
-    $('paperCount').textContent = `${fmt(rows.length)} / ${fmt(papers.length)} PAPERS`;
+    $('paperCount').textContent = `${fmt(rows.length)} / ${fmt(papers.length)} 篇论文`;
     $('paperRows').innerHTML = rows.length ? rows.map(paper =>
       `<tr><td>${paper.url
         ? `<a class="paper-title" href="${esc(paper.url)}" target="_blank" rel="noopener noreferrer">${esc(paper.title)}</a>`
@@ -2571,7 +2583,7 @@ MO.render = (() => {
     const sources = data.state.social?.sources || [];
     const selected = data.selectedSocialIds();
     const rows = sources.filter(source => selected.includes(source.id) || data.state.socialPlatforms === 'all');
-    $('socialTableCount').textContent = `${fmt(rows.length)} / ${fmt(sources.length)} PLATFORMS`;
+    $('socialTableCount').textContent = `${fmt(rows.length)} / ${fmt(sources.length)} 个平台`;
     $('socialRows').innerHTML = rows.length ? rows.map(source => {
       const change = data.socialDelta(source.id);
       return `<tr><td><span class="social-dot" style="background:${esc(source.color || 'var(--chart-1)')}"></span>` +
@@ -2768,7 +2780,7 @@ MO.render = (() => {
     data.state.githubPage = page;
     const slice = rows.slice((page - 1) * size, page * size);
 
-    $('githubTableCount').textContent = `${fmt(rows.length)} / ${fmt(all.length)} REPOSITORIES`;
+    $('githubTableCount').textContent = `${fmt(rows.length)} / ${fmt(all.length)} 个仓库`;
     $('githubRows').innerHTML = slice.length ? slice.map(repo => {
       const flags = [];
       if (repo.is_fork) flags.push('Fork');

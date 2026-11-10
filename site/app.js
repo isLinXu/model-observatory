@@ -501,6 +501,9 @@
     return links[workspace] || { href: 'https://huggingface.co/gatilin/models', label: '访问 HF ↗' };
   }
 
+  let arrivalLock = null;
+  let arrivalKeep = false;
+
   function showView(hash, options = {}) {
     const view = data.resolveView(hash);
     data.state.view = view.workspace;
@@ -525,6 +528,20 @@
     const crumb = $('crumbView');
     if (crumb) crumb.textContent = labels[0];
     document.title = `${labels[1]} · Model Observatory · gatilin`;
+    const query = typeof data.viewQuery === 'function' ? data.viewQuery(hash) : {};
+    const requested = typeof data.arrivalNote === 'function' && data.arrivalNote(view.workspace, query);
+    const keep = arrivalKeep;
+    arrivalKeep = false;
+    if (requested && typeof data.applyArrival === 'function') {
+      data.applyArrival(view.workspace, query);
+      arrivalLock = view.workspace;
+    } else if (keep) {
+      arrivalLock = null;
+    } else if (arrivalLock === view.workspace && typeof data.clearArrivalFilters === 'function') {
+      data.clearArrivalFilters(view.workspace);
+      arrivalLock = null;
+    }
+    placeArrivalNote(view.workspace, hash);
     placeCollectionScope(view.workspace);
     if (data.state.latest) refreshWorkspace(view.workspace);
     if (options.moveFocus && typeof $('workspace')?.focus === 'function') {
@@ -540,6 +557,44 @@
     };
     if (typeof requestAnimationFrame === 'function') requestAnimationFrame(scroll);
     else scroll();
+  }
+
+  function placeArrivalNote(workspace, hash) {
+    const note = $('arrivalNote');
+    if (!note || typeof data.arrivalNote !== 'function' || typeof data.viewQuery !== 'function') return;
+    const text = data.arrivalNote(workspace, data.viewQuery(hash));
+    const hostId = { conferences: 'conferences', models: 'models', entities: 'entities' }[workspace];
+    const host = hostId ? $(hostId) : null;
+    if (text && host && typeof host.prepend === 'function' && note.parentElement !== host) host.prepend(note);
+    note.hidden = !text;
+    const label = $('arrivalNoteText');
+    if (label) label.textContent = text;
+  }
+
+  function releaseArrival() {
+    if (typeof location === 'undefined') return false;
+    const hash = String(location.hash || '');
+    if (!hash.includes('?')) return false;
+    arrivalKeep = true;
+    location.hash = hash.replace(/^#/, '').split('?')[0] || 'overview';
+    return true;
+  }
+
+  function clearArrival() {
+    const workspace = data.state.view;
+    if (workspace === 'conferences') {
+      Object.assign(data.state, {
+        conferenceSearch: '', conferenceArea: 'all', conferenceRank: 'all',
+        conferenceKind: 'paper', conferenceWindow: '90', conferencePage: 1
+      });
+    } else if (workspace === 'models') {
+      Object.assign(data.state, { modelShift: 'all', modelOnlyAnomalies: false, modelSearch: '', modelPage: 1 });
+    } else if (workspace === 'entities') {
+      Object.assign(data.state, { entityLink: 'all', entityPage: 1 });
+    }
+    if (releaseArrival()) return;
+    refreshWorkspace(workspace);
+    placeArrivalNote(workspace, `#${workspace || 'overview'}`);
   }
 
   function placeCollectionScope(workspace) {
@@ -559,7 +614,9 @@
     const jobs = {
       overview: ['renderBriefing', 'renderAttention'],
       analytics: ['renderCollections', 'renderOverall'],
-      models: ['renderCollections', 'renderCompare'],
+      models: ['renderCollections', 'renderTable', 'renderCompare'],
+      conferences: ['renderConferences'],
+      entities: ['renderEntities'],
       datasets: ['renderDatasetChart'],
       modelscope: ['renderModelScopeChart', 'renderModelScopeProfile'],
       scholar: ['renderScholar'],
@@ -1360,6 +1417,7 @@
       $(id).addEventListener(eventName, event => {
         data.state[key] = event.target.value;
         data.state.conferencePage = 1;
+        if (releaseArrival()) return;
         render.renderConferenceUpcoming();
         render.renderConferenceTable();
         render.renderConferenceStatus();
@@ -1370,6 +1428,7 @@
         conferenceSearch: '', conferenceArea: 'all', conferenceRank: 'all',
         conferenceKind: 'paper', conferenceWindow: '90', conferencePage: 1
       });
+      if (releaseArrival()) return;
       render.renderConferences();
     });
     $('conferencePrev').addEventListener('click', () => {
@@ -1436,6 +1495,7 @@
       $(id).addEventListener(eventName, event => {
         data.state[key] = event.target.value;
         data.state.entityPage = 1;
+        if (releaseArrival()) return;
         render.renderEntityStatus();
         render.renderEntityReverseNote();
         render.renderEntityTable();
@@ -1446,6 +1506,7 @@
         entitySearch: '', entityKind: 'all', entityStage: 'all', entityTag: 'all',
         entityLink: 'all', entityObject: 'all', entitySort: 'updated', entityOpen: null, entityPage: 1
       });
+      if (releaseArrival()) return;
       render.renderEntities();
     });
     // A link chip is a question in both directions: filter by the object, or open
@@ -1701,9 +1762,23 @@
       const button = event.target.closest('[data-collection]');
       if (!button) return;
       selectCollection(button.dataset.collection);
-      showView('#overview', { preserveScroll: true });
-      $('collectionFilter').focus({ preventScroll: true });
-      $('collectionScope').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
+      const revealScope = () => {
+        if (typeof $('collectionFilter')?.focus === 'function') $('collectionFilter').focus({ preventScroll: true });
+        if (typeof $('collectionScope')?.scrollIntoView === 'function') {
+          $('collectionScope').scrollIntoView({
+            behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth',
+            block: 'start'
+          });
+        }
+      };
+      if (typeof location !== 'undefined') {
+        location.hash = 'analytics';
+        if (typeof requestAnimationFrame === 'function') requestAnimationFrame(revealScope);
+        else revealScope();
+      } else {
+        showView('#analytics', { preserveScroll: true });
+        revealScope();
+      }
     });
     document.querySelectorAll('.segmented button, .range-controls button').forEach(button =>
       button.setAttribute('aria-pressed', String(button.classList.contains('active'))));
@@ -1745,8 +1820,16 @@
     $('onlyAnomalies').addEventListener('change', event => {
       data.state.modelOnlyAnomalies = event.target.checked;
       data.state.modelPage = 1;
+      if (!event.target.checked && releaseArrival()) return;
       render.renderTable();
     });
+    $('onlyNewModels').addEventListener('change', event => {
+      data.state.modelShift = event.target.checked ? 'added' : 'all';
+      data.state.modelPage = 1;
+      if (!event.target.checked && releaseArrival()) return;
+      render.renderTable();
+    });
+    $('arrivalClear').addEventListener('click', clearArrival);
     $('modelRows').addEventListener('click', event => {
       const button = event.target.closest('button[data-detail]');
       if (button) openDetail(button.dataset.detail);

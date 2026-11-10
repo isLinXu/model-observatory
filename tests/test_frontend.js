@@ -1497,7 +1497,7 @@ test('ModelScope table and CSV share search/task/sort while pagination shows 20 
     const page = data.state.modelscopePage;
     assert.deepEqual(Array.from(view.element('modelscopeRows').innerHTML.matchAll(/data-ms-model="([^"]+)"/g), match => match[1]),
       idsOf(expected.slice((page - 1) * 20, page * 20)));
-    assert.equal(view.element('modelscopeTableCount').textContent, `${expected.length} / 46 MODELS`);
+    assert.equal(view.element('modelscopeTableCount').textContent, `${expected.length} / 46 个模型`);
     view.element('modelscopeExport').onclick();
     assert.equal(filterCalls, before + 2, 'CSV uses the same filter, not the visible page');
     assert.equal(view.blobs.at(-1).type, 'text/csv;charset=utf-8');
@@ -2150,7 +2150,7 @@ test('the conference board escapes third-party text, counts down, and explains s
   assert.doesNotMatch(upcoming, /conf-item unknown/);
   assert.match(view.element('conferenceUpcomingNote').textContent, /未来 90 天/);
   assert.equal(view.element('conferencePagination').hidden, true);
-  assert.match(view.element('conferenceTableCount').textContent, /1 \/ 3 EVENTS · 未来 90 天/);
+  assert.match(view.element('conferenceTableCount').textContent, /1 \/ 3 个节点 · 未来 90 天/);
   assert.match(view.element('conferenceRows').innerHTML, /2 天 17 小时/);
 
   // Events that never resolve to an instant stay reachable in their own window.
@@ -2160,7 +2160,7 @@ test('the conference board escapes third-party text, counts down, and explains s
   assert.match(unresolved, /日期待定/);
   assert.match(unresolved, /Mars\/Olympus · 时区无法解析/);
   assert.match(unresolved, /conf-row unknown/);
-  assert.match(view.element('conferenceTableCount').textContent, /2 \/ 3 EVENTS · 待定或无法解析/);
+  assert.match(view.element('conferenceTableCount').textContent, /2 \/ 3 个节点 · 待定或无法解析/);
 });
 
 test('the conference board reports a missing snapshot without touching other panels', () => {
@@ -2229,7 +2229,7 @@ test('conference filters, paging, reset, refresh and CSV stay on the published s
 
   const change = (id, value) => view.element(id).events[
     id === 'conferenceSearch' ? 'input' : 'change']({ target: { value } });
-  assert.match(view.element('conferenceTableCount').textContent, /^26 \/ 28 EVENTS · 未来 90 天$/);
+  assert.match(view.element('conferenceTableCount').textContent, /^26 \/ 28 个节点 · 未来 90 天$/);
   assert.equal(view.element('conferencePagination').hidden, false);
   assert.equal(view.element('conferencePageInfo').textContent, '1 / 2');
   view.element('conferenceNext').events.click();
@@ -2238,7 +2238,7 @@ test('conference filters, paging, reset, refresh and CSV stay on the published s
 
   change('conferenceSearch', 'many');
   assert.equal(data.state.conferencePage, 1, 'a new filter returns to the first page');
-  assert.match(view.element('conferenceTableCount').textContent, /^25 \/ 28 EVENTS/);
+  assert.match(view.element('conferenceTableCount').textContent, /^25 \/ 28 个节点/);
   change('conferenceSearch', '');
   change('conferenceWindow', 'tbd');
   assert.match(view.element('conferenceRows').innerHTML, /日期待定/);
@@ -2719,7 +2719,7 @@ test('the star board separates snapshot metrics from detail rows and escapes eve
   assert.match(markup, /语言 · 未知/);
   assert.match(markup, /主题 · &lt;i&gt;LLM&lt;\/i&gt;/);
   assert.match(markup, /正常</);
-  assert.equal(view.element('starTableCount').textContent, '4 / 4 REPOSITORIES');
+  assert.equal(view.element('starTableCount').textContent, '4 / 4 个仓库');
   assert.equal(view.element('starPagination').hidden, true);
 
   // A detail failure only removes the wall, list and export; the snapshot panels stay.
@@ -2951,13 +2951,13 @@ test('the star board pulls the detail on viewport entry, filters the wall, and e
   assert.equal(detailCalls(), 1, 'a second entry does not refetch');
 
   const change = (id, value, event = 'change') => view.element(id).events[event]({ target: { value } });
-  assert.equal(view.element('starTableCount').textContent, '3 / 3 REPOSITORIES');
+  assert.equal(view.element('starTableCount').textContent, '3 / 3 个仓库');
   assert.equal(view.element('starPagination').hidden, true);
   assert.equal(view.element('starNext').disabled, true);
   change('starSearch', 'fresh', 'input');
-  assert.equal(view.element('starTableCount').textContent, '1 / 3 REPOSITORIES');
+  assert.equal(view.element('starTableCount').textContent, '1 / 3 个仓库');
   change('starStatusFilter', 'archived');
-  assert.equal(view.element('starTableCount').textContent, '0 / 3 REPOSITORIES');
+  assert.equal(view.element('starTableCount').textContent, '0 / 3 个仓库');
   assert.match(view.element('starRows').innerHTML, /当前筛选没有匹配的仓库/);
   assert.equal(view.element('starFilterReset').disabled, false);
 
@@ -2974,13 +2974,13 @@ test('the star board pulls the detail on viewport entry, filters the wall, and e
     status: data.state.starStatus, sort: data.state.starSort, search: data.state.starSearch,
     page: data.state.starPage
   }, { cluster: 'all', language: 'all', topic: 'all', status: 'all', sort: 'stars', search: '', page: 1 });
-  assert.equal(view.element('starTableCount').textContent, '3 / 3 REPOSITORIES');
+  assert.equal(view.element('starTableCount').textContent, '3 / 3 个仓库');
 
   const chip = value => ({ target: { closest: selector =>
     selector === '[data-cluster]' ? { dataset: { cluster: value } } : null } });
   view.element('starWall').events.click(cell(1));
   assert.equal(data.state.starCluster, 'lang:Rust');
-  assert.equal(view.element('starTableCount').textContent, '1 / 3 REPOSITORIES');
+  assert.equal(view.element('starTableCount').textContent, '1 / 3 个仓库');
   assert.equal(view.chartCalls.filter(call => call.name === 'starWall').at(-1).opts.activeCluster, 'lang:Rust');
   view.element('starWallLegend').events.click(chip('lang:Rust'));
   assert.equal(data.state.starCluster, 'all', 'clicking the active cluster again clears the filter');
@@ -3398,7 +3398,7 @@ test('entity filters, the reverse lookup, the audit jump and CSV export stay on 
 
   const entityCalls = () => requested.filter(url => url === './data/entities.json').length;
   assert.equal(entityCalls(), 1, 'the index arrives with the first paint');
-  assert.equal(view.element('entityTableCount').textContent, '15 / 15 ENTRIES');
+  assert.equal(view.element('entityTableCount').textContent, '15 / 15 条');
   assert.equal((view.element('entityRows').innerHTML.match(/class="entity-row/g) || []).length, 8,
     'one page shows eight entries');
   assert.equal(view.element('entityPagination').hidden, false);
@@ -3411,7 +3411,7 @@ test('entity filters, the reverse lookup, the audit jump and CSV export stay on 
 
   const change = (id, value, event = 'change') => view.element(id).events[event]({ target: { value } });
   change('entitySearch', 'entry-11', 'input');
-  assert.equal(view.element('entityTableCount').textContent, '1 / 15 ENTRIES');
+  assert.equal(view.element('entityTableCount').textContent, '1 / 15 条');
   assert.equal(view.element('entityPageInfo').textContent, '1 / 1', 'a narrowing filter returns to page one');
   assert.equal(view.element('entityFilterReset').disabled, false);
 
@@ -3430,19 +3430,19 @@ test('entity filters, the reverse lookup, the audit jump and CSV export stay on 
     selector === '[data-entity-open]' ? null : selector === '[data-entity-object]' ? { dataset: { entityObject: key } } : null } });
   view.element('entityRows').events.click(chip('hf_model:gatilin/entry-01'));
   assert.equal(data.state.entityObject, 'hf_model:gatilin/entry-01');
-  assert.equal(view.element('entityTableCount').textContent, '2 / 15 ENTRIES · 反查中');
+  assert.equal(view.element('entityTableCount').textContent, '2 / 15 条 · 反查中');
   assert.match(view.element('entityReverseNote').textContent, /引用该对象的实体 2 个：entry 01、shared/);
   view.element('entityRows').events.click(chip('hf_model:gatilin/entry-01'));
   assert.equal(data.state.entityObject, 'all', 'the same chip clears the reverse lookup');
   change('entityObject', 'hf_model:gatilin/ghost');
-  assert.equal(view.element('entityTableCount').textContent, '1 / 15 ENTRIES · 反查中');
+  assert.equal(view.element('entityTableCount').textContent, '1 / 15 条 · 反查中');
 
   const tag = name => ({ target: { closest: selector =>
     selector === '[data-entity-tag]' ? { dataset: { entityTag: name } } : null } });
   view.element('entityFilterReset').events.click();
   view.element('entityRows').events.click(tag('demo'));
   assert.equal(data.state.entityTag, 'demo');
-  assert.equal(view.element('entityTableCount').textContent, '14 / 15 ENTRIES');
+  assert.equal(view.element('entityTableCount').textContent, '14 / 15 条');
   view.element('entityRows').events.click(tag('demo'));
   assert.equal(data.state.entityTag, 'all');
 
@@ -4247,7 +4247,7 @@ test('the list view shares the canvas filter, pages twelve at a time and marks l
   assert.equal(view.element('taskPageInfo').textContent, '第 1 / 2 页');
   assert.equal(view.element('taskNext').disabled, false);
   assert.equal(view.element('taskPrev').disabled, true);
-  assert.equal(view.element('taskTableCount').textContent, '13 / 13 TASKS · 清单与画布共用同一份筛选');
+  assert.equal(view.element('taskTableCount').textContent, '13 / 13 个任务 · 清单与画布共用同一份筛选');
   view.data.state.taskPage = 2;
   view.render.renderTaskList();
   assert.equal((view.element('taskRows').innerHTML.match(/<tr class="task-row/g) || []).length, 1);
@@ -6642,6 +6642,10 @@ test('inventory shift reports only models that appeared after the snapshot', () 
   assert.deepEqual({ added: [...shift.added], removed: [...shift.removed] }, { added: ['gatilin/new'], removed: [] });
   const brief = data.briefing(Date.parse('2026-10-25T08:00:00Z'));
   assert.ok(brief.notes.some(note => note.tone === 'ok' && note.value === 1));
+  assert.match(brief.notes.find(note => note.tone === 'ok').href, /shift=added/);
+  data.state.modelShift = 'added';
+  data.state.latest.models = data.state.latest.models.map(model => ({ ...model, all_time: 1, last_30d: 1 }));
+  assert.deepEqual(data.filteredModels().map(model => model.id), ['gatilin/new']);
 });
 
 test('the overview marks the pulse that the headline is quoting', () => {
@@ -6661,7 +6665,16 @@ test('the overview marks the pulse that the headline is quoting', () => {
   const html = view.element('pulseGrid').innerHTML;
   assert.match(html, /class="pulse is-lead"/);
   assert.equal((html.match(/is-lead/g) || []).length, 1);
-  assert.match(html, /MODELSCOPE/);
+  assert.match(html, /魔搭主页下载/);
+});
+
+test('the logbook plate reads a UTC capture time', () => {
+  const view = loadModelView(loadData());
+  const stamp = view.context.MO.format.plate('2026-11-06T05:08:34Z');
+  assert.equal(stamp.day, '06');
+  assert.equal(stamp.month, 'NOV 2026');
+  assert.equal(stamp.time, '05:08 UTC');
+  assert.equal(view.context.MO.format.plate(null).day, '—');
 });
 
 test('attention surfaces a deadline inside three weeks and ignores a later one', () => {
@@ -6683,6 +6696,24 @@ test('attention surfaces a deadline inside three weeks and ignores a later one',
   assert.equal(soon[0].domain, 'conferences');
   assert.equal(soon[0].tone, 'warn');
   assert.match(soon[0].title, /CVPR/);
+  assert.match(soon[0].href, /^#conferences\?/);
+  assert.match(soon[0].href, /kind=paper/);
+  assert.match(soon[0].href, /window=30/);
+  assert.match(soon[0].href, /q=CVPR/);
+  data.applyArrival('conferences', data.viewQuery(soon[0].href));
+  assert.equal(data.state.conferenceKind, 'paper');
+  assert.equal(data.state.conferenceWindow, '30');
+  assert.equal(data.state.conferenceSearch, 'CVPR');
+  assert.equal(data.arrivalNote('conferences', data.viewQuery(soon[0].href)),
+    '正在查看总览指出的 CVPR · 论文截止 · 未来 30 天');
+  assert.equal(data.arrivalNote('conferences', {}), '');
+  data.clearArrivalFilters('conferences');
+  assert.equal(data.state.conferenceSearch, '');
+  assert.equal(data.state.conferenceKind, 'paper');
+  assert.equal(data.state.conferenceWindow, '90');
+  assert.equal(data.viewQuery('#models').shift, undefined);
+  data.applyArrival('models', { shift: 'added' });
+  assert.equal(data.state.modelShift, 'added');
   data.state.conferences = conference('2026-12-20T00:00:00Z');
   assert.equal(data.attention(now).some(item => item.domain === 'conferences'), false);
 });

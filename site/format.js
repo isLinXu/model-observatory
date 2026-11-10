@@ -75,6 +75,20 @@ MO.format = (() => {
     return String(value).replace('T', ' ').slice(0, 16);
   }
 
+  const MONTHS = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'];
+
+  /** Logbook dateplate: UTC day, month line, and clock. */
+  function plate(value) {
+    const parsed = Date.parse(value ?? '');
+    if (!Number.isFinite(parsed)) return { day: '—', month: 'UTC', time: '等待采集' };
+    const date = new Date(parsed);
+    return {
+      day: String(date.getUTCDate()).padStart(2, '0'),
+      month: `${MONTHS[date.getUTCMonth()]} ${date.getUTCFullYear()}`,
+      time: `${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')} UTC`
+    };
+  }
+
   /** Whole days between an ISO timestamp and now. */
   function ageInDays(value) {
     if (!value) return null;
@@ -123,7 +137,7 @@ MO.format = (() => {
   }
 
   return {
-    esc, fmt, compact, countCN, signed, signedCN, tone, dayLabel, timestamp,
+    esc, fmt, compact, countCN, signed, signedCN, tone, dayLabel, timestamp, plate,
     ageInDays, untilDays, countdown, deadlineTone, offsetLabel, trimZero
   };
 })();
