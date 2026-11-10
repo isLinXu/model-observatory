@@ -3,10 +3,13 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#090f1b">
+  <meta name="theme-color" content="#101214">
   <meta name="description" content="@gatilin Hugging Face 模型与数据集下载量、近期活跃度、每日增量、学术引用、社交平台粉丝数、GitHub 粉丝与仓库看板及历史数据可视化">
   <title>Model Observatory · gatilin</title>
   <link rel="canonical" href="https://islinxu.github.io/model-observatory/">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
   <meta name="author" content="gatilin">
   <meta property="og:type" content="website">
   <meta property="og:site_name" content="Model Observatory">
@@ -36,8 +39,8 @@
   <div class="shell">
     <aside class="sidebar" aria-label="侧边导航">
       <a class="brand" href="#overview" aria-label="Model Observatory 首页">
-        <span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><path d="M4 23 12 11 19 20 28 7" fill="none" stroke="currentColor" stroke-width="3.4" stroke-linecap="round" stroke-linejoin="round"/><circle cx="28" cy="7" r="2.7" fill="#70e6ce"/></svg></span>
-        <span class="brand-copy"><strong>MODEL<span>OBS.</span></strong><small>DAILY OBSERVATORY</small></span>
+        <span class="brand-mark"><svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="10.5" fill="none" stroke="currentColor" stroke-width="1.35"/><path d="M16 3.5v5.2M16 23.3v5.2M3.5 16h5.2M23.3 16h5.2" fill="none" stroke="currentColor" stroke-width="1.35" stroke-linecap="square"/><circle cx="16" cy="16" r="2.15" fill="currentColor"/></svg></span>
+        <span class="brand-copy"><strong>Model Observatory</strong><small>@gatilin</small></span>
       </a>
       <nav class="navlinks" aria-label="工作区">
         <div class="nav-group">今日</div>
@@ -63,26 +66,24 @@
         <a href="#templates" data-view="templates"><span class="navglyph">◈</span> 模版库</a>
       </nav>
       <div class="sidebar-bottom">
-        <div class="sidebar-card"><div class="sidebar-card-head"><span class="live-led"></span> DAILY SNAPSHOTS</div><p>GitHub Actions 每日采集<br>无需始终打开浏览器</p><div class="sidebar-card-foot"><span id="snapshotCount">0</span> 个历史快照</div></div>
-        <a class="profile" href="https://huggingface.co/gatilin/models" target="_blank" rel="noopener noreferrer"><span class="profile-avatar">g</span><span><strong>@gatilin</strong><small>Hugging Face profile</small></span><span class="profile-arrow">↗</span></a>
+        <div class="sidebar-colophon"><span class="live-led"></span><div><b><span id="snapshotCount">0</span> 个快照</b><small>每日 UTC 采集</small></div></div>
+        <a class="profile" href="https://huggingface.co/gatilin/models" target="_blank" rel="noopener noreferrer"><span class="profile-avatar">g</span><span><strong>@gatilin</strong><small>Hugging Face 主页</small></span><span class="profile-arrow">↗</span></a>
       </div>
     </aside>
 
     <main class="main" id="workspace" tabindex="-1">
       <header class="topbar">
-        <div class="breadcrumb">WORKSPACE <span>/</span> GATILIN <span>/</span> <b id="crumbView">总览</b></div>
+        <div class="page-title" id="crumbView">总览</div>
         <div class="top-right"><span class="freshness"><span id="freshLed" class="status-led"></span><span id="freshLabel">等待数据初始化</span></span><button class="theme-toggle" id="themeToggle" type="button" aria-label="切换明暗主题" title="切换明暗主题">☀</button><a class="toplink" id="topLink" href="https://huggingface.co/gatilin/models" target="_blank" rel="noopener noreferrer">访问 HF ↗</a></div>
       </header>
 
       <div id="errorBanner" class="notice hidden" role="alert"></div>
+      <p id="arrivalNote" class="arrival-note" hidden><span id="arrivalNoteText"></span><button type="button" class="button text-button" id="arrivalClear">查看全部</button></p>
 
       <div data-workspace="overview" id="overview">
 <section class="hero">
-        <div class="hero-orbit" aria-hidden="true"><span></span><span></span><span></span></div>
-        <div class="hero-kicker"><span class="inline-mark"></span> GATILIN / DAILY BRIEFING</div>
         <h1 id="briefingHeadline">正在读取公开快照…</h1>
-        <p>这里只说今天变了什么。下载曲线、清单和截止各自留在自己的栏目里。</p>
-        <div class="hero-meta"><span>账户 <b>@gatilin</b></span><i></i><span>上次采集 <b id="lastSync">—</b></span><i></i><span>时区 <b>UTC</b></span></div>
+        <div class="hero-meta"><span>@gatilin</span><i></i><span>采集 <b id="lastSync">—</b> UTC</span></div>
         <p id="runHealth" class="run-health" role="status">采集健康：正在读取运行记录…</p>
       </section>
 
@@ -112,7 +113,7 @@
           <div id="overallChart" class="chart-area" role="img" aria-label="整体模型下载量趋势图"></div>
           <div class="chart-footer"><div class="legend"><span class="legend-mark"></span><span id="overallLegend">全部模型累计下载</span></div><div class="range-controls" role="group" aria-label="历史范围"><button data-range="30" class="active">30天</button><button data-range="90">90天</button><button data-range="all">全部</button></div></div>
         </div>
-        <div class="panel top-panel"><div class="panel-head"><div><div class="panel-overline">MOST ACTIVE</div><h2>热门模型 <small>TOP 6</small></h2><p>按照官方最近 30 天下载量</p></div><span class="mini-icon">↗</span></div><div id="topModels" class="top-models"><div class="chart-empty">等待模型数据</div></div><div class="top-footer">RANKED BY 30-DAY DOWNLOADS <span>● LIVE SNAPSHOT</span></div></div>
+        <div class="panel top-panel"><div class="panel-head"><div><div class="panel-overline">MOST ACTIVE</div><h2>热门模型 <small>前 6</small></h2><p>按照官方最近 30 天下载量</p></div><span class="mini-icon">↗</span></div><div id="topModels" class="top-models"><div class="chart-empty">等待模型数据</div></div><div class="top-footer">按近 30 天下载排序 <span>当日快照</span></div></div>
       </section>
 
       <section class="panel changes-panel"><div class="panel-head"><div><div class="panel-overline">MOMENTUM & REVISIONS</div><h2>日度变化观测</h2><p>累计值的相邻快照净变化；负值保留用于识别统计修正</p></div><span id="correctionBadge" class="correction-pill">暂无异常</span></div><div id="deltaChart" class="bar-chart-area"></div><div class="chart-footer"><span class="muted micro">这是累计计数器的观测净差值，并非官方独立提供的每日下载次数。</span><span id="deltaPeriod" class="micro muted">—</span></div></section>
@@ -121,7 +122,7 @@
 
       <section id="models" data-workspace="models" hidden class="model-section">
         <div class="section-heading"><div><div class="section-eyebrow">INVENTORY / MODEL COLLECTIONS</div><h2>模型清单 <span id="modelCountBadge">0</span></h2><p>按观测集合筛选，点击归属标签切换集合，打开模型查看原始条目备注</p></div><div class="section-actions"><button class="button" id="exportCSV">↓ 导出筛选 CSV</button><button class="button secondary" id="exportJSON">↓ 导出全部历史 JSON</button></div></div>
-        <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="modelSearch" placeholder="搜索模型名称或仓库 ID" autocomplete="off" aria-label="搜索模型"></label><select id="sortModel" aria-label="排序方式"><option value="last_30d">按近30天下载排序</option><option value="all_time">按累计下载排序</option><option value="d1">按上次变化排序</option><option value="d7">按7天变化排序</option><option value="d30">按30天变化排序</option><option value="name">按名称排序</option></select><label class="filter-check"><input type="checkbox" id="onlyAnomalies">只看累计下降</label><span class="toolbar-spacer"></span><span id="tableCount" class="micro muted">—</span></div>
+        <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="modelSearch" placeholder="搜索模型名称或仓库 ID" autocomplete="off" aria-label="搜索模型"></label><select id="sortModel" aria-label="排序方式"><option value="last_30d">按近30天下载排序</option><option value="all_time">按累计下载排序</option><option value="d1">按上次变化排序</option><option value="d7">按7天变化排序</option><option value="d30">按30天变化排序</option><option value="name">按名称排序</option></select><label class="filter-check"><input type="checkbox" id="onlyAnomalies">只看累计下降</label><label class="filter-check"><input type="checkbox" id="onlyNewModels">只看新增</label><span class="toolbar-spacer"></span><span id="tableCount" class="micro muted">—</span></div>
         <div class="table-scroll"><table class="models-table"><thead><tr><th class="no-sort">模型名称</th><th class="align-right">历史累计</th><th class="align-right">滚动30天</th><th class="align-right">上次变化</th><th class="align-right">7日净变</th><th class="align-right">30日净变</th><th>状态</th><th class="compare-col">对比</th></tr></thead><tbody id="modelRows"><tr><td colspan="8" class="no-rows">尚未有采集数据</td></tr></tbody></table></div>
         <nav class="pagination" id="modelPagination" hidden aria-label="模型分页"></nav>
         <div class="table-bottom"><span>说明：— 表示该对比日期缺少有效快照，不代表下载量为 0。</span><span id="snapshotDate">—</span></div>
@@ -143,12 +144,12 @@
           <div class="kpi"><div class="kpi-label">最近 30 天下载 <span class="kpi-symbol blue">◷</span></div><div id="statDatasetRolling" class="kpi-value">—</div><div class="kpi-caption">Hugging Face 滚动 30 天</div></div>
           <div class="kpi accent-kpi"><div class="kpi-label">上次采集以来净变化 <span class="kpi-symbol teal">⌁</span></div><div id="statDatasetDelta" class="kpi-value">—</div><div id="statDatasetDeltaSub" class="kpi-caption">需至少两日快照</div></div>
         </div>
-        <div class="dashboard-grid" style="margin:16px 0 20px">
+        <div class="dashboard-grid dataset-grid">
           <div class="panel panel-chart"><div class="panel-head"><div><div class="panel-overline">DATASET PERFORMANCE OVER TIME</div><h2>数据集趋势</h2><p>历史累计与滚动 30 天下载量</p></div><div class="segmented" role="group" aria-label="数据集曲线指标"><button class="active" data-dataset-metric="all_time">历史累计</button><button data-dataset-metric="last_30d">滚动 30 天</button></div></div>
             <div id="datasetChart" class="chart-area" role="img" aria-label="数据集下载量趋势图"></div>
             <div class="chart-footer"><div class="legend"><span class="legend-mark"></span><span id="datasetLegend">全部数据集累计下载</span></div><div class="range-controls" role="group" aria-label="数据集历史范围"><button data-dataset-range="30" class="active">30天</button><button data-dataset-range="90">90天</button><button data-dataset-range="all">全部</button></div></div>
           </div>
-          <div class="panel top-panel"><div class="panel-head"><div><div class="panel-overline">MOST ACTIVE</div><h2>热门数据集 <small>TOP 6</small></h2><p>按照官方最近 30 天下载量</p></div><span class="mini-icon">↗</span></div><div id="topDatasets" class="top-models"><div class="chart-empty">等待数据集数据</div></div><div class="top-footer">RANKED BY 30-DAY DOWNLOADS <span>● LIVE SNAPSHOT</span></div></div>
+          <div class="panel top-panel"><div class="panel-head"><div><div class="panel-overline">MOST ACTIVE</div><h2>热门数据集 <small>前 6</small></h2><p>按照官方最近 30 天下载量</p></div><span class="mini-icon">↗</span></div><div id="topDatasets" class="top-models"><div class="chart-empty">等待数据集数据</div></div><div class="top-footer">按近 30 天下载排序 <span>当日快照</span></div></div>
         </div>
         <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="datasetSearch" placeholder="搜索数据集名称或仓库 ID" autocomplete="off" aria-label="搜索数据集"></label><select id="sortDataset" aria-label="数据集排序方式"><option value="last_30d">按近30天下载排序</option><option value="all_time">按累计下载排序</option><option value="d1">按上次变化排序</option><option value="d7">按7天变化排序</option><option value="d30">按30天变化排序</option><option value="name">按名称排序</option></select><span class="toolbar-spacer"></span><span id="datasetTableCount" class="micro muted">—</span></div>
         <div class="table-scroll"><table class="models-table"><thead><tr><th class="no-sort">数据集名称</th><th class="align-right">历史累计</th><th class="align-right">滚动30天</th><th class="align-right">上次变化</th><th class="align-right">7日净变</th><th class="align-right">30日净变</th><th>状态</th><th>类型</th></tr></thead><tbody id="datasetRows"><tr><td colspan="8" class="no-rows">尚未有采集数据</td></tr></tbody></table></div>
@@ -199,7 +200,7 @@
           <div class="kpi"><div class="kpi-label">未来 90 天论文截止 <span class="kpi-symbol">▦</span></div><div id="statPaper90" class="kpi-value">—</div><div class="kpi-caption">提前规划投稿节奏</div></div>
           <div class="kpi"><div class="kpi-label">收录时间节点 <span class="kpi-symbol">◈</span></div><div id="statConferenceEvents" class="kpi-value">—</div><div id="statConferenceEventsSub" class="kpi-caption">摘要 / 论文 / Rebuttal / 录用</div></div>
         </div>
-        <div class="panel conference-panel"><div class="panel-head"><div><div class="panel-overline">NEXT UP</div><h2>即将截止 <small>TOP 6</small></h2><p id="conferenceUpcomingNote">当前筛选下最近的时间节点</p></div><span class="mini-icon">◷</span></div><div id="conferenceUpcoming" class="conf-list"><div class="chart-empty">等待会议数据</div></div><div class="top-footer">COUNTDOWN USES THE UTC INSTANT FROM THE DAILY SNAPSHOT <span>● DAILY SNAPSHOTS</span></div></div>
+        <div class="panel conference-panel"><div class="panel-head"><div><div class="panel-overline">NEXT UP</div><h2>即将截止 <small>前 6</small></h2><p id="conferenceUpcomingNote">当前筛选下最近的时间节点</p></div><span class="mini-icon">◷</span></div><div id="conferenceUpcoming" class="conf-list"><div class="chart-empty">等待会议数据</div></div><div class="top-footer">倒计时使用快照中的 UTC 时刻 <span>每日采集</span></div></div>
         <div class="table-toolbar">
           <label class="search-box"><span>⌕</span><input id="conferenceSearch" placeholder="搜索会议名称、缩写或举办地" aria-label="搜索会议" autocomplete="off"></label>
           <select id="conferenceArea" aria-label="会议领域"><option value="all">全部领域</option></select>
@@ -268,7 +269,7 @@
           <div class="kpi"><div class="kpi-label">进行中实体 <span class="kpi-symbol">◷</span></div><div id="statEntityActive" class="kpi-value">—</div><div id="statEntityActiveSub" class="kpi-caption">提案 / 训练 / 评测 / 投稿</div></div>
         </div>
         <div class="dashboard-grid">
-          <div class="panel entity-coverage-panel"><div class="panel-head"><div><div class="panel-overline">COVERAGE &amp; WORK QUEUE</div><h2>来源覆盖</h2><p id="entityCoverageNote">等待注册表数据</p></div><span class="mini-icon">◧</span></div><div id="entityCoverageList" class="entity-cov-list"><div class="chart-empty">等待注册表数据</div></div><div class="top-footer">DENOMINATORS COME FROM EACH SOURCE'S OWN DAILY SNAPSHOT <span>● RELATIONSHIPS ONLY</span></div></div>
+          <div class="panel entity-coverage-panel"><div class="panel-head"><div><div class="panel-overline">COVERAGE &amp; WORK QUEUE</div><h2>来源覆盖</h2><p id="entityCoverageNote">等待注册表数据</p></div><span class="mini-icon">◧</span></div><div id="entityCoverageList" class="entity-cov-list"><div class="chart-empty">等待注册表数据</div></div><div class="top-footer">分母取自各来源当日快照 <span>只登记关系</span></div></div>
           <div class="panel entity-problem-panel"><div class="panel-head"><div><div class="panel-overline">BROKEN &amp; UNCHECKED LINKS</div><h2>断链与未核对</h2><p id="entityProblemNote">等待注册表数据</p></div><span class="mini-icon">⚑</span></div><div id="entityProblems" class="entity-problem-list"><div class="chart-empty">等待注册表数据</div></div><div class="chart-footer"><span class="muted micro">「未核对」不会被写成断链：采集失败与目标消失是两件事，混在一起只会让读者忽略提示。</span></div></div>
         </div>
         <div class="table-toolbar">
@@ -488,7 +489,7 @@
         <div class="panel github-chart-panel"><div class="panel-head"><div><div class="panel-overline">FOLLOWERS OVER TIME</div><h2>粉丝历史趋势</h2><p>本站每日采集的 GitHub 关注者数量走势</p></div><span class="mini-icon">◐</span></div><div id="githubChart" class="chart-area" role="img" aria-label="GitHub 粉丝数趋势图"></div><div class="chart-footer"><span class="muted micro">需要至少两天的 GitHub 快照才能绘制变化曲线。</span><span id="githubChartNote" class="micro muted">—</span></div></div>
         <div class="dashboard-grid" style="margin-bottom:20px">
           <div class="panel panel-chart github-lang-panel"><div class="panel-head"><div><div class="panel-overline">REPOSITORY OVERVIEW</div><h2>仓库语言分布</h2><p>公开仓库的主语言构成</p></div><span class="mini-icon">◫</span></div><div id="githubLangChart" class="chart-area rank-area" role="img" aria-label="仓库语言分布图"></div><div class="chart-footer"><span class="muted micro">语言取自 GitHub 仓库元数据，未标注语言的仓库不计入。</span><span id="githubLangTotal" class="micro muted">—</span></div></div>
-          <div class="panel panel-chart"><div class="panel-head"><div><div class="panel-overline">MOST STARRED</div><h2>高星仓库 <small>TOP 8</small></h2><p>按照 Star 数排序</p></div><span class="mini-icon">★</span></div><div id="githubTopRepos" class="top-models"><div class="chart-empty">等待 GitHub 数据</div></div><div class="top-footer">RANKED BY STARS <span>● LIVE SNAPSHOT</span></div></div>
+          <div class="panel panel-chart"><div class="panel-head"><div><div class="panel-overline">MOST STARRED</div><h2>高星仓库 <small>前 8</small></h2><p>按照 Star 数排序</p></div><span class="mini-icon">★</span></div><div id="githubTopRepos" class="top-models"><div class="chart-empty">等待 GitHub 数据</div></div><div class="top-footer">按 Star 数排序 <span>当日快照</span></div></div>
         </div>
         <div class="table-toolbar"><label class="search-box"><span>⌕</span><input id="githubSearch" placeholder="搜索仓库名称、描述或话题" autocomplete="off" aria-label="搜索 GitHub 仓库"></label><select id="sortGithub" aria-label="GitHub 仓库排序方式"><option value="updated">按最近更新排序</option><option value="stars">按 Star 数排序</option><option value="forks">按 Fork 数排序</option><option value="name">按名称排序</option></select><select id="filterGithubLanguage" aria-label="按语言筛选"><option value="all">全部语言</option></select><div class="segmented" role="group" aria-label="是否包含 Fork 仓库"><button class="active" data-github-forks="own">仅自有</button><button data-github-forks="all">含 Fork</button></div><span class="toolbar-spacer"></span><span id="githubTableCount" class="micro muted">—</span></div>
         <div class="table-scroll"><table class="models-table github-table"><thead><tr><th class="no-sort">仓库名称</th><th class="align-right">Star</th><th class="align-right">Fork</th><th>语言</th><th>最近更新</th><th>状态</th></tr></thead><tbody id="githubRows"><tr><td colspan="6" class="no-rows">尚未有 GitHub 数据</td></tr></tbody></table></div>
@@ -544,7 +545,7 @@
         <div class="table-bottom"><span>说明：模版以 Markdown + frontmatter 存放在仓库 templates/ 目录，采集器每日索引；点击名称可直达 GitHub 源文件。推送需要 Token，未配置时仍可浏览、复制与导出。</span><span id="templateCapturedAt">—</span></div>
       </section>
 
-      <footer class="footer"><div><span class="footer-mark">◈</span> MODEL OBSERVATORY <span class="faded">/ GATILIN</span></div><p>数据：Hugging Face Hub API · ModelScope OpenAPI · Google Scholar 公开档案 · 社交平台公开接口 · GitHub 公开 API · UTC 每日快照 · 仅公开内容 · 不代表独立用户数</p><a href="https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api" target="_blank" rel="noopener noreferrer">数据口径 ↗</a></footer>
+      <footer class="footer"><div>Model Observatory <span class="faded">· @gatilin</span></div><p>数据：Hugging Face Hub API · ModelScope OpenAPI · Google Scholar 公开档案 · 社交平台公开接口 · GitHub 公开 API · UTC 每日快照 · 仅公开内容 · 不代表独立用户数</p><a href="https://huggingface.co/docs/huggingface_hub/en/package_reference/hf_api" target="_blank" rel="noopener noreferrer">数据口径 ↗</a></footer>
     </main>
   </div>
 

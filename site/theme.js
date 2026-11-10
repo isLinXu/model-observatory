@@ -42,7 +42,7 @@ MO.theme = (() => {
     const value = THEMES.includes(theme) ? theme : 'dark';
     document.documentElement.setAttribute('data-theme', value);
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', value === 'light' ? '#f4f6fb' : '#090f1b');
+    if (meta) meta.setAttribute('content', value === 'light' ? '#f4f5f6' : '#101214');
     const button = document.getElementById('themeToggle');
     if (button) {
       button.textContent = value === 'light' ? '☾' : '☀';
